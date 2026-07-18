@@ -1710,7 +1710,13 @@ class ProjectToolProvider(ToolProvider):
                 # Private GhidraProject.createProject leaves a LocalFileSystem versioned/ mirror.
                 # DomainFile.checkin then versions locally and never pushes to Ghidra Server
                 # (LFG step 5: labels visible in-session, missing after MCP restart). Link RemoteFileSystem.
-                self._ensure_ghidra_project_linked_to_repository(mgr.ghidra_project, repository_adapter)
+                # Ghidra requires close+reopen after convertProjectToShared — use returned project.
+                linked = self._ensure_ghidra_project_linked_to_repository(mgr.ghidra_project, repository_adapter)
+                if linked is not None:
+                    mgr.ghidra_project = linked
+                    ctx_ref2: Any | None = mgr.pyghidra_context_ref
+                    if ctx_ref2 is not None:
+                        ctx_ref2.project = linked
             except Exception as exc:
                 logger.warning("[connect-shared-project] could not bind shared checkout project: %s", exc)
 
@@ -5091,6 +5097,17 @@ class ProjectToolProvider(ToolProvider):
             return None
 
         self._ensure_ghidra_project_linked_to_repository(ghidra_project, repository_adapter)
+        # Re-read project after possible post-convert reopen.
+        mgr = getattr(self, "_manager", None)
+        if mgr is not None and getattr(mgr, "ghidra_project", None) is not None:
+            ghidra_project = mgr.ghidra_project
+            try:
+                project_data = ghidra_project.getProjectData()
+            except Exception:
+                try:
+                    project_data = ghidra_project.getProject().getProjectData()
+                except Exception:
+                    pass
 
         domain_file = domain_file_hint or self._resolve_shared_checkout_domain_file(
             project_data, program_path, item_name
@@ -5200,26 +5217,102 @@ class ProjectToolProvider(ToolProvider):
             pass
         return domain_file
 
+    def _reopen_ghidra_project_after_shared_convert(self, ghidra_project: Any) -> Any:
+        """Close and reopen a project after ``convertProjectToShared`` (required by Ghidra).
+
+        Without reopen, ``project.prp`` may list SERVER/REPOSITORY while the live ProjectData still
+        behaves like a private project: RemoteFileSystem shadows never appear after deleting private
+        analyzeHeadless stubs, so checkout cannot bind a versioned DomainFile.
+        """
+        from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+        loc_dir: str | None = None
+        project_name: str | None = None
+        try:
+            proj = ghidra_project.getProject() if hasattr(ghidra_project, "getProject") else None
+            locator = None
+            if proj is not None and hasattr(proj, "getProjectLocator"):
+                locator = proj.getProjectLocator()
+            if locator is None and hasattr(ghidra_project, "getProjectLocator"):
+                locator = ghidra_project.getProjectLocator()
+            if locator is not None:
+                if hasattr(locator, "getLocation"):
+                    loc = locator.getLocation()
+                    loc_dir = str(loc.getAbsolutePath()) if hasattr(loc, "getAbsolutePath") else str(loc)
+                elif hasattr(locator, "getProjectDir"):
+                    pd = locator.getProjectDir()
+                    # Project dir is often ``…/name.rep``; openProject wants the parent folder.
+                    parent = pd.getParentFile() if hasattr(pd, "getParentFile") else None
+                    loc_dir = str(parent.getAbsolutePath()) if parent is not None else str(pd.getAbsolutePath())
+                if hasattr(locator, "getName"):
+                    project_name = str(locator.getName())
+        except Exception as loc_exc:
+            logger.warning("[connect-shared-project] could not resolve locator for post-convert reopen: %s", loc_exc)
+            return ghidra_project
+
+        if not loc_dir or not project_name:
+            logger.warning(
+                "[connect-shared-project] skipping post-convert reopen (loc_dir=%r name=%r)",
+                loc_dir,
+                project_name,
+            )
+            return ghidra_project
+
+        try:
+            ghidra_project.close()
+        except Exception as close_exc:
+            logger.debug("[connect-shared-project] close before reopen: %s", close_exc)
+
+        try:
+            reopened = GhidraProject.openProject(loc_dir, project_name, False)
+        except Exception as open_exc:
+            logger.warning(
+                "[connect-shared-project] reopen after convertProjectToShared failed (%s/%s): %s",
+                loc_dir,
+                project_name,
+                open_exc,
+            )
+            return ghidra_project
+
+        mgr = getattr(self, "_manager", None)
+        if mgr is not None:
+            mgr.ghidra_project = reopened
+            mgr.shared_checkout_project_bound = True
+            ctx_ref = getattr(mgr, "pyghidra_context_ref", None)
+            if ctx_ref is not None:
+                try:
+                    ctx_ref.project = reopened
+                except Exception:
+                    pass
+        logger.info(
+            "[connect-shared-project] reopened project after convertProjectToShared (%s / %s)",
+            loc_dir,
+            project_name,
+        )
+        return reopened
+
     def _ensure_ghidra_project_linked_to_repository(
         self,
         ghidra_project: Any,
         repository_adapter: GhidraRepositoryAdapter,
-    ) -> None:
+    ) -> Any:
         """Convert a private checkout project to a shared project backed by ``RemoteFileSystem``.
 
         ``GhidraProject.createProject`` always builds a non-shared project (repository arg is ignored).
         Without ``convertProjectToShared``, ``DomainFile.checkin`` only bumps the local ``versioned/``
         mirror under ``/tmp/agentdecompile_shared/...`` while the Ghidra Server tip stays at v1.
+
+        Returns the (possibly reopened) ``GhidraProject`` — callers must use the return value.
         """
         if ghidra_project is None or repository_adapter is None:
-            return
+            return ghidra_project
         try:
             project_data = ghidra_project.getProjectData()
         except Exception as exc:
             logger.warning("[connect-shared-project] getProjectData failed while linking repository: %s", exc)
-            return
+            return ghidra_project
         if project_data is None or not hasattr(project_data, "convertProjectToShared"):
-            return
+            return ghidra_project
         existing_repo: Any | None = None
         try:
             if hasattr(project_data, "getRepository"):
@@ -5227,7 +5320,7 @@ class ProjectToolProvider(ToolProvider):
         except Exception:
             existing_repo = None
         if existing_repo is not None:
-            return
+            return ghidra_project
         from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
         try:
@@ -5237,11 +5330,13 @@ class ProjectToolProvider(ToolProvider):
             logger.info(
                 "[connect-shared-project] linked project to Ghidra Server repository via convertProjectToShared",
             )
+            return self._reopen_ghidra_project_after_shared_convert(ghidra_project)
         except Exception as exc:
             logger.warning(
                 "[connect-shared-project] convertProjectToShared failed (checkin may stay local-only): %s",
                 exc,
             )
+            return ghidra_project
 
     def _ensure_shared_domain_file_registered_for_version_control(self, domain_file: GhidraDomainFile, program_path: str) -> None:
         """If Ghidra leaves a post-checkout ``GhidraDomainFile`` unversioned, register it (same API as shared ``import-binary``).
@@ -5334,7 +5429,10 @@ class ProjectToolProvider(ToolProvider):
         mgr_early = getattr(self, "_manager", None)
         ghidra_project_early: GhidraProject | None = getattr(mgr_early, "ghidra_project", None) if mgr_early is not None else None
         if ghidra_project_early is not None:
-            self._ensure_ghidra_project_linked_to_repository(ghidra_project_early, repository_adapter)
+            linked_early = self._ensure_ghidra_project_linked_to_repository(ghidra_project_early, repository_adapter)
+            if linked_early is not None and self._manager is not None:
+                self._manager.ghidra_project = linked_early
+                ghidra_project_early = linked_early
 
         # Split program_path into folder + name
         parts: list[str] = program_path.rsplit("/", 1)

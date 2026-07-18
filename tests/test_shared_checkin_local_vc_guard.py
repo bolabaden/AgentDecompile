@@ -126,6 +126,32 @@ def test_ensure_shared_calls_promote_when_project_bound(monkeypatch: pytest.Monk
 
 
 @pytest.mark.unit
+def test_ensure_linked_reopens_after_convert(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_tm = SimpleNamespace(DUMMY=object())
+    monkeypatch.setitem(__import__("sys").modules, "ghidra.util.task", SimpleNamespace(TaskMonitor=fake_tm))
+
+    project_data = MagicMock()
+    project_data.getRepository.return_value = None
+    project_data.convertProjectToShared = MagicMock()
+
+    original = MagicMock(name="original_project")
+    original.getProjectData.return_value = project_data
+    reopened = MagicMock(name="reopened_project")
+
+    provider = ProjectToolProvider.__new__(ProjectToolProvider)
+    provider._manager = SimpleNamespace(ghidra_project=original, pyghidra_context_ref=None, shared_checkout_project_bound=False)
+    provider._reopen_ghidra_project_after_shared_convert = MagicMock(return_value=reopened)  # type: ignore[method-assign]
+
+    adapter = MagicMock()
+    adapter.isConnected.return_value = True
+    got = provider._ensure_ghidra_project_linked_to_repository(original, adapter)
+
+    project_data.convertProjectToShared.assert_called_once()
+    provider._reopen_ghidra_project_after_shared_convert.assert_called_once_with(original)
+    assert got is reopened
+
+
+@pytest.mark.unit
 def test_shared_repository_item_version_helper() -> None:
     from agentdecompile_cli.mcp_server.providers.import_export import ImportExportToolProvider
 
