@@ -2,6 +2,9 @@
 
 Regression for LFG step 5: DomainFile.checkin was versioning ``/tmp/agentdecompile_shared/.../versioned``
 while the Ghidra Server tip stayed at v1, so search-symbols found 0 labels after MCP restart.
+
+Follow-up: after refusing local VC, private analyzeHeadless stubs still hide RemoteFileSystem items —
+promote deletes the stub and binds a versioned checkout.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ def test_ensure_shared_domain_file_refuses_local_add_to_version_control(monkeypa
     domain_file.addToVersionControl = MagicMock()
 
     provider = ProjectToolProvider.__new__(ProjectToolProvider)
+    provider._manager = None
     provider._ensure_shared_domain_file_registered_for_version_control(domain_file, "/fixture.exe")
 
     domain_file.addToVersionControl.assert_not_called()
@@ -66,6 +70,59 @@ def test_ensure_private_domain_file_still_adds_to_version_control(monkeypatch: p
     provider._ensure_shared_domain_file_registered_for_version_control(domain_file, "/local.exe")
 
     domain_file.addToVersionControl.assert_called_once()
+
+
+@pytest.mark.unit
+def test_resolve_shared_checkout_prefers_versioned_over_private_stub() -> None:
+    provider = ProjectToolProvider.__new__(ProjectToolProvider)
+    private = MagicMock(name="private")
+    private.isCheckedOut.return_value = False
+    private.isVersioned.return_value = False
+    versioned = MagicMock(name="versioned")
+    versioned.isCheckedOut.return_value = False
+    versioned.isVersioned.return_value = True
+
+    provider._get_domain_file_with_path_variants = MagicMock(return_value=private)  # type: ignore[method-assign]
+    provider._find_domain_file_shared_item_in_tree = MagicMock(return_value=versioned)  # type: ignore[method-assign]
+
+    got = provider._resolve_shared_checkout_domain_file(MagicMock(), "/fixture.exe", "fixture.exe")
+    assert got is versioned
+
+
+@pytest.mark.unit
+def test_ensure_shared_calls_promote_when_project_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    session_id = "test-shared-promote"
+    adapter = MagicMock()
+    SESSION_CONTEXTS.set_project_handle(
+        session_id,
+        {
+            "mode": "shared-server",
+            "server_host": "127.0.0.1",
+            "server_port": 26100,
+            "repository_name": "agentrepo",
+            "repository_adapter": adapter,
+        },
+    )
+    monkeypatch.setattr(
+        "agentdecompile_cli.mcp_server.providers.project.get_current_mcp_session_id",
+        lambda: session_id,
+    )
+
+    domain_file = MagicMock()
+    domain_file.isVersioned.return_value = False
+    domain_file.addToVersionControl = MagicMock()
+
+    promoted = MagicMock()
+    promoted.isVersioned.return_value = True
+
+    provider = ProjectToolProvider.__new__(ProjectToolProvider)
+    provider._manager = SimpleNamespace(ghidra_project=object())
+    provider._promote_private_to_shared_versioned_checkout = MagicMock(return_value=promoted)  # type: ignore[method-assign]
+
+    provider._ensure_shared_domain_file_registered_for_version_control(domain_file, "/fixture.exe")
+
+    provider._promote_private_to_shared_versioned_checkout.assert_called_once()
+    domain_file.addToVersionControl.assert_not_called()
 
 
 @pytest.mark.unit

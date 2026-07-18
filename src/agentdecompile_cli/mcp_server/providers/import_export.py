@@ -4647,15 +4647,39 @@ class ImportExportToolProvider(ToolProvider):
                     if resolved is not None:
                         domain_file, program_display_name = resolved
                         logger.info("[_handle_checkout] GhidraDomainFile resolved after checkout: %s", program_display_name)
+                        is_versioned = False
+                        is_checked_out = False
+                        try:
+                            is_versioned = bool(domain_file is not None and domain_file.isVersioned())
+                            is_checked_out = bool(domain_file is not None and domain_file.isCheckedOut())
+                        except Exception:
+                            pass
+                        if not is_versioned:
+                            return create_success_response(
+                                {
+                                    "action": "checkout",
+                                    "program": program_display_name,
+                                    "exclusive": exclusive,
+                                    "success": False,
+                                    "is_checked_out": is_checked_out,
+                                    "is_versioned": False,
+                                    "reason": "shared-domain-file-not-versioned",
+                                    "error": (
+                                        "Shared checkout resolved a non-versioned DomainFile (private project stub). "
+                                        "Re-open the shared project and retry checkout-program so checkin can reach "
+                                        "the Ghidra Server."
+                                    ),
+                                    "note": "Checked out via shared repository adapter.",
+                                },
+                            )
                         return create_success_response(
                             {
                                 "action": "checkout",
                                 "program": program_display_name,
                                 "exclusive": exclusive,
                                 "success": True,
-                                "is_checked_out": bool(
-                                    domain_file is not None and domain_file.isCheckedOut(),
-                                ),
+                                "is_checked_out": is_checked_out,
+                                "is_versioned": True,
                                 "note": "Checked out via shared repository adapter.",
                             },
                         )

@@ -43,8 +43,21 @@ Secondary: LocalTrack restored parent `AGENT_DECOMPILE_GHIDRA_SERVER_*` immediat
 2. Refuse `addToVersionControl` in shared-server sessions (would recreate local-only VC).
 3. After shared checkin, fail if the Ghidra Server tip did not advance.
 4. Keep LocalTrack driver env stripped for the whole LocalTrack MCP lifetime.
+5. **Follow-up (2026-07-18):** After (1)+(2), analyzeHeadless import still leaves a **private `idata` stub** that hides the RemoteFileSystem item. Checkout reported success with `is_checked_out: false` and checkin failed ("not version-controlled"). Promote by deleting the private stub, `RepositoryAdapter.checkout`, then `DomainFile.checkout` on the shadow; fail checkout if the DomainFile remains unversioned.
+
+```mermaid
+flowchart TD
+  I[analyzeHeadless import] --> P[private idata stub]
+  P --> C[checkout-program]
+  C --> D{isVersioned?}
+  D -->|no| X[delete stub + adapter checkout + DomainFile.checkout]
+  X --> V[versioned DomainFile]
+  V --> K[checkin advances server tip]
+  D -->|yes| K
+```
 
 ## Verification
 
 - Unit: `tests/test_shared_checkin_local_vc_guard.py`
 - Smoke: Linux LFG through step 5; server `history.dat` must show versions > 1 after label checkins
+- Checkout response must include `is_versioned: true` / `is_checked_out: true` for shared exclusive checkout

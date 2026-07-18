@@ -5023,18 +5023,182 @@ class ProjectToolProvider(ToolProvider):
     ) -> GhidraDomainFile | None:
         """Prefer a **versioned** ``GhidraDomainFile`` after ``RepositoryAdapter.checkout`` (getFile can return a stale stub)."""
         df: GhidraDomainFile | None = self._get_domain_file_with_path_variants(project_data, program_path, item_name)
-        if df is not None:
-            try:
-                if bool(df.isCheckedOut()):
-                    return df
-                if bool(df.isVersioned()):
-                    return df
-            except Exception:
-                pass
         found: GhidraDomainFile | None = self._find_domain_file_shared_item_in_tree(project_data, item_name)
-        if found is not None:
+
+        def _is_usable_shared(candidate: GhidraDomainFile | None) -> bool:
+            if candidate is None:
+                return False
+            try:
+                if hasattr(candidate, "isCheckedOut") and bool(candidate.isCheckedOut()):
+                    return True
+                if hasattr(candidate, "isVersioned") and bool(candidate.isVersioned()):
+                    return True
+            except Exception:
+                return False
+            return False
+
+        # Prefer versioned / checked-out handles. A private analyzeHeadless stub at the same path
+        # must not win over a RemoteFileSystem shadow (LFG: is_checked_out=False, checkin fails).
+        for candidate in (df, found):
+            if _is_usable_shared(candidate):
+                return candidate
+        if found is not None and found is not df:
             return found
         return df
+
+    def _promote_private_to_shared_versioned_checkout(
+        self,
+        *,
+        ghidra_project: Any,
+        repository_adapter: GhidraRepositoryAdapter,
+        program_path: str,
+        exclusive: bool = False,
+        domain_file_hint: GhidraDomainFile | None = None,
+    ) -> GhidraDomainFile | None:
+        """Replace a private ``idata`` stub with a server-backed versioned checkout.
+
+        Shared projects linked via ``convertProjectToShared`` still accumulate private DomainFiles when
+        ``import-binary`` falls back to analyzeHeadless. Those stubs hide the RemoteFileSystem item:
+        ``RepositoryAdapter.checkout`` may succeed on the server while ``DomainFile.isVersioned()`` stays
+        false and checkin refuses to run. Delete the private copy, checkout from the adapter, then
+        ``DomainFile.checkout`` on the shadow.
+        """
+        from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+
+        monitor = GhidraTaskMonitor.DUMMY
+        session_id = get_current_mcp_session_id()
+        parts = program_path.rsplit("/", 1)
+        folder_path = parts[0] if len(parts) == 2 else "/"
+        item_name = parts[1] if len(parts) == 2 else parts[0]
+        adapter_folder_path = folder_path
+        for fp in repository_adapter_folder_candidates(folder_path):
+            try:
+                if repository_adapter.getItem(fp, item_name) is not None:
+                    adapter_folder_path = fp
+                    break
+            except Exception:
+                continue
+
+        project_data: GhidraProjectData | None = None
+        try:
+            project_data = ghidra_project.getProjectData()
+        except Exception:
+            try:
+                project_data = ghidra_project.getProject().getProjectData()
+            except Exception:
+                project_data = None
+        if project_data is None:
+            return None
+
+        self._ensure_ghidra_project_linked_to_repository(ghidra_project, repository_adapter)
+
+        domain_file = domain_file_hint or self._resolve_shared_checkout_domain_file(
+            project_data, program_path, item_name
+        )
+        try:
+            if domain_file is not None and bool(domain_file.isVersioned()):
+                if hasattr(domain_file, "isCheckedOut") and not bool(domain_file.isCheckedOut()):
+                    try:
+                        domain_file.checkout(exclusive, monitor)
+                    except Exception as co_exc:
+                        logger.warning(
+                            "DomainFile.checkout on already-versioned shared file failed for %s: %s",
+                            program_path,
+                            co_exc,
+                        )
+                return self._resolve_shared_checkout_domain_file(project_data, program_path, item_name) or domain_file
+        except Exception:
+            pass
+
+        if domain_file is not None:
+            try:
+                is_private = not bool(domain_file.isVersioned()) and not bool(domain_file.isCheckedOut())
+            except Exception:
+                is_private = True
+            if is_private:
+                try:
+                    self._release_session_programs_for_domain_file(
+                        session_id=session_id,
+                        domain_file=domain_file,
+                    )
+                    domain_file.delete()
+                    logger.warning(
+                        "Deleted private shared-project stub for %s so RemoteFileSystem checkout can bind",
+                        program_path,
+                    )
+                    domain_file = None
+                except Exception as del_exc:
+                    logger.warning(
+                        "Could not delete private shared-project stub for %s: %s",
+                        program_path,
+                        del_exc,
+                    )
+
+        from ghidra.framework.store import CheckoutType as GhidraCheckoutType  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+
+        if exclusive:
+            checkout_type = getattr(GhidraCheckoutType, "EXCLUSIVE", None) or getattr(
+                GhidraCheckoutType,
+                "EXCLUSIVE_CHECKOUT",
+                None,
+            )
+            if checkout_type is None:
+                checkout_type = GhidraCheckoutType.NORMAL
+        else:
+            checkout_type = GhidraCheckoutType.NORMAL
+
+        checkout_project_path = program_path
+        try:
+            proj = ghidra_project.getProject()
+            if proj is not None and hasattr(proj, "getProjectLocator"):
+                locator = proj.getProjectLocator()
+                if locator is not None and hasattr(locator, "getProjectDir"):
+                    proj_dir = locator.getProjectDir()
+                    if proj_dir is not None:
+                        abs_dir = str(proj_dir.getAbsolutePath()).replace("\\", "/")
+                        rel_parts = [part for part in str(folder_path or "/").split("/") if part]
+                        rel_tail = "/".join([*rel_parts, item_name]) if rel_parts else item_name
+                        checkout_project_path = (
+                            f"{abs_dir}/{rel_tail}" if not abs_dir.endswith("/") else f"{abs_dir}{rel_tail}"
+                        )
+        except Exception:
+            pass
+
+        try:
+            if hasattr(repository_adapter, "isConnected") and not bool(repository_adapter.isConnected()):
+                repository_adapter.connect()
+            repository_adapter.checkout(adapter_folder_path, item_name, checkout_type, checkout_project_path)
+        except Exception as co_exc:
+            logger.warning(
+                "RepositoryAdapter.checkout during private→versioned promote failed for %s: %s",
+                program_path,
+                co_exc,
+            )
+
+        domain_file = self._resolve_shared_checkout_domain_file(project_data, program_path, item_name)
+        if domain_file is None:
+            return None
+        try:
+            if bool(domain_file.isVersioned()) and not bool(domain_file.isCheckedOut()):
+                domain_file.checkout(exclusive, monitor)
+                domain_file = self._resolve_shared_checkout_domain_file(project_data, program_path, item_name) or domain_file
+        except Exception as shadow_exc:
+            logger.warning(
+                "DomainFile.checkout after promote for %s failed: %s",
+                program_path,
+                shadow_exc,
+            )
+        try:
+            if domain_file is not None and bool(domain_file.isVersioned()):
+                logger.info(
+                    "Promoted shared DomainFile for %s to versioned checkout (checked_out=%s)",
+                    program_path,
+                    bool(domain_file.isCheckedOut()) if hasattr(domain_file, "isCheckedOut") else None,
+                )
+                return domain_file
+        except Exception:
+            pass
+        return domain_file
 
     def _ensure_ghidra_project_linked_to_repository(
         self,
@@ -5098,6 +5262,22 @@ class ProjectToolProvider(ToolProvider):
         session = SESSION_CONTEXTS.get_or_create(session_id)
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
         if handle and is_shared_server_handle(handle):
+            repo_adapter = handle.get("repository_adapter")
+            mgr = getattr(self, "_manager", None)
+            ghidra_project = getattr(mgr, "ghidra_project", None) if mgr is not None else None
+            if repo_adapter is not None and ghidra_project is not None:
+                promoted = self._promote_private_to_shared_versioned_checkout(
+                    ghidra_project=ghidra_project,
+                    repository_adapter=repo_adapter,
+                    program_path=program_path,
+                    exclusive=False,
+                    domain_file_hint=domain_file,
+                )
+                try:
+                    if promoted is not None and bool(promoted.isVersioned()):
+                        return
+                except Exception:
+                    pass
             logger.warning(
                 "Shared-server DomainFile for %s is not versioned after checkout; refusing "
                 "addToVersionControl (would create local-only VC that never reaches Ghidra Server)",
@@ -5149,6 +5329,12 @@ class ProjectToolProvider(ToolProvider):
         handle = session.project_handle if isinstance(session.project_handle, dict) else None
         if handle and is_shared_server_handle(handle):
             self._apply_shared_server_user_identity(handle.get("server_username"))
+
+        # Ensure RemoteFileSystem link before resolving DomainFiles (createProject is private by default).
+        mgr_early = getattr(self, "_manager", None)
+        ghidra_project_early: GhidraProject | None = getattr(mgr_early, "ghidra_project", None) if mgr_early is not None else None
+        if ghidra_project_early is not None:
+            self._ensure_ghidra_project_linked_to_repository(ghidra_project_early, repository_adapter)
 
         # Split program_path into folder + name
         parts: list[str] = program_path.rsplit("/", 1)
@@ -5739,6 +5925,44 @@ class ProjectToolProvider(ToolProvider):
                     checkout_link_domain_file,
                     program_path,
                 )
+
+        # Private analyzeHeadless stubs hide RemoteFileSystem items even after convertProjectToShared.
+        # Promote before opening ProgramInfo so checkin sees a versioned DomainFile (LFG step 5).
+        if ghidra_project is not None:
+            try:
+                needs_promote = True
+                if checkout_link_domain_file is not None and hasattr(checkout_link_domain_file, "isVersioned"):
+                    needs_promote = not bool(checkout_link_domain_file.isVersioned())
+                if needs_promote:
+                    promoted = self._promote_private_to_shared_versioned_checkout(
+                        ghidra_project=ghidra_project,
+                        repository_adapter=repository_adapter,
+                        program_path=program_path,
+                        exclusive=exclusive,
+                        domain_file_hint=checkout_link_domain_file,
+                    )
+                    if promoted is not None:
+                        checkout_link_domain_file = promoted
+            except Exception as promote_exc:
+                logger.warning("Shared versioned promote failed for %s: %s", program_path, promote_exc)
+
+        try:
+            final_df = checkout_link_domain_file
+            if final_df is None and project_data is not None:
+                final_df = self._resolve_shared_checkout_domain_file(project_data, program_path, item_name)
+            if final_df is None or not bool(final_df.isVersioned()):
+                raise ValueError(
+                    f"Shared checkout of '{program_path}' left a non-versioned DomainFile. "
+                    "The local project still has a private stub (often from analyzeHeadless import). "
+                    "Delete the private file, re-run checkout-program, then checkin-program."
+                )
+            checkout_link_domain_file = final_df
+        except ValueError:
+            raise
+        except Exception as ver_exc:
+            raise ValueError(
+                f"Shared checkout of '{program_path}' could not verify DomainFile version control: {ver_exc}"
+            ) from ver_exc
 
         # If PyGhidra opened a Program whose getDomainFile() is not the versioned project GhidraDomainFile,
         # checkin-program and checkout-status see a non-versioned stub. Re-open from the versioned file.
