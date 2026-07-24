@@ -126,6 +126,75 @@ def test_ensure_shared_calls_promote_when_project_bound(monkeypatch: pytest.Monk
 
 
 @pytest.mark.unit
+def test_promote_refreshes_project_data_after_stub_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After deleting a private stub, ProjectData.refresh(True) must run before getFile."""
+    fake_tm = SimpleNamespace(DUMMY=object())
+    monkeypatch.setitem(__import__("sys").modules, "ghidra.util.task", SimpleNamespace(TaskMonitor=fake_tm))
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "ghidra.framework.store",
+        SimpleNamespace(CheckoutType=SimpleNamespace(NORMAL=object(), EXCLUSIVE=object())),
+    )
+    monkeypatch.setattr(
+        "agentdecompile_cli.mcp_server.providers.project.get_current_mcp_session_id",
+        lambda: "test-refresh-after-stub",
+    )
+    monkeypatch.setattr(
+        "agentdecompile_cli.mcp_server.providers.project.repository_adapter_folder_candidates",
+        lambda folder: ["/"],
+    )
+
+    private = MagicMock(name="private")
+    private.isVersioned.return_value = False
+    private.isCheckedOut.return_value = False
+    private.delete = MagicMock()
+
+    versioned = MagicMock(name="versioned")
+    versioned.isVersioned.return_value = True
+    versioned.isCheckedOut.return_value = False
+    versioned.checkout = MagicMock()
+
+    project_data = MagicMock()
+    project_data.refresh = MagicMock()
+
+    ghidra_project = MagicMock()
+    ghidra_project.getProjectData.return_value = project_data
+    ghidra_project.getProject.return_value = None
+
+    adapter = MagicMock()
+    adapter.isConnected.return_value = True
+    adapter.getItem.return_value = object()
+
+    provider = ProjectToolProvider.__new__(ProjectToolProvider)
+    provider._manager = SimpleNamespace(ghidra_project=ghidra_project)
+    provider._ensure_ghidra_project_linked_to_repository = MagicMock(return_value=ghidra_project)  # type: ignore[method-assign]
+    provider._release_session_programs_for_domain_file = MagicMock()  # type: ignore[method-assign]
+    resolve_calls: list[str] = []
+
+    def _resolve(_pd: object, _path: str, _name: str) -> MagicMock:
+        resolve_calls.append("resolve")
+        # After stub delete + refresh, expose the RemoteFS shadow.
+        return versioned if len(resolve_calls) >= 1 and private.delete.called else private
+
+    provider._resolve_shared_checkout_domain_file = MagicMock(side_effect=_resolve)  # type: ignore[method-assign]
+
+    got = provider._promote_private_to_shared_versioned_checkout(
+        ghidra_project=ghidra_project,
+        repository_adapter=adapter,
+        program_path="/fixture.exe",
+        exclusive=False,
+        domain_file_hint=private,
+    )
+
+    private.delete.assert_called_once()
+    project_data.refresh.assert_called_with(True)
+    versioned.checkout.assert_called_once()
+    assert got is versioned
+    # Prefer DomainFile.checkout after refresh; adapter checkout is a fallback only.
+    adapter.checkout.assert_not_called()
+    assert len(resolve_calls) >= 1
+
+@pytest.mark.unit
 def test_ensure_linked_reopens_after_convert(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_tm = SimpleNamespace(DUMMY=object())
     monkeypatch.setitem(__import__("sys").modules, "ghidra.util.task", SimpleNamespace(TaskMonitor=fake_tm))

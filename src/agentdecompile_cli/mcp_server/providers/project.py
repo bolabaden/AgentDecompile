@@ -5052,6 +5052,47 @@ class ProjectToolProvider(ToolProvider):
             return found
         return df
 
+    def _refresh_shared_project_data(
+        self,
+        ghidra_project: Any,
+        project_data: GhidraProjectData | None,
+    ) -> GhidraProjectData | None:
+        """Refresh live ``ProjectData`` so RemoteFileSystem shadows appear after stub delete.
+
+        ``RepositoryAdapter.checkout`` only records a server grant; it does not bind a versioned
+        ``DomainFile``. After deleting a private ``idata`` stub, ``getFile`` stays empty/stale until
+        ``ProjectData.refresh(True)`` (LFG step5reopen033102: server checkout granted, ``isVersioned`` false).
+        """
+        pd = project_data
+        if pd is None and ghidra_project is not None:
+            try:
+                pd = ghidra_project.getProjectData()
+            except Exception:
+                try:
+                    pd = ghidra_project.getProject().getProjectData()
+                except Exception:
+                    pd = None
+        if pd is None:
+            return project_data
+        try:
+            if hasattr(pd, "refresh"):
+                pd.refresh(True)
+        except Exception as refresh_exc:
+            logger.warning("[shared-checkout] ProjectData.refresh(True) failed: %s", refresh_exc)
+        # Prefer the manager's project handle in case refresh/reopen replaced it.
+        mgr = getattr(self, "_manager", None)
+        live = getattr(mgr, "ghidra_project", None) if mgr is not None else None
+        src = live if live is not None else ghidra_project
+        if src is None:
+            return pd
+        try:
+            return src.getProjectData()
+        except Exception:
+            try:
+                return src.getProject().getProjectData()
+            except Exception:
+                return pd
+
     def _promote_private_to_shared_versioned_checkout(
         self,
         *,
@@ -5066,8 +5107,8 @@ class ProjectToolProvider(ToolProvider):
         Shared projects linked via ``convertProjectToShared`` still accumulate private DomainFiles when
         ``import-binary`` falls back to analyzeHeadless. Those stubs hide the RemoteFileSystem item:
         ``RepositoryAdapter.checkout`` may succeed on the server while ``DomainFile.isVersioned()`` stays
-        false and checkin refuses to run. Delete the private copy, checkout from the adapter, then
-        ``DomainFile.checkout`` on the shadow.
+        false and checkin refuses to run. Delete the private copy, ``ProjectData.refresh(True)``, then
+        ``DomainFile.checkout`` on the RemoteFS shadow (adapter checkout alone is not enough).
         """
         from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
@@ -5096,7 +5137,9 @@ class ProjectToolProvider(ToolProvider):
         if project_data is None:
             return None
 
-        self._ensure_ghidra_project_linked_to_repository(ghidra_project, repository_adapter)
+        linked = self._ensure_ghidra_project_linked_to_repository(ghidra_project, repository_adapter)
+        if linked is not None:
+            ghidra_project = linked
         # Re-read project after possible post-convert reopen.
         mgr = getattr(self, "_manager", None)
         if mgr is not None and getattr(mgr, "ghidra_project", None) is not None:
@@ -5127,6 +5170,7 @@ class ProjectToolProvider(ToolProvider):
         except Exception:
             pass
 
+        stub_deleted = False
         if domain_file is not None:
             try:
                 is_private = not bool(domain_file.isVersioned()) and not bool(domain_file.isCheckedOut())
@@ -5144,12 +5188,40 @@ class ProjectToolProvider(ToolProvider):
                         program_path,
                     )
                     domain_file = None
+                    stub_deleted = True
                 except Exception as del_exc:
                     logger.warning(
                         "Could not delete private shared-project stub for %s: %s",
                         program_path,
                         del_exc,
                     )
+
+        if stub_deleted:
+            project_data = self._refresh_shared_project_data(ghidra_project, project_data)
+            if project_data is not None:
+                shadow = self._resolve_shared_checkout_domain_file(project_data, program_path, item_name)
+                if shadow is not None:
+                    try:
+                        if bool(shadow.isVersioned()):
+                            if not bool(shadow.isCheckedOut()):
+                                shadow.checkout(exclusive, monitor)
+                                shadow = (
+                                    self._resolve_shared_checkout_domain_file(project_data, program_path, item_name)
+                                    or shadow
+                                )
+                            logger.info(
+                                "Promoted shared DomainFile for %s to versioned checkout after refresh "
+                                "(checked_out=%s)",
+                                program_path,
+                                bool(shadow.isCheckedOut()) if hasattr(shadow, "isCheckedOut") else None,
+                            )
+                            return shadow
+                    except Exception as shadow_exc:
+                        logger.warning(
+                            "DomainFile.checkout after stub delete+refresh for %s failed: %s",
+                            program_path,
+                            shadow_exc,
+                        )
 
         from ghidra.framework.store import CheckoutType as GhidraCheckoutType  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
@@ -5192,6 +5264,7 @@ class ProjectToolProvider(ToolProvider):
                 co_exc,
             )
 
+        project_data = self._refresh_shared_project_data(ghidra_project, project_data)
         domain_file = self._resolve_shared_checkout_domain_file(project_data, program_path, item_name)
         if domain_file is None:
             return None
@@ -5733,7 +5806,9 @@ class ProjectToolProvider(ToolProvider):
                                 logger.info(
                                     "Deleted private local copy of '%s' to allow versioned checkout", program_path
                                 )
-                                # After deletion, re-resolve: project may now expose the server-backed
+                                # RemoteFS shadows do not appear until ProjectData.refresh after stub delete.
+                                project_data = self._refresh_shared_project_data(ghidra_project, project_data)
+                                # After deletion+refresh, re-resolve: project may now expose the server-backed
                                 # versioned file at this path (shared project shadow).
                                 shadow_df = self._resolve_shared_checkout_domain_file(
                                     project_data, program_path, item_name
