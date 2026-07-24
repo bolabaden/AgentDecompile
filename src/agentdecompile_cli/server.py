@@ -513,7 +513,8 @@ def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]
     project_path = _resolve_default_project_path(args.project_path).resolve()
     sys.stderr.write(f"[project-paths] raw='{args.project_path}' \u2192 resolved='{project_path}' (suffix='{project_path.suffix}', project_name='{args.project_name}')\n")
     if project_path.suffix.lower() == ".gpr":
-        if args.project_name != "my_project":
+        default_project_name = os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "my_project")
+        if args.project_name != default_project_name:
             parser.error("Cannot use --project-name with a .gpr file")
         sys.stderr.write(f"[project-paths] .gpr mode: dir='{project_path.parent}', name='{project_path.stem}'\n")
         return str(project_path.parent), project_path.stem, project_path
@@ -764,8 +765,8 @@ def main() -> None:
     g_server.add_argument(
         "--project-name",
         type=str,
-        default="my_project",
-        help="Project name (ignored when using .gpr)",
+        default=os.environ.get("AGENT_DECOMPILE_PROJECT_NAME", "my_project"),
+        help="Project name (ignored when using .gpr). Env: AGENT_DECOMPILE_PROJECT_NAME",
     )
     g_server.add_argument("--threaded", dest="threaded", action="store_true", help="Allow threaded analysis")
     g_server.add_argument("--no-threaded", dest="threaded", action="store_false", help="Disable threaded analysis")

@@ -177,10 +177,18 @@ ENV GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR}
 
 ARG AGENT_DECOMPILE_HOST="0.0.0.0"
 ENV AGENT_DECOMPILE_HOST=${AGENT_DECOMPILE_HOST}
+ARG AGENT_DECOMPILE_TRANSPORT="streamable-http"
+ENV AGENT_DECOMPILE_TRANSPORT=${AGENT_DECOMPILE_TRANSPORT}
 ARG AGENT_DECOMPILE_PROJECT_PATH=""
 ENV AGENT_DECOMPILE_PROJECT_PATH=${AGENT_DECOMPILE_PROJECT_PATH}
+ARG AGENT_DECOMPILE_PROJECT_NAME=""
+ENV AGENT_DECOMPILE_PROJECT_NAME=${AGENT_DECOMPILE_PROJECT_NAME}
 ARG AGENT_DECOMPILE_CONFIG_FILE=""
 ENV AGENT_DECOMPILE_CONFIG_FILE=${AGENT_DECOMPILE_CONFIG_FILE}
+ARG AGENT_DECOMPILE_BACKEND_URL=""
+ENV AGENT_DECOMPILE_BACKEND_URL=${AGENT_DECOMPILE_BACKEND_URL}
+ARG AGENT_DECOMPILE_VERBOSE=""
+ENV AGENT_DECOMPILE_VERBOSE=${AGENT_DECOMPILE_VERBOSE}
 
 ARG GHIDRA_USER="ghidra"
 ENV GHIDRA_USER=${GHIDRA_USER}
@@ -216,8 +224,9 @@ RUN \
 
 WORKDIR ${GHIDRA_HOME}
 COPY --from=build --chown=${GHIDRA_USER}:${GHIDRA_GROUP} ${GHIDRA_HOME} ${GHIDRA_HOME}
+# Copy the comprehensive MCP entrypoint script from the repository's docker/ directory.
+COPY --chown=${GHIDRA_USER}:${GHIDRA_GROUP} docker/start-mcp.sh ${GHIDRA_HOME}/docker/start-mcp.sh
 RUN set -eux; \
-    mkdir -p ${GHIDRA_HOME}/docker; \
         for arch_dir in linux_aarch64 linux_arm_64 linux_arm64 linux_aarch_64; do \
             mkdir -p ${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${arch_dir}; \
             printf '%s\n' \
@@ -234,26 +243,6 @@ RUN set -eux; \
             ${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${arch_dir}/decompile \
             ${GHIDRA_HOME}/Ghidra/Features/Decompiler/os/${arch_dir}/sleigh; \
         done; \
-    printf '%s\n' \
-    '#!/usr/bin/env bash' \
-    'set -euo pipefail' \
-    '' \
-    'ARGS=(' \
-    '    -t streamable-http' \
-    '    --host "${AGENT_DECOMPILE_HOST:-0.0.0.0}"' \
-    '    --port "${AGENT_DECOMPILE_PORT:-8080}"' \
-    ')' \
-    '' \
-    'if [[ -n "${AGENT_DECOMPILE_PROJECT_PATH:-}" ]]; then' \
-    '    ARGS+=(--project-path "${AGENT_DECOMPILE_PROJECT_PATH}")' \
-    'fi' \
-    '' \
-    'if [[ -n "${AGENT_DECOMPILE_CONFIG_FILE:-}" ]]; then' \
-    '    ARGS+=(--config "${AGENT_DECOMPILE_CONFIG_FILE}")' \
-    'fi' \
-    '' \
-    'exec /ghidra/venv/bin/agentdecompile-server "${ARGS[@]}"' \
-    > ${GHIDRA_HOME}/docker/start-mcp.sh; \
     sed -i 's/\r$//' ${GHIDRA_HOME}/docker/start-mcp.sh; \
     chmod +x ${GHIDRA_HOME}/docker/start-mcp.sh; \
     mkdir -p /work /projects; \
