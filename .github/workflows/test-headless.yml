@@ -25,7 +25,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
       with:
         lfs: true
 
@@ -41,7 +41,7 @@ jobs:
         python-version: "3.12"
 
     - name: Install Ghidra ${{ matrix.ghidra-version }}
-      uses: antoniovazquezblanco/setup-ghidra@v2.1.2
+      uses: antoniovazquezblanco/setup-ghidra@v2.1.4
       with:
         version: ${{ matrix.ghidra-version }}
         auth_token: ${{ secrets.GITHUB_TOKEN }}
