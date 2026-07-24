@@ -63,6 +63,14 @@ _ANALYSIS_GATE_EXEMPT_TOOLS: frozenset[str] = frozenset(
         "reconstruct",
         "status",
         "claimreport",
+        # Tier 0–1 external subprocess tools — no analyzed Ghidra program required.
+        "runfiletriage",
+        "runexternalrescan",
+        "runbatchdecompile",
+        "runbatchexportgzf",
+        "runbatchbsimsignatures",
+        "runbatchsastscan",
+        "rundecompmatch",
     },
 )
 

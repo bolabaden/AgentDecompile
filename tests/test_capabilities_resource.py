@@ -19,6 +19,7 @@ TIER01_RUN_TOOLS: dict[str, int] = {
     "run-batch-export-gzf": 1,
     "run-batch-bsim-signatures": 1,
     "run-batch-sast-scan": 1,
+    "run-decomp-match": 1,
 }
 
 
@@ -95,3 +96,4 @@ def test_capabilities_tier_routing_includes_mcp_run_tools() -> None:
     assert "run-external-re-scan" in tier0_examples
     assert "run-batch-decompile" in tier1_examples
     assert "run-batch-sast-scan" in tier1_examples
+    assert "run-decomp-match" in tier1_examples

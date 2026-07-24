@@ -18,14 +18,14 @@ Details: [tiered-re-analysis-knowledgebase.md](../../docs/solutions/architecture
 | Surface | Entry | Notes |
 |---------|-------|-------|
 | MCP resource | `resources/read` → **`agentdecompile://capabilities`** | Tier routing + full tool inventory with `analysis_tier` (no Ghidra session required) |
-| MCP tools | `tools/list` → `tools/call` | **62 advertised** tools (default surface); 4 GUI-only tools hidden |
+| MCP tools | `tools/list` → `tools/call` | **63 advertised** tools (default surface); 4 GUI-only tools hidden |
 | MCP prompts | `prompts/list` → **`prompts/get`** | 9 RE workflow prompts with session substitution |
 | CLI | `agentdecompile-cli tool`, `tool-seq` | Persists `mcp-session-id` per backend URL |
 | Slash commands | `/help`, `/capabilities`, `/lfg` | Cursor agent discovery + live proof |
 
 ## Advertised MCP tools (62)
 
-Canonical catalog: [TOOLS_LIST.md](../../TOOLS_LIST.md) (66 canonical; 62 advertised + 4 GUI-only hidden).
+Canonical catalog: [TOOLS_LIST.md](../../TOOLS_LIST.md) (67 canonical; 63 advertised + 4 GUI-only hidden).
 
 | Category | Tools |
 |----------|-------|

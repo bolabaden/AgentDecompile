@@ -40,9 +40,9 @@ flowchart LR
 |------|-----------|-----|
 | 0 | `run-file-triage`, `run-external-re-scan` | #84, #82 |
 | 0 embed | `externalScanTools` on triage | #85 |
-| 1 | `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan` | #80–#83 |
+| 1 | `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan`, **`run-decomp-match`** | #80–#83, #113 |
 
-**Discovery sync (PR #86):** Updated `.cursorrules`, `/capabilities`, `/help`, RE Planner, artifact protocol, KB, README/USAGE to **66 canonical / 62 advertised** and document all six tools.
+**Discovery sync (PR #86):** Updated `.cursorrules`, `/capabilities`, `/help`, RE Planner, artifact protocol, KB, README/USAGE to **67 canonical / 63 advertised** (after `run-decomp-match`, PR #113) and document tier 0–1 `run-*` tools.
 
 **Capabilities verification:** `tests/test_capabilities_resource.py` asserts each `run-*` appears in `agentdecompile://capabilities` with correct `analysis_tier` and dynamic summary counts.
 

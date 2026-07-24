@@ -88,6 +88,7 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`open`](#open)
     - [`read-bytes`](#read-bytes)
     - [`resolve-modification-conflict`](#resolve-modification-conflict)
+    - [`run-decomp-match`](#run-decomp-match)
     - [`search-code`](#search-code)
     - [`search-constants`](#search-constants)
     - [`search-everything`](#search-everything)
@@ -1286,6 +1287,42 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 
 **Examples**:
 - Match function: `match-function programPath="/bin1.exe" functionIdentifier="main" targetProgramPaths=["/bin2.exe"] minSimilarity=0.9 propagateNames=true`.
+
+**Bytecode matching:** For decompilation projects requiring instruction-level object match, use **`run-decomp-match`** with `tool=objdiff` instead. `match-function` does not compare bytes or object code.
+
+### `run-decomp-match`
+
+**Description**: Tier 1 decomp matching facade — invokes external **m2c** (assembly→C), **objdiff-cli** (bytecode/object match verification), or **decomp-permuter** when installed on PATH. Does **not** require Ghidra or an open MCP session program. Success criterion for decomp workflows is **objdiff match %** (see [TWW decompiling guide](https://github.com/zeldaret/tww/blob/main/docs/decompiling.md)). For **shared/versioned Ghidra Server** projects, use Ghidra MCP (Tier 2–3) only for checkout, struct export, and check-in — not for every verify loop.
+
+**Parameters**:
+- `tool` (string, optional): `m2c`, `objdiff`, `permuter`, or `all` (bundle).
+- `tools` (array, optional): Explicit bundle list.
+- `assemblyPath` (string, optional): `.s` assembly file for m2c.
+- `functionName` (string, optional): m2c `-f` filter.
+- `target` (string, optional): m2c `--target` (e.g. `ppc-mwcc-c++`).
+- `contextPath` (string, optional): m2c `--context` header.
+- `projectPath` (string, optional): Decomp project root (`objdiff.json`) for objdiff report/diff.
+- `unitName` (string, optional): objdiff translation unit filter.
+- `targetObjectPath` / `baseObjectPath` (string, optional): Direct `.o` paths for objdiff diff mode.
+- `symbol` (string, optional): Function symbol for objdiff diff.
+- `objdiffMode` (string, optional): `report` (default) or `diff`.
+- `permuterDir` (string, optional): Permuter input directory.
+- `permuterScript` (string, optional): Path to `permuter.py`.
+- `jobs` (integer, optional): Permuter `-j` workers.
+- `extraArgs` (array, optional): Extra CLI args for m2c/permuter.
+- `outputLimit` (integer, optional): Max output lines (default 200).
+- `timeout` (integer, optional): Timeout ms (default 120000).
+
+**Overloads**:
+- `run-decomp-match(tool, assemblyPath, projectPath, permuterDir, ...)` canonical signature.
+
+**Synonyms**: `run-decomp-match`, `run_decomp_match`, `decomp-match`, `decompmatch`
+
+**Examples**:
+- Verify TU match: `run-decomp-match tool=objdiff projectPath="/decomp" unitName="d_a_wall"`.
+- m2c switch helper: `run-decomp-match tool=m2c assemblyPath="func.s" target="ppc-mwcc-c++" functionName="getAnswer"`.
+- Permute near-match: `run-decomp-match tool=permuter permuterDir="/perm/input" jobs=4`.
+
 ### `migrate-metadata`
 
 **Description**: Auto-generated stub; see `src/agentdecompile_cli/registry.py` and the MCP implementation for full behavior.

@@ -20,7 +20,7 @@ Use this skill **before** calling Ghidra MCP tools. Full knowledge base: [docs/s
 | Tier | Ghidra? | Use for |
 |------|---------|---------|
 | **0** | No | `run-file-triage`, `run-external-re-scan`, `file`, `strings`, `yara`/`capa`, `binwalk` |
-| **1** | Batch only | `run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan` |
+| **1** | Batch / external decomp | `run-batch-*`, **`run-decomp-match`** (m2c, objdiff bytecode verify, permuter) |
 | **2** | MCP read-only | After `open-project` + analysis complete: `list-*`, `search-*`, `get-references`, `get-call-graph` |
 | **3** | MCP deep/mutate | `decompile-function`, `analyze-data-flow`, `manage-*`, `match-function`, `execute-script` (last resort) |
 
@@ -76,6 +76,10 @@ Stay at **Tier 0–1** when:
 - Identifying file type, entropy, embedded files
 - Hunting keywords before committing to JVM startup
 - Batch-exporting decomp for ripgrep/semgrep offline
+- **Verifying decomp with objdiff** (bytecode match %) — use `run-decomp-match`, not `match-function`
+- Running **m2c** on `.s` assembly or **permuter** on near-matching C
+
+Use **Ghidra MCP (Tier 2–3)** for shared/versioned projects when you need checkout, struct export to headers, or check-in — not for every objdiff iteration.
 
 ## Multi-agent handoff
 

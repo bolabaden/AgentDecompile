@@ -191,11 +191,13 @@ Every canonical MCP tool exposes **`analysis_tier`** via `get_tool_metadata()` a
 | Value | Meaning |
 |-------|---------|
 | **0** | Static file / OS tools (`run-file-triage`, `run-external-re-scan`) |
-| **1** | Batch ghidrecomp export (`run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan`) |
+| **1** | Batch ghidrecomp export and **decomp matching** (`run-batch-decompile`, `run-batch-export-gzf`, `run-batch-bsim-signatures`, `run-batch-sast-scan`, **`run-decomp-match`**) |
 | **2** | Ghidra MCP read-only / session bootstrap (prefer before decompile) |
 | **3** | Deep analysis, workflow bundles, or mutating tools |
 
-Tier 0–1 MCP tools: **`run-file-triage`** (optional **`externalScanTools`** embeds capa/yara/binwalk in one call), **`run-external-re-scan`** (Tier 0), and **`run-batch-decompile`**, **`run-batch-export-gzf`**, **`run-batch-bsim-signatures`**, **`run-batch-sast-scan`** (Tier 1). Tier 1 ghidrecomp facade is complete (decompile, gzf, bsim, sast).
+Tier 0–1 MCP tools: **`run-file-triage`** (optional **`externalScanTools`** embeds capa/yara/binwalk in one call), **`run-external-re-scan`** (Tier 0), **`run-batch-decompile`**, **`run-batch-export-gzf`**, **`run-batch-bsim-signatures`**, **`run-batch-sast-scan`**, and **`run-decomp-match`** (Tier 1: m2c / objdiff / permuter for bytecode verification). Tier 1 ghidrecomp facade is complete (decompile, gzf, bsim, sast).
+
+**Bytecode match vs Ghidra:** `run-decomp-match` with **objdiff** is the success criterion for decomp projects (object/instruction match %). **`match-function`** uses signature, name, and call graph only — not byte-level matching. Use Ghidra MCP (Tier 2–3) when shared/versioned projects need checkout, struct export, or check-in — not for every verify loop.
 
 Implementation: `_TIER3_GHIDRA_TOOLS` and `get_tool_analysis_tier()` in `registry.py`; tests in `tests/test_tool_analysis_tier.py`.
 

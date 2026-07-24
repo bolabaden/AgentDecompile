@@ -34,7 +34,7 @@ Every successful tool response (and most errors when programs are loaded) includ
 
 ## Tool categories
 
-See [TOOLS_LIST.md](../../TOOLS_LIST.md) for the canonical tool catalog (66 canonical; 62 advertised by default; 4 GUI-only hidden).
+See [TOOLS_LIST.md](../../TOOLS_LIST.md) for the canonical tool catalog (67 canonical; 63 advertised by default; 4 GUI-only hidden).
 
 | Category | Examples |
 |----------|----------|

@@ -163,6 +163,7 @@ class Tool(str, Enum):
     RUN_BATCH_EXPORT_GZF = "run-batch-export-gzf"
     RUN_BATCH_BSIM_SIGNATURES = "run-batch-bsim-signatures"
     RUN_BATCH_SAST_SCAN = "run-batch-sast-scan"
+    RUN_DECOMP_MATCH = "run-decomp-match"
     RUN_FILE_TRIAGE = "run-file-triage"
     SEARCH_CODE = "search-code"
     SEARCH_CONSTANTS = "search-constants"
@@ -588,6 +589,26 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
         "forceAnalysis",
         "semgrepRules",
         "codeqlRules",
+    ),
+    Tool.RUN_DECOMP_MATCH.value: _params(
+        "tool",
+        "tools",
+        "assemblyPath",
+        "functionName",
+        "target",
+        "contextPath",
+        "projectPath",
+        "unitName",
+        "targetObjectPath",
+        "baseObjectPath",
+        "symbol",
+        "objdiffMode",
+        "permuterDir",
+        "permuterScript",
+        "jobs",
+        "extraArgs",
+        "outputLimit",
+        "timeout",
     ),
     Tool.RUN_FILE_TRIAGE.value: _params(
         "binaryPath",
@@ -1168,6 +1189,7 @@ _TIER1_TOOLS: frozenset[Tool] = frozenset(
         Tool.RUN_BATCH_EXPORT_GZF,
         Tool.RUN_BATCH_BSIM_SIGNATURES,
         Tool.RUN_BATCH_SAST_SCAN,
+        Tool.RUN_DECOMP_MATCH,
     }
 )
 

@@ -33,6 +33,7 @@ pytestmark = pytest.mark.unit
         (Tool.RUN_BATCH_EXPORT_GZF, 1),
         (Tool.RUN_BATCH_BSIM_SIGNATURES, 1),
         (Tool.RUN_BATCH_SAST_SCAN, 1),
+        (Tool.RUN_DECOMP_MATCH, 1),
     ],
 )
 def test_analysis_tier_examples(tool: Tool, expected_tier: int) -> None:
