@@ -10,13 +10,15 @@ See [README.md](README.md) for project overview, [STRATEGY.md](STRATEGY.md) for 
 
 ## Recovery integration
 
-This repo now carries a generalized Python recovery/orchestration package under `src/agentdecompile_recovery/` plus its companion script surface under `scripts/`. Treat `agentdecompile` as the base repo and land further recovery-pipeline work here unless a task explicitly targets the legacy standalone checkout used to seed these flows.
+Package: `src/agentdecompile_recovery/` plus companion scripts under `scripts/`.
 
 Current integrated entrypoints:
 
 - `agentdecompile-recover` → `agentdecompile_recovery.cli:main`
 - `agentdecompile-reconstruct` → `agentdecompile_recovery.frontdoor:main`
 - `scripts/decomp-cli.sh` → recovery/source-parity helper front door
+
+Fast swkotor dump (AgentDecompile only): see [docs/CRITICAL_PATH.md](docs/CRITICAL_PATH.md) — `agentdecompile-reconstruct … --resume --dump-source DIR`. Never claim match without objdiff 0; never promote byte-emitters into `verified/`.
 
 The imported code expects a repo-root `scripts/` tree and root-relative `target/` outputs. Preserve that layout while the integration is being consolidated; do not silently rename or relocate the script surface without updating `src/agentdecompile_recovery/`.
 

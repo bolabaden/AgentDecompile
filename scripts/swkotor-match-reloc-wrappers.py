@@ -305,7 +305,117 @@ def candidate_for(row: dict, by_entry: dict[int, dict], *, text_section: str = "
     return None
 
 
+def _attempt_reloc_job(job: dict) -> dict:
+    import hashlib
+
+    row = job["row"]
+    candidate = job["candidate"]
+    args = job["args"]
+    out_dir = Path(job["out_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    source_sha = hashlib.sha256(candidate.source.encode("utf-8")).hexdigest()
+    target_s = out_dir / "target.S"
+    target_obj = out_dir / "target.obj"
+    candidate_c = out_dir / "candidate.c"
+    candidate_obj = out_dir / "candidate.obj"
+    target_s.write_text(candidate.target_asm, encoding="utf-8")
+    candidate_c.write_text(candidate.source, encoding="utf-8")
+
+    target_proc = run(["clang", "-target", "i686-pc-windows-msvc", "-c", str(target_s), "-o", str(target_obj)])
+    if target_proc.returncode != 0:
+        return {
+            "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+            "name": candidate.name,
+            "entry": row.get("entry"),
+            "kind": candidate.kind,
+            "targetName": candidate.target_name,
+            "targetSymbol": candidate.target_symbol,
+            "status": "target-compile-failed",
+            "differences": -1,
+            "sourceSha256": source_sha,
+            "compilerProfileName": "O2_GS-_Oy",
+            "stderr": target_proc.stderr[-2000:],
+            "outDir": str(out_dir),
+            "source": str(candidate_c),
+        }
+
+    env = os.environ.copy()
+    env.update({"VC_ROOT": str(args.vc_root), "WINEPREFIX": str(args.wineprefix), "CL_OPT": "/O2"})
+    compile_proc = run(
+        [
+            "bash",
+            str(ROOT / "scripts/cl-compile.sh"),
+            str(candidate_c),
+            str(candidate_obj),
+            "/GS-",
+            "/Oy",
+        ],
+        env=env,
+    )
+    (out_dir / "compile.stdout").write_text(compile_proc.stdout, encoding="utf-8")
+    (out_dir / "compile.stderr").write_text(compile_proc.stderr, encoding="utf-8")
+    if compile_proc.returncode != 0:
+        return {
+            "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+            "name": candidate.name,
+            "entry": row.get("entry"),
+            "kind": candidate.kind,
+            "status": "compile-failed",
+            "differences": -1,
+            "sourceSha256": source_sha,
+            "compilerProfileName": "O2_GS-_Oy",
+            "stderr": compile_proc.stderr[-2000:],
+            "outDir": str(out_dir),
+            "source": str(candidate_c),
+        }
+
+    verify_proc = run(
+        [
+            "bash",
+            str(ROOT / "scripts/lib/verify-objdiff.sh"),
+            str(target_obj),
+            str(candidate_obj),
+            "--out",
+            str(out_dir / "verify.json"),
+            "--raw-out",
+            str(out_dir / "verify.raw.json"),
+        ]
+    )
+    (out_dir / "verify.stdout").write_text(verify_proc.stdout, encoding="utf-8")
+    (out_dir / "verify.stderr").write_text(verify_proc.stderr, encoding="utf-8")
+    status = "error"
+    differences = -1
+    if (out_dir / "verify.json").exists():
+        report = json.loads((out_dir / "verify.json").read_text(encoding="utf-8"))
+        status = str(report.get("status"))
+        differences = int(report.get("differences", -1))
+    return {
+        "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+        "name": candidate.name,
+        "entry": row.get("entry"),
+        "section": row.get("section"),
+        "bodyBytes": row.get("bodyBytes"),
+        "instructionCount": row.get("instructionCount"),
+        "kind": candidate.kind,
+        "symbol": candidate.symbol,
+        "targetName": candidate.target_name,
+        "targetSymbol": candidate.target_symbol,
+        "status": status,
+        "differences": differences,
+        "sourceSha256": source_sha,
+        "compilerProfileName": "O2_GS-_Oy",
+        "outDir": str(out_dir),
+        "source": str(candidate_c),
+    }
+
+
 def main() -> int:
+    import time
+
+    sys.path.insert(0, str(ROOT / "src"))
+    from agentdecompile_recovery.match_cache import MatchCache, source_sha256
+    from agentdecompile_recovery.verify_pool import map_parallel, resolve_workers
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--inventory", type=Path, default=ROOT / "target/swkotor-unpack/facts/function-inventory.jsonl")
     parser.add_argument("--limit", type=int, default=200, help="Max candidates to attempt; 0 means no limit.")
@@ -316,128 +426,86 @@ def main() -> int:
     parser.add_argument("--vc-root", type=Path, default=DEFAULT_VC_ROOT)
     parser.add_argument("--wineprefix", type=Path, default=DEFAULT_WINEPREFIX)
     parser.add_argument("--progress-every", type=int, default=0, help="Print attempted/matched progress to stderr every N attempted candidates.")
+    parser.add_argument("--workers", type=int, default=0, help="Parallel Wine/MSVC workers (0 = auto).")
+    parser.add_argument("--force-rematch", action="store_true", help="Ignore match cache and rematch proven functions.")
+    parser.add_argument("--match-cache", type=Path, help="Optional match-cache.json path.")
     args = parser.parse_args()
 
+    started = time.monotonic()
     rows, by_entry = load_inventory(args.inventory)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.summary.parent.mkdir(parents=True, exist_ok=True)
+    cache_path = args.match_cache or (args.out.parent / "match-cache.json")
+    cache = MatchCache()
+    if not args.force_rematch:
+        cache.load_jsonl([args.out])
+        cache.load_cache_file(cache_path)
 
-    records = []
-    attempted = 0
-    matched = 0
-    with args.out.open("w", encoding="utf-8") as fh:
-        for row in rows:
-            candidate = candidate_for(row, by_entry, text_section=args.text_section)
-            if candidate is None:
+    jobs = []
+    cached_rows: list[dict] = []
+    skipped_cached = 0
+    for row in rows:
+        candidate = candidate_for(row, by_entry, text_section=args.text_section)
+        if candidate is None:
+            continue
+        entry = str(row.get("entry") or "")
+        sha = source_sha256(candidate.source)
+        if not args.force_rematch:
+            # Skip only on an exact (entry, sourceSha256[, profile]) hit. Never skip
+            # on entry-only match: a changed candidate source must be re-verified.
+            hit = cache.lookup(entry=entry, source_sha=sha, compiler_profile="O2_GS-_Oy")
+            if hit is not None:
+                cached_rows.append({**hit, "cacheHit": True})
+                skipped_cached += 1
                 continue
-            out_dir = args.match_root / f"{row.get('entry')}_{candidate.name}"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            target_s = out_dir / "target.S"
-            target_obj = out_dir / "target.obj"
-            candidate_c = out_dir / "candidate.c"
-            candidate_obj = out_dir / "candidate.obj"
-            target_s.write_text(candidate.target_asm, encoding="utf-8")
-            candidate_c.write_text(candidate.source, encoding="utf-8")
-
-            target_proc = run(["clang", "-target", "i686-pc-windows-msvc", "-c", str(target_s), "-o", str(target_obj)])
-            if target_proc.returncode != 0:
-                record = {
-                    "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
-                    "name": candidate.name,
-                    "entry": row.get("entry"),
-                    "kind": candidate.kind,
-                    "targetName": candidate.target_name,
-                    "targetSymbol": candidate.target_symbol,
-                    "status": "target-compile-failed",
-                    "differences": -1,
-                    "stderr": target_proc.stderr[-2000:],
-                    "outDir": str(out_dir),
-                }
-                records.append(record)
-                fh.write(json.dumps(record, sort_keys=True) + "\n")
-                fh.flush()
-                continue
-
-            env = os.environ.copy()
-            env.update({"VC_ROOT": str(args.vc_root), "WINEPREFIX": str(args.wineprefix), "CL_OPT": "/O2"})
-            compile_proc = run(
-                [
-                    "bash",
-                    str(ROOT / "scripts/cl-compile.sh"),
-                    str(candidate_c),
-                    str(candidate_obj),
-                    "/GS-",
-                    "/Oy",
-                ],
-                env=env,
-            )
-            (out_dir / "compile.stdout").write_text(compile_proc.stdout, encoding="utf-8")
-            (out_dir / "compile.stderr").write_text(compile_proc.stderr, encoding="utf-8")
-            if compile_proc.returncode != 0:
-                record = {
-                    "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
-                    "name": candidate.name,
-                    "entry": row.get("entry"),
-                    "kind": candidate.kind,
-                    "status": "compile-failed",
-                    "differences": -1,
-                    "stderr": compile_proc.stderr[-2000:],
-                    "outDir": str(out_dir),
-                }
-                records.append(record)
-                fh.write(json.dumps(record, sort_keys=True) + "\n")
-                fh.flush()
-                attempted += 1
-                if args.progress_every and attempted % args.progress_every == 0:
-                    print(f"swkotor-match-reloc-wrappers: attempted={attempted} matched={matched}", file=sys.stderr, flush=True)
-                continue
-
-            verify_proc = run(
-                [
-                    "bash",
-                    str(ROOT / "scripts/lib/verify-objdiff.sh"),
-                    str(target_obj),
-                    str(candidate_obj),
-                    "--out",
-                    str(out_dir / "verify.json"),
-                    "--raw-out",
-                    str(out_dir / "verify.raw.json"),
-                ]
-            )
-            (out_dir / "verify.stdout").write_text(verify_proc.stdout, encoding="utf-8")
-            (out_dir / "verify.stderr").write_text(verify_proc.stderr, encoding="utf-8")
-            status = "error"
-            differences = -1
-            if (out_dir / "verify.json").exists():
-                report = json.loads((out_dir / "verify.json").read_text(encoding="utf-8"))
-                status = str(report.get("status"))
-                differences = int(report.get("differences", -1))
-            if status == "matched" and differences == 0:
-                matched += 1
-            attempted += 1
-            record = {
-                "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
-                "name": candidate.name,
-                "entry": row.get("entry"),
-                "section": row.get("section"),
-                "bodyBytes": row.get("bodyBytes"),
-                "instructionCount": row.get("instructionCount"),
-                "kind": candidate.kind,
-                "symbol": candidate.symbol,
-                "targetName": candidate.target_name,
-                "targetSymbol": candidate.target_symbol,
-                "status": status,
-                "differences": differences,
-                "outDir": str(out_dir),
+        jobs.append(
+            {
+                "row": row,
+                "candidate": candidate,
+                "args": args,
+                "out_dir": str(args.match_root / f"{row.get('entry')}_{candidate.name}"),
             }
-            records.append(record)
-            fh.write(json.dumps(record, sort_keys=True) + "\n")
-            fh.flush()
-            if args.progress_every and attempted % args.progress_every == 0:
-                print(f"swkotor-match-reloc-wrappers: attempted={attempted} matched={matched}", file=sys.stderr, flush=True)
-            if args.limit and attempted >= args.limit:
-                break
+        )
+        if args.limit and len(jobs) >= args.limit:
+            break
 
+    workers = resolve_workers(args.workers or None)
+    print(
+        f"swkotor-match-reloc-wrappers: queue={len(jobs)} cached_skip={skipped_cached} workers={workers}",
+        file=sys.stderr,
+        flush=True,
+    )
+    def _job_error(job: dict, exc: BaseException) -> dict:
+        row = job["row"]
+        candidate = job["candidate"]
+        return {
+            "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+            "name": candidate.name,
+            "entry": row.get("entry"),
+            "kind": candidate.kind,
+            "status": "error",
+            "differences": -1,
+            "error": str(exc),
+            "outDir": job.get("out_dir"),
+        }
+
+    fresh = (
+        map_parallel(jobs, _attempt_reloc_job, workers=workers, on_error=_job_error)
+        if jobs
+        else []
+    )
+    records = list(cached_rows) + list(fresh)
+    for record in fresh:
+        if record.get("status") == "matched" and int(record.get("differences", -1)) == 0:
+            cache.ingest(record)
+
+    with args.out.open("w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+    cache.write(cache_path)
+
+    attempted = len(fresh)
+    matched = sum(1 for record in records if record.get("status") == "matched" and record.get("differences") == 0)
     by_kind = []
     for kind in sorted({str(record.get("kind")) for record in records}):
         group = [record for record in records if str(record.get("kind")) == kind]
@@ -448,12 +516,17 @@ def main() -> int:
                 "matched": sum(1 for record in group if record.get("status") == "matched" and record.get("differences") == 0),
             }
         )
+    duration = round(time.monotonic() - started, 3)
     rollup = {
         "schema": "agentdecompile.swkotor-reloc-wrapper-matches-summary.v1",
         "inventory": str(args.inventory),
         "summaryJsonl": str(args.out),
-        "attempted": len(records),
-        "matched": sum(1 for record in records if record.get("status") == "matched" and record.get("differences") == 0),
+        "attempted": attempted,
+        "cachedSkipped": skipped_cached,
+        "workers": workers,
+        "forceRematch": bool(args.force_rematch),
+        "durationSeconds": duration,
+        "matched": matched,
         "mismatched": sum(1 for record in records if record.get("status") != "matched" or record.get("differences") != 0),
         "byKind": by_kind,
         "matchedFunctions": [
@@ -463,7 +536,37 @@ def main() -> int:
         ],
     }
     args.summary.write_text(json.dumps(rollup, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"attempted": attempted, "matched": matched, "summary": str(args.out), "rollup": str(args.summary)}, indent=2, sort_keys=True))
+    (args.out.parent / "stage-timings.json").write_text(
+        json.dumps(
+            {
+                "schema": "agentdecompile.stage-timings.v1",
+                "stage": "match-reloc-wrappers",
+                "durationSeconds": duration,
+                "attempted": attempted,
+                "cachedSkipped": skipped_cached,
+                "workers": workers,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "attempted": attempted,
+                "cachedSkipped": skipped_cached,
+                "matched": matched,
+                "workers": workers,
+                "durationSeconds": duration,
+                "summary": str(args.out),
+                "rollup": str(args.summary),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

@@ -22187,6 +22187,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wineprefix", type=Path, default=DEFAULT_WINEPREFIX)
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--progress-every", type=int, default=0)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Parallel compile/objdiff workers for candidate attempts (0 = auto 6–8).",
+    )
+    parser.add_argument(
+        "--force-rematch",
+        action="store_true",
+        help="Ignore match cache / prior accepted rows and rematch proven functions.",
+    )
+    parser.add_argument(
+        "--match-cache",
+        type=Path,
+        help="Optional match-cache.json path (default: <out-dir>/match-cache.json).",
+    )
     args = parser.parse_args(argv)
 
     if args.clean and args.out_dir.exists():
@@ -22216,6 +22232,30 @@ def main(argv: list[str] | None = None) -> int:
     strategy_by_name = load_strategy(args.remaining_features)
     retrieval_by_name = load_retrieval(args.retrieval)
     matched = load_matched(args.matched_summary)
+    from .match_cache import MatchCache
+    from .verify_pool import map_parallel, resolve_workers
+
+    cache_path = args.match_cache or (args.out_dir / "match-cache.json")
+    match_cache = MatchCache()
+    if not args.force_rematch:
+        match_cache.load_jsonl(
+            [
+                *args.matched_summary,
+                accepted_path,
+                code_slice_matches_path,
+                source_shape_matches_path,
+            ]
+        )
+        match_cache.load_cache_file(cache_path)
+        for name, entry in match_cache.by_name_entry:
+            matched.add((name, entry))
+    workers = resolve_workers(args.workers or None)
+    cached_skips = 0
+    print(
+        f"source-parity-synthesize: workers={workers} force_rematch={bool(args.force_rematch)} cached_entries={len(match_cache.by_entry)}",
+        file=sys.stderr,
+        flush=True,
+    )
 
     skipped = 0
     inspected = 0
@@ -22374,8 +22414,18 @@ def main(argv: list[str] | None = None) -> int:
             if candidate.semantic_source:
                 semantic_generated_by_source_quality[quality] = semantic_generated_by_source_quality.get(quality, 0) + 1
                 semantic_generated_by_recovery_scope[recovery_scope] = semantic_generated_by_recovery_scope.get(recovery_scope, 0) + 1
+
+        pending_candidates = []
         for candidate in candidates:
-            records = attempt_candidate(
+            source_sha = hashlib.sha256(candidate.source.encode("utf-8")).hexdigest()
+            entry = str(row.get("entry") or "")
+            if not args.force_rematch and match_cache.lookup(entry=entry, source_sha=source_sha) is not None:
+                cached_skips += 1
+                continue
+            pending_candidates.append(candidate)
+
+        def _run_one(candidate: GeneratedCandidate) -> list[dict[str, Any]]:
+            return attempt_candidate(
                 row,
                 candidate,
                 args.out_dir,
@@ -22390,12 +22440,33 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
                 source_shape_search=args.source_shape_search,
             )
+
+        def _candidate_error(candidate: GeneratedCandidate, exc: BaseException) -> list[dict[str, Any]]:
+            return [
+                {
+                    "schema": "agentdecompile.source-parity-synthesis-attempt.v1",
+                    "name": row.get("name"),
+                    "entry": row.get("entry"),
+                    "rule": getattr(candidate, "rule", None),
+                    "status": "error",
+                    "differences": -1,
+                    "error": str(exc),
+                    "sourceQuality": generated_candidate_source_quality(candidate),
+                }
+            ]
+
+        record_batches = (
+            map_parallel(pending_candidates, _run_one, workers=workers, on_error=_candidate_error)
+            if pending_candidates
+            else []
+        )
+        for records in record_batches:
             for record in records:
                 record["strategyClass"] = strategy_by_name.get(str(row.get("name")))
                 record["nearestMatchedExamples"] = retrieval_by_name.get(str(row.get("name")), [])[:3]
                 append_jsonl(attempts_path, record)
                 update_promotion_stats(promotion_stats, record)
-                quality = str(record.get("sourceQuality") or generated_candidate_source_quality(candidate))
+                quality = str(record.get("sourceQuality") or "unknown")
                 if not args.dry_run:
                     attempted_by_source_quality[quality] = attempted_by_source_quality.get(quality, 0) + 1
                     recovery_scope = str(record.get("sourceRecoveryScope") or "unknown")
@@ -22406,9 +22477,11 @@ def main(argv: list[str] | None = None) -> int:
                 if status == "matched" and differences == 0:
                     matched_count += 1
                     append_jsonl(accepted_path, record)
+                    match_cache.ingest(record)
                 elif status == "code-slice-matched" and differences == 0:
                     code_slice_matched += 1
                     append_jsonl(code_slice_matches_path, record)
+                    match_cache.ingest(record)
                     code_slice_matched_by_source_quality[quality] = code_slice_matched_by_source_quality.get(quality, 0) + 1
                     recovery_scope = str(record.get("sourceRecoveryScope") or "unknown")
                     code_slice_matched_by_recovery_scope[recovery_scope] = code_slice_matched_by_recovery_scope.get(recovery_scope, 0) + 1
@@ -22442,9 +22515,10 @@ def main(argv: list[str] | None = None) -> int:
                         if source_shape_record is not None:
                             high_level_source_shape_matched += 1
                             append_jsonl(source_shape_matches_path, source_shape_record)
+                            match_cache.ingest(source_shape_record)
             if args.progress_every and generated and generated % args.progress_every == 0:
                 print(
-                    f"source-parity-synthesize: inspected={inspected} generated={generated} matched={matched_count}",
+                    f"source-parity-synthesize: inspected={inspected} generated={generated} matched={matched_count} cached_skips={cached_skips}",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -22511,6 +22585,10 @@ def main(argv: list[str] | None = None) -> int:
         "skippedRuleFilteredCandidates": skipped_rule_filtered,
         "skippedSourceQualityFilteredCandidates": skipped_source_quality,
         "skippedNonSemanticCandidates": skipped_nonsemantic,
+        "cachedSkippedCandidates": cached_skips,
+        "workers": workers,
+        "forceRematch": bool(args.force_rematch),
+        "matchCache": str(cache_path),
         "skippedBoundarySuspectFunctions": skipped_boundary_suspect,
         "compileFailedCandidates": compile_failed,
         "sliceFailedCandidates": slice_failed,
@@ -22525,6 +22603,19 @@ def main(argv: list[str] | None = None) -> int:
         "sourceQualityFilter": sorted(source_qualities) if source_qualities else None,
         "claimBoundary": "candidate source is generated automatically from binary-derived features; accepted source requires objdiff zero",
     }
+    match_cache.write(cache_path)
+    write_json(
+        args.out_dir / "stage-timings.json",
+        {
+            "schema": "agentdecompile.stage-timings.v1",
+            "stage": "source-parity-synthesize",
+            "workers": workers,
+            "cachedSkippedCandidates": cached_skips,
+            "attemptedCandidates": attempted,
+            "acceptedCandidates": matched_count,
+            "forceRematch": bool(args.force_rematch),
+        },
+    )
     write_high_level_promotion_targets(args.out_dir, promotion_stats=promotion_stats, summary=summary)
     write_json(args.out_dir / "summary.json", summary)
     print(json.dumps(summary, indent=2, sort_keys=True))

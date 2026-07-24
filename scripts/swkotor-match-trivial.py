@@ -1166,7 +1166,133 @@ def candidate_for(row: dict) -> Candidate | None:
     return None
 
 
+def _attempt_trivial_job(job: dict) -> dict:
+    """Compile+objdiff one trivial candidate (safe for thread pool; unique out_dir)."""
+    import hashlib
+
+    row = job["row"]
+    candidate = job["candidate"]
+    args = job["args"]
+    symbol, source = candidate.symbol, candidate.source
+    name = str(row["name"])
+    out_dir = Path(job["out_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    source_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+    slice_proc = run(
+        [
+            str(ROOT / "scripts/swkotor-inventory-slice.py"),
+            "--inventory",
+            str(args.inventory),
+            "--function",
+            name,
+            "--symbol",
+            symbol,
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    if slice_proc.returncode != 0:
+        return {
+            "schema": "agentdecompile.swkotor-trivial-match.v1",
+            "name": name,
+            "entry": row.get("entry"),
+            "section": row.get("section"),
+            "bodyBytes": row.get("bodyBytes"),
+            "instructionCount": row.get("instructionCount"),
+            "symbol": symbol,
+            "kind": candidate.kind,
+            "status": "slice-failed",
+            "differences": -1,
+            "sourceSha256": source_sha,
+            "compilerProfileName": "O2_GS-_Oy",
+            "stderr": slice_proc.stderr[-2000:],
+            "outDir": str(out_dir),
+        }
+
+    candidate_c = out_dir / "candidate.c"
+    candidate_obj = out_dir / "candidate.obj"
+    candidate_c.write_text(source, encoding="utf-8")
+    env = os.environ.copy()
+    env.update({"VC_ROOT": str(args.vc_root), "WINEPREFIX": str(args.wineprefix), "CL_OPT": "/O2"})
+    compile_proc = run(
+        [
+            "bash",
+            str(ROOT / "scripts/cl-compile.sh"),
+            str(candidate_c),
+            str(candidate_obj),
+            "/GS-",
+            "/Oy",
+            *candidate.extra_flags,
+        ],
+        env=env,
+    )
+    (out_dir / "compile.stdout").write_text(compile_proc.stdout, encoding="utf-8")
+    (out_dir / "compile.stderr").write_text(compile_proc.stderr, encoding="utf-8")
+    if compile_proc.returncode != 0:
+        return {
+            "schema": "agentdecompile.swkotor-trivial-match.v1",
+            "name": name,
+            "entry": row.get("entry"),
+            "section": row.get("section"),
+            "bodyBytes": row.get("bodyBytes"),
+            "instructionCount": row.get("instructionCount"),
+            "symbol": symbol,
+            "kind": candidate.kind,
+            "status": "compile-failed",
+            "differences": -1,
+            "sourceSha256": source_sha,
+            "compilerProfileName": "O2_GS-_Oy",
+            "stderr": compile_proc.stderr[-2000:],
+            "outDir": str(out_dir),
+            "source": str(candidate_c),
+        }
+
+    verify_proc = run(
+        [
+            "bash",
+            str(ROOT / "scripts/lib/verify-objdiff.sh"),
+            str(out_dir / "target.obj"),
+            str(candidate_obj),
+            "--out",
+            str(out_dir / "verify.json"),
+            "--raw-out",
+            str(out_dir / "verify.raw.json"),
+        ]
+    )
+    (out_dir / "verify.stdout").write_text(verify_proc.stdout, encoding="utf-8")
+    (out_dir / "verify.stderr").write_text(verify_proc.stderr, encoding="utf-8")
+    status = "error"
+    differences = -1
+    if (out_dir / "verify.json").exists():
+        report = json.loads((out_dir / "verify.json").read_text(encoding="utf-8"))
+        status = str(report.get("status"))
+        differences = int(report.get("differences", -1))
+    return {
+        "schema": "agentdecompile.swkotor-trivial-match.v1",
+        "name": name,
+        "entry": row.get("entry"),
+        "section": row.get("section"),
+        "bodyBytes": row.get("bodyBytes"),
+        "instructionCount": row.get("instructionCount"),
+        "symbol": symbol,
+        "kind": candidate.kind,
+        "status": status,
+        "differences": differences,
+        "sourceSha256": source_sha,
+        "compilerProfileName": "O2_GS-_Oy",
+        "outDir": str(out_dir),
+        "source": str(candidate_c),
+    }
+
+
 def main() -> int:
+    import time
+
+    sys.path.insert(0, str(ROOT / "src"))
+    from agentdecompile_recovery.match_cache import MatchCache, source_sha256
+    from agentdecompile_recovery.verify_pool import map_parallel, resolve_workers
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--inventory", type=Path, default=ROOT / "target/swkotor-unpack/facts/function-inventory.jsonl")
     parser.add_argument("--limit", type=int, default=25, help="Max candidates to attempt; 0 means no limit.")
@@ -1177,147 +1303,86 @@ def main() -> int:
     parser.add_argument("--vc-root", type=Path, default=DEFAULT_VC_ROOT)
     parser.add_argument("--wineprefix", type=Path, default=DEFAULT_WINEPREFIX)
     parser.add_argument("--progress-every", type=int, default=0, help="Print attempted/matched progress to stderr every N attempted candidates.")
+    parser.add_argument("--workers", type=int, default=0, help="Parallel Wine/MSVC workers (0 = auto 6–8).")
+    parser.add_argument("--force-rematch", action="store_true", help="Ignore match cache and rematch proven functions.")
+    parser.add_argument("--match-cache", type=Path, help="Optional match-cache.json path (default: beside --out).")
     args = parser.parse_args()
 
+    started = time.monotonic()
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.summary.parent.mkdir(parents=True, exist_ok=True)
-    matched = 0
-    attempted = 0
-    rows = []
-    with args.out.open("w", encoding="utf-8") as summary:
-        for row in iter_inventory(args.inventory):
-            if row.get("section") != args.text_section:
-                continue
-            candidate = candidate_for(row)
-            if candidate is None:
-                continue
-            symbol, source = candidate.symbol, candidate.source
-            name = str(row["name"])
-            out_dir = args.match_root / name
-            out_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = args.match_cache or (args.out.parent / "match-cache.json")
+    cache = MatchCache()
+    if not args.force_rematch:
+        cache.load_jsonl([args.out])
+        cache.load_cache_file(cache_path)
 
-            slice_proc = run(
-                [
-                    str(ROOT / "scripts/swkotor-inventory-slice.py"),
-                    "--inventory",
-                    str(args.inventory),
-                    "--function",
-                    name,
-                    "--symbol",
-                    symbol,
-                    "--out-dir",
-                    str(out_dir),
-                ]
-            )
-            if slice_proc.returncode != 0:
-                record = {
-                    "schema": "agentdecompile.swkotor-trivial-match.v1",
-                    "name": name,
-                    "entry": row.get("entry"),
-                    "section": row.get("section"),
-                    "bodyBytes": row.get("bodyBytes"),
-                    "instructionCount": row.get("instructionCount"),
-                    "symbol": symbol,
-                    "kind": candidate.kind,
-                    "status": "slice-failed",
-                    "differences": -1,
-                    "stderr": slice_proc.stderr[-2000:],
-                    "outDir": str(out_dir),
-                }
-                rows.append(record)
-                summary.write(json.dumps(record, sort_keys=True) + "\n")
+    jobs = []
+    cached_rows: list[dict] = []
+    skipped_cached = 0
+    for row in iter_inventory(args.inventory):
+        if row.get("section") != args.text_section:
+            continue
+        candidate = candidate_for(row)
+        if candidate is None:
+            continue
+        entry = str(row.get("entry") or "")
+        sha = source_sha256(candidate.source)
+        if not args.force_rematch:
+            # Skip only on an exact (entry, sourceSha256[, profile]) hit. Never skip
+            # on entry-only match: a different candidate source at the same entry
+            # must be recompiled/objdiff'd, or we would emit a stale proven row.
+            hit = cache.lookup(entry=entry, source_sha=sha, compiler_profile="O2_GS-_Oy")
+            if hit is not None:
+                cached_rows.append({**hit, "cacheHit": True})
+                skipped_cached += 1
                 continue
-
-            candidate_c = out_dir / "candidate.c"
-            candidate_obj = out_dir / "candidate.obj"
-            candidate_c.write_text(source, encoding="utf-8")
-            env = os.environ.copy()
-            env.update(
-                {
-                    "VC_ROOT": str(args.vc_root),
-                    "WINEPREFIX": str(args.wineprefix),
-                    "CL_OPT": "/O2",
-                }
-            )
-            compile_proc = run(
-                [
-                    "bash",
-                    str(ROOT / "scripts/cl-compile.sh"),
-                    str(candidate_c),
-                    str(candidate_obj),
-                    "/GS-",
-                    "/Oy",
-                    *candidate.extra_flags,
-                ],
-                env=env,
-            )
-            (out_dir / "compile.stdout").write_text(compile_proc.stdout, encoding="utf-8")
-            (out_dir / "compile.stderr").write_text(compile_proc.stderr, encoding="utf-8")
-            if compile_proc.returncode != 0:
-                record = {
-                    "schema": "agentdecompile.swkotor-trivial-match.v1",
-                    "name": name,
-                    "entry": row.get("entry"),
-                    "section": row.get("section"),
-                    "bodyBytes": row.get("bodyBytes"),
-                    "instructionCount": row.get("instructionCount"),
-                    "symbol": symbol,
-                    "kind": candidate.kind,
-                    "status": "compile-failed",
-                    "differences": -1,
-                    "stderr": compile_proc.stderr[-2000:],
-                    "outDir": str(out_dir),
-                }
-                rows.append(record)
-                summary.write(json.dumps(record, sort_keys=True) + "\n")
-                attempted += 1
-                if args.progress_every and attempted % args.progress_every == 0:
-                    print(f"swkotor-match-trivial: attempted={attempted} matched={matched}", file=sys.stderr, flush=True)
-                continue
-
-            verify_proc = run(
-                [
-                    "bash",
-                    str(ROOT / "scripts/lib/verify-objdiff.sh"),
-                    str(out_dir / "target.obj"),
-                    str(candidate_obj),
-                    "--out",
-                    str(out_dir / "verify.json"),
-                    "--raw-out",
-                    str(out_dir / "verify.raw.json"),
-                ]
-            )
-            (out_dir / "verify.stdout").write_text(verify_proc.stdout, encoding="utf-8")
-            (out_dir / "verify.stderr").write_text(verify_proc.stderr, encoding="utf-8")
-            status = "error"
-            differences = -1
-            if (out_dir / "verify.json").exists():
-                report = json.loads((out_dir / "verify.json").read_text(encoding="utf-8"))
-                status = str(report.get("status"))
-                differences = int(report.get("differences", -1))
-            if status == "matched" and differences == 0:
-                matched += 1
-            attempted += 1
-            record = {
-                "schema": "agentdecompile.swkotor-trivial-match.v1",
-                "name": name,
-                "entry": row.get("entry"),
-                "section": row.get("section"),
-                "bodyBytes": row.get("bodyBytes"),
-                "instructionCount": row.get("instructionCount"),
-                "symbol": symbol,
-                "kind": candidate.kind,
-                "status": status,
-                "differences": differences,
-                "outDir": str(out_dir),
+        jobs.append(
+            {
+                "row": row,
+                "candidate": candidate,
+                "args": args,
+                "out_dir": str(args.match_root / f"{entry}_{row['name']}"),
             }
-            rows.append(record)
-            summary.write(json.dumps(record, sort_keys=True) + "\n")
-            if args.progress_every and attempted % args.progress_every == 0:
-                print(f"swkotor-match-trivial: attempted={attempted} matched={matched}", file=sys.stderr, flush=True)
-            if args.limit and attempted >= args.limit:
-                break
+        )
+        if args.limit and len(jobs) >= args.limit:
+            break
 
+    workers = resolve_workers(args.workers or None)
+    print(
+        f"swkotor-match-trivial: queue={len(jobs)} cached_skip={skipped_cached} workers={workers}",
+        file=sys.stderr,
+        flush=True,
+    )
+    def _job_error(job: dict, exc: BaseException) -> dict:
+        row = job["row"]
+        return {
+            "schema": "agentdecompile.swkotor-trivial-match.v1",
+            "name": row.get("name"),
+            "entry": row.get("entry"),
+            "status": "error",
+            "differences": -1,
+            "error": str(exc),
+            "outDir": job.get("out_dir"),
+        }
+
+    fresh = (
+        map_parallel(jobs, _attempt_trivial_job, workers=workers, on_error=_job_error)
+        if jobs
+        else []
+    )
+    rows = list(cached_rows) + list(fresh)
+    for record in fresh:
+        if record.get("status") == "matched" and int(record.get("differences", -1)) == 0:
+            cache.ingest(record)
+
+    with args.out.open("w", encoding="utf-8") as summary:
+        for record in rows:
+            summary.write(json.dumps(record, sort_keys=True) + "\n")
+    cache.write(cache_path)
+
+    attempted = len(fresh)
+    matched = sum(1 for row in rows if row.get("status") == "matched" and row.get("differences") == 0)
     by_kind = []
     for kind in sorted({str(row.get("kind")) for row in rows}):
         group = [row for row in rows if str(row.get("kind")) == kind]
@@ -1328,27 +1393,49 @@ def main() -> int:
                 "matched": sum(1 for row in group if row.get("status") == "matched" and row.get("differences") == 0),
             }
         )
+    duration = round(time.monotonic() - started, 3)
     rollup = {
         "schema": "agentdecompile.swkotor-simple-matches-summary.v1",
         "inventory": str(args.inventory),
         "summaryJsonl": str(args.out),
-        "attempted": len(rows),
-        "matched": sum(1 for row in rows if row.get("status") == "matched" and row.get("differences") == 0),
+        "attempted": attempted,
+        "cachedSkipped": skipped_cached,
+        "workers": workers,
+        "forceRematch": bool(args.force_rematch),
+        "durationSeconds": duration,
+        "matched": matched,
         "mismatched": sum(1 for row in rows if row.get("status") != "matched" or row.get("differences") != 0),
         "byKind": by_kind,
         "matchedFunctions": [
-            row["name"]
-            for row in rows
-            if row.get("status") == "matched" and row.get("differences") == 0
+            row["name"] for row in rows if row.get("status") == "matched" and row.get("differences") == 0
         ],
     }
     args.summary.write_text(json.dumps(rollup, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (args.out.parent / "stage-timings.json").write_text(
+        json.dumps(
+            {
+                "schema": "agentdecompile.stage-timings.v1",
+                "stage": "match-trivial",
+                "durationSeconds": duration,
+                "attempted": attempted,
+                "cachedSkipped": skipped_cached,
+                "workers": workers,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     print(
         json.dumps(
             {
                 "attempted": attempted,
+                "cachedSkipped": skipped_cached,
                 "matched": matched,
+                "workers": workers,
+                "durationSeconds": duration,
                 "summary": str(args.out),
                 "rollup": str(args.summary),
             },

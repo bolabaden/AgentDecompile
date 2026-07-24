@@ -628,6 +628,8 @@ def stage_match_trivial(
     vc_root: Path | None = None,
     wineprefix: Path | None = None,
     progress_every: int | None = None,
+    workers: int = 0,
+    force_rematch: bool = False,
 ) -> None:
     args = [
         "--inventory",
@@ -649,6 +651,10 @@ def stage_match_trivial(
         args.extend(["--wineprefix", str(wineprefix)])
     if progress_every is not None:
         args.extend(["--progress-every", str(progress_every)])
+    if workers:
+        args.extend(["--workers", str(workers)])
+    if force_rematch:
+        args.append("--force-rematch")
     result = run_script("swkotor-match-trivial.py", *args)
     mark_stage(
         state,
@@ -670,6 +676,8 @@ def stage_match_reloc(
     vc_root: Path | None = None,
     wineprefix: Path | None = None,
     progress_every: int | None = None,
+    workers: int = 0,
+    force_rematch: bool = False,
 ) -> None:
     args = [
         "--inventory",
@@ -691,6 +699,10 @@ def stage_match_reloc(
         args.extend(["--wineprefix", str(wineprefix)])
     if progress_every is not None:
         args.extend(["--progress-every", str(progress_every)])
+    if workers:
+        args.extend(["--workers", str(workers)])
+    if force_rematch:
+        args.append("--force-rematch")
     result = run_script("swkotor-match-reloc-wrappers.py", *args)
     mark_stage(
         state,
@@ -1103,6 +1115,8 @@ def _register_runners() -> None:
                 vc_root=ctx["vc_root"],
                 wineprefix=ctx["wineprefix"],
                 progress_every=ctx["progress_every"],
+                workers=int(ctx.get("workers") or 0),
+                force_rematch=bool(ctx.get("force_rematch")),
             ),
             "match-reloc-wrappers": lambda ctx: stage_match_reloc(
                 ctx["profile"],
@@ -1111,6 +1125,8 @@ def _register_runners() -> None:
                 vc_root=ctx["vc_root"],
                 wineprefix=ctx["wineprefix"],
                 progress_every=ctx["progress_every"],
+                workers=int(ctx.get("workers") or 0),
+                force_rematch=bool(ctx.get("force_rematch")),
             ),
             "export-source": lambda ctx: stage_export_source(ctx["profile"], ctx["state"]),
             "compile-source": lambda ctx: stage_compile_source(
@@ -1215,6 +1231,8 @@ def run_pipeline(
     ghidra: Path | None = None,
     progress_every: int | None = None,
     no_compile: bool = False,
+    force_rematch: bool = False,
+    workers: int = 0,
 ) -> dict[str, Any]:
     _register_runners()
     slug = profile_slug or detect_profile(input_path)
@@ -1251,6 +1269,8 @@ def run_pipeline(
         "ghidra": ghidra,
         "progress_every": progress_every,
         "no_compile": no_compile,
+        "force_rematch": force_rematch,
+        "workers": workers,
         "force_export_downstream": False,
     }
     stop_idx = stage_index(stop_after) if stop_after else len(STAGES) - 1
@@ -1334,10 +1354,13 @@ def run_pipeline(
             force_stage = True
         trivial_stage = (state.get("stages") or {}).get("match-trivial") or {}
         if name == "match-trivial" and int(trivial_stage.get("trivialLimit") or 0) != int(trivial_limit):
-            force_stage = True
+            # Limit changes must not wipe proven matches; only rematch when forced.
+            if ctx.get("force_rematch"):
+                force_stage = True
         reloc_stage = (state.get("stages") or {}).get("match-reloc-wrappers") or {}
         if name == "match-reloc-wrappers" and int(reloc_stage.get("relocLimit") or 0) != int(reloc_limit):
-            force_stage = True
+            if ctx.get("force_rematch"):
+                force_stage = True
         profile_stage = (state.get("stages") or {}).get("profile-corpus") or {}
         if name == "profile-corpus":
             if int(profile_stage.get("profileMaxCases") or 0) != int(profile_max_cases):
@@ -1462,6 +1485,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ghidra", type=Path, help="Path to analyzeHeadless or a Ghidra install directory.")
     parser.add_argument("--no-compile", action="store_true")
     parser.add_argument("--self-check", action="store_true")
+    parser.add_argument("--workers", type=int, default=0, help="Parallel Wine/MSVC workers (0 = auto).")
+    parser.add_argument(
+        "--force-rematch",
+        action="store_true",
+        help="Rematch proven objdiff-0 functions; default skips via match cache.",
+    )
     args = parser.parse_args(argv)
     if args.self_check:
         result = self_check()
@@ -1499,6 +1528,8 @@ def main(argv: list[str] | None = None) -> int:
             ghidra=args.ghidra,
             progress_every=args.progress_every,
             no_compile=args.no_compile,
+            force_rematch=args.force_rematch,
+            workers=args.workers,
         )
     except Exception as exc:
         print(f"source-parity-one-shot failed: {exc}", file=sys.stderr)

@@ -2,6 +2,8 @@
 
 Hard packed PE targets (swkotor-class) follow a **bounded checkpoint loop** inside `reconstruct` — no peer `acquire` or `vacuum` product verbs.
 
+**Workspace freeze:** run recovery only from AgentDecompile. Mizuchi is a read-only donor ([MIZUCHI_ARCHIVE.md](MIZUCHI_ARCHIVE.md)).
+
 ## Checkpoint sequence
 
 ```mermaid
@@ -21,17 +23,56 @@ flowchart LR
 | `generate-source-candidates` | `source-generation/summary.json` | Decompiler-fact tasks |
 | `synthesize-source-tasks` | `source-synthesis/summary.json` | Compile + objdiff bounded verify |
 
-## Example operator flow
+## Operator fast path (swkotor dump)
+
+From **AgentDecompile only** (`~/Workspaces/agentdecompile`):
 
 ```bash
-# Unpack + inventory only
-agentdecompile-reconstruct swkotor.exe --stop-after discover-functions
+# 1) Unpack + inventory once
+uv run agentdecompile-reconstruct /path/to/swkotor.exe \
+  --stop-after discover-functions
 
-# Inspect readiness (CLI legacy status or MCP reconstruct status)
-# work dir contains critical-path.json with readiness + nextActions
+# 2) Incremental resume + Borealis-shaped dump (export-only when proofs exist)
+uv run agentdecompile-reconstruct /path/to/swkotor.exe \
+  --resume \
+  --dump-source target/swkotor-source-dump \
+  --vc-root <msvc8> \
+  --source-synthesis-wineprefix <prefix>
+
+# Export-only (skip stages; use existing receipts + optional Ghidra facts)
+uv run agentdecompile-reconstruct /path/to/swkotor.exe \
+  --dump-source-only \
+  --dump-source target/swkotor-source-dump \
+  --ghidra-facts target/swkotor-ghidra-merged-decomp.jsonl \
+  --work-dir target/agentdecompile-reconstruct/<id>
 ```
 
-Resume the same work dir with `--resume` (default) to continue through later stages.
+Dump layout:
+
+```text
+target/swkotor-source-dump/
+  README.md
+  MANIFEST.json
+  CLAIMS.md
+  Port/CODE/...
+  verified/            # objdiff 0 only
+  advisory/ghidra/     # pretty, NOT proof
+```
+
+Open `target/swkotor-source-dump/README.md` — verified first, advisory for readability.
+
+**Hard rules**
+
+- Never rematch proven objdiff-0 functions unless `--force-rematch`. The cache only
+  skips on an exact `(entry, sourceSha256)` hit — a changed candidate at the same
+  entry is always re-verified (no entry-only skip), so the cache can never launder a
+  stale proof.
+- Match cache + `--workers` parallelize compile/objdiff; `stage-timings.json` records wall time.
+  Workers share one `WINEPREFIX`; concurrent Wine/`cl.exe` can occasionally produce a
+  **false mismatch** (never a false proof — the objdiff-0 gate is unchanged). If matches
+  look flaky, re-run the affected functions with `--workers 1`.
+- Never promote byte-emitters into `verified/`. Any inline-asm / `_emit` / `.incbin` /
+  byte-emission source is rejected from `verified/` and only appears (if at all) as advisory.
 
 ## Soft-fail (Steamless / mono)
 

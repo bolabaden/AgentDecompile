@@ -99,6 +99,8 @@ class RecoveryConfig:
     source_synthesis_wine: str = "wine"
     source_synthesis_wineprefix: Path | None = None
     steamless_cli: Path | None = None
+    verify_workers: int = 0
+    force_rematch: bool = False
     context_format: str = "json"
     context_binary_analysis: str = "standard"
     context_max_files: int = 1000
@@ -141,15 +143,24 @@ class RecoveryRunner:
         signal.signal(signal.SIGTERM, self._cancel)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         selected = self.selected_stages()
+        stage_timings: list[dict[str, Any]] = []
         for index, stage in enumerate(self.stages, start=1):
             if stage.name not in selected:
                 continue
             if self.cancelled:
                 self.mark_cancelled(stage.name)
+                self._write_stage_timings(stage_timings)
                 return 130
             if self.should_skip(stage):
                 self.progress(index, stage, "resume: existing complete receipt")
                 self.state.event("stage-skip", stage=stage.name, reason="resume-complete")
+                stage_timings.append(
+                    {
+                        "stage": stage.name,
+                        "status": "skipped-resume",
+                        "durationSeconds": 0,
+                    }
+                )
                 continue
             started = time.monotonic()
             self.progress(index, stage, stage.description)
@@ -168,22 +179,50 @@ class RecoveryRunner:
             try:
                 summary = stage.run(self, stage)
             except ToolchainError as exc:
+                stage_timings.append(
+                    {
+                        "stage": stage.name,
+                        "status": "blocked:toolchain",
+                        "durationSeconds": round(time.monotonic() - started, 3),
+                        "error": str(exc),
+                    }
+                )
+                self._write_stage_timings(stage_timings)
                 self.stage_failed(stage, started, str(exc), 2)
                 self.state.data["status"] = "blocked:toolchain"
                 self.state.data["terminalStatus"] = "blocked:toolchain"
                 self.state.save()
                 return 2
             except subprocess.CalledProcessError as exc:
+                stage_timings.append(
+                    {
+                        "stage": stage.name,
+                        "status": "failed",
+                        "durationSeconds": round(time.monotonic() - started, 3),
+                        "error": command_error(exc),
+                    }
+                )
+                self._write_stage_timings(stage_timings)
                 self.stage_failed(stage, started, command_error(exc), exc.returncode)
                 return exc.returncode or 1
             except Exception as exc:
+                stage_timings.append(
+                    {
+                        "stage": stage.name,
+                        "status": "failed",
+                        "durationSeconds": round(time.monotonic() - started, 3),
+                        "error": str(exc),
+                    }
+                )
+                self._write_stage_timings(stage_timings)
                 self.stage_failed(stage, started, str(exc), 1)
                 return 1
+            duration = round(time.monotonic() - started, 3)
             receipt.update(
                 {
                     "status": "complete",
                     "completedAt": now(),
-                    "durationSeconds": round(time.monotonic() - started, 3),
+                    "durationSeconds": duration,
                     "outputs": [str(path) for path in stage.outputs],
                     "summary": summary,
                     "config": self.stage_config(stage),
@@ -192,7 +231,23 @@ class RecoveryRunner:
             )
             self.state.save()
             self.state.event("stage-complete", stage=stage.name, summary=summary)
+            stage_timings.append({"stage": stage.name, "status": "complete", "durationSeconds": duration})
+            print(
+                f"stage-timing: {stage.name} {duration}s",
+                file=sys.stderr,
+                flush=True,
+            )
+        self._write_stage_timings(stage_timings)
         return 0
+
+    def _write_stage_timings(self, rows: list[dict[str, Any]]) -> None:
+        payload = {
+            "schema": "agentdecompile.stage-timings.v1",
+            "workDir": str(self.run_dir),
+            "stages": rows,
+            "totalSeconds": round(sum(float(row.get("durationSeconds") or 0) for row in rows), 3),
+        }
+        atomic_write_json(self.run_dir / "stage-timings.json", payload)
 
     def selected_stages(self) -> set[str]:
         names = [stage.name for stage in self.stages]
@@ -783,6 +838,10 @@ class RecoveryRunner:
             argv.extend(["--wine", self.config.source_synthesis_wine])
         if self.config.source_synthesis_wineprefix:
             argv.extend(["--wineprefix", str(self.config.source_synthesis_wineprefix)])
+        if self.config.verify_workers:
+            argv.extend(["--workers", str(self.config.verify_workers)])
+        if self.config.force_rematch:
+            argv.append("--force-rematch")
         (out_dir / "empty-queue.jsonl").parent.mkdir(parents=True, exist_ok=True)
         for empty in ("empty-queue.jsonl", "empty-remaining-features.jsonl", "empty-retrieval.jsonl"):
             (out_dir / empty).write_text("", encoding="utf-8")

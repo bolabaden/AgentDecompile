@@ -1,6 +1,6 @@
 ---
 name: AgentDecompile
-last_updated: 2026-07-13
+last_updated: 2026-07-24
 ---
 
 # AgentDecompile Strategy
@@ -13,7 +13,9 @@ _Worth revisiting:_ problem statement was inferred after a deferred interview; c
 
 ## Our approach
 
-Treat recovery as **context-first multi-representation transpilation with proof gates**: ingest supported context, keep Ghidra (and binary inventory) as ground truth, generate candidates across natural formats (asm, C/C++, and higher-level views), and accept only what survives compiler-in-the-loop / objdiff (or an equally strong claim boundary)—so “transpiled” never means unverified paraphrase.
+Treat recovery as **context + Ghidra ground truth → candidate C → proof gate → pretty dump with claim boundaries**: ingest supported context, keep Ghidra (and binary inventory) as ground truth, generate candidates across natural formats (asm, C/C++, and higher-level views), accept only what survives compiler-in-the-loop / objdiff (or an equally strong claim boundary), and export a Borealis-shaped dump that separates **verified** (objdiff 0) from **advisory** (Ghidra/`agentdecompile-cli`)—so “transpiled” never means unverified paraphrase.
+
+**Single brand:** AgentDecompile only. Do not run recovery from the Mizuchi donor tree (`docs/MIZUCHI_ARCHIVE.md`).
 
 ## Who it's for
 
@@ -45,13 +47,13 @@ _Why it serves the approach:_ Ground truth for labels and structure must be reli
 
 ### Matching recovery and autonomy
 
-Compiler-profile corpus, relocation-aware objects, candidate generation, and a self-correcting vacuum/repair loop that only promotes on proof.
+Compiler-profile corpus, relocation-aware objects, candidate generation, and a self-correcting vacuum/repair loop that only promotes on proof. Scale via **match cache** (skip proven `differences==0` unless `--force-rematch`) and **parallel Wine/MSVC compile+objdiff workers**, with stage timing receipts.
 
-_Why it serves the approach:_ This is how accuracy becomes tractable at scale instead of hoping a single LLM dump is right.
+_Why it serves the approach:_ This is how accuracy becomes tractable at scale instead of hoping a single LLM dump is right—or rematching the world for hours.
 
 ### Multi-format export with claim boundaries
 
-Export and round-trip views (asm, C/C++, higher-level sketches, hex/authority packages, Ghidra-backed serialization) labeled by what is proven vs advisory.
+Export and round-trip views (asm, C/C++, higher-level sketches, hex/authority packages, Ghidra-backed serialization) labeled by what is proven vs advisory. Default one-shot artifact: **Borealis-shaped dump** (`--dump-source`) with `verified/`, `advisory/ghidra/`, and `Port/CODE/`.
 
 _Why it serves the approach:_ Users want format fluidity; claim boundaries keep “anything” from becoming marketing for unverified mush.
 
@@ -61,6 +63,8 @@ _Why it serves the approach:_ Users want format fluidity; claim boundaries keep 
 - Treating decompiler pseudocode or LLM output as proof without a compile/objdiff (or stronger) gate
 - Pretending ≥90% whole-binary semantic parity for targets like `swkotor.exe` is a near-term one-shot deliverable
 - Shipping dual permanent product brands (mizuchi/reconkit) beside AgentDecompile—capabilities fold in; names do not
+- Running recovery from `~/Workspaces/Mizuchi` or rematching proven objdiff-0 functions without `--force-rematch`
+- Selling byte-emitters as “original source”
 - Implementing this product inside unrelated repos (e.g. clifwrap)
 
 ## Marketing

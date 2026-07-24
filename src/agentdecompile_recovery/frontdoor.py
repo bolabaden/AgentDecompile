@@ -203,9 +203,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only verify generated candidates with this source quality. Repeat or comma-separate.",
     )
     parser.add_argument("--source-synthesis-vc-root", type=Path, help="MSVC/VC Toolkit root used by source synthesis.")
+    parser.add_argument(
+        "--vc-root",
+        type=Path,
+        help="Alias for --source-synthesis-vc-root (MSVC root for dump/match path).",
+    )
     parser.add_argument("--source-synthesis-wine", default="wine", help="Wine executable used by MSVC source synthesis.")
     parser.add_argument("--source-synthesis-wineprefix", type=Path, help="Wine prefix used by MSVC source synthesis.")
     parser.add_argument("--steamless-cli", type=Path, help="Steamless CLI used to prepare PE analysis images when applicable.")
+    parser.add_argument(
+        "--dump-source",
+        type=Path,
+        help="Export Borealis-shaped dump (verified/ + advisory/ghidra/ + Port/CODE) to this directory after resume/export.",
+    )
+    parser.add_argument(
+        "--dump-source-only",
+        action="store_true",
+        help="Skip recovery stages; only build --dump-source from existing receipts/summaries.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Parallel Wine/MSVC compile+objdiff workers (0 = auto 6–8).",
+    )
+    parser.add_argument(
+        "--force-rematch",
+        action="store_true",
+        help="Rematch proven objdiff-0 functions (default: use match cache / skip).",
+    )
+    parser.add_argument(
+        "--ghidra-facts",
+        type=Path,
+        help="Optional function-facts JSONL with decompiled text for advisory/ghidra dump layer.",
+    )
     parser.add_argument("--context-format", choices=["json", "md"], default="json")
     parser.add_argument("--context-binary-analysis", choices=["light", "standard", "deep"], default="standard")
     parser.add_argument("--context-max-files", type=int, default=1000)
@@ -278,8 +309,19 @@ def parse_csv_string(value: str | None) -> tuple[str, ...]:
 def run_one_shot(args: argparse.Namespace) -> int:
     if args.force:
         args.resume = False
+    if getattr(args, "vc_root", None) and not getattr(args, "source_synthesis_vc_root", None):
+        args.source_synthesis_vc_root = args.vc_root
     work_dir = args.work_dir or default_work_dir(args.input, args.preferred_name)
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    if getattr(args, "dump_source_only", False):
+        if not getattr(args, "dump_source", None):
+            print(
+                "agentdecompile-reconstruct: --dump-source-only requires --dump-source DIR",
+                file=sys.stderr,
+            )
+            return 2
+        return run_dump_source(args, work_dir)
 
     context_paths = merge_context_paths(getattr(args, "context_positional", None), getattr(args, "context", None))
     args.context = context_paths
@@ -368,6 +410,8 @@ def run_one_shot(args: argparse.Namespace) -> int:
         source_synthesis_wine=args.source_synthesis_wine,
         source_synthesis_wineprefix=args.source_synthesis_wineprefix,
         steamless_cli=args.steamless_cli,
+        verify_workers=int(getattr(args, "workers", 0) or 0),
+        force_rematch=bool(getattr(args, "force_rematch", False)),
         context_format=args.context_format,
         context_binary_analysis=args.context_binary_analysis,
         context_max_files=args.context_max_files,
@@ -485,7 +529,93 @@ def run_one_shot(args: argparse.Namespace) -> int:
         )
         if bridge_rc != 0:
             return bridge_rc
+    if getattr(args, "dump_source", None):
+        dump_rc = run_dump_source(args, work_dir)
+        if dump_rc != 0:
+            return dump_rc
     return rc
+
+
+def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
+    """Export Borealis-shaped dump from existing proofs + optional Ghidra advisory."""
+
+    from .source_dump import dump_source_tree
+
+    out_dir = Path(args.dump_source)
+    summaries: list[Path] = []
+    # Proof receipts written by this run's synthesis stage (JSONL only — the
+    # dump reader consumes matched/code-slice JSONL rows).
+    for rel in (
+        "source-synthesis/accepted.jsonl",
+        "source-synthesis/code-slice-matches.jsonl",
+        "source-synthesis/source-shape-matches.jsonl",
+    ):
+        path = work_dir / rel
+        if path.exists():
+            summaries.append(path)
+    # Sibling match receipts under this run's target tree (not blind cwd probes).
+    for sibling in (
+        work_dir.parent / "swkotor-trivial-matches" / "summary.jsonl",
+        work_dir.parent / "swkotor-reloc-wrapper-matches" / "summary.jsonl",
+    ):
+        if sibling.exists():
+            summaries.append(sibling)
+
+    # Operator-authored explicit summary list (paths under the operator's control).
+    list_file = work_dir / "export-summaries.txt"
+    if list_file.exists():
+        for line in list_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and Path(line).exists() and line.endswith(".jsonl"):
+                summaries.append(Path(line))
+
+    # Deduplicate
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in summaries:
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+
+    ghidra_facts = getattr(args, "ghidra_facts", None)
+    if ghidra_facts is None:
+        for candidate in (
+            work_dir / "source-generation" / "function-facts.jsonl",
+            work_dir / "acquisition" / "function-facts.jsonl",
+            Path("target/swkotor-ghidra-merged-decomp.jsonl"),
+        ):
+            if candidate.exists():
+                ghidra_facts = candidate
+                break
+
+    # Optional pre-materialized advisory dir (e.g. from ghidra_advisory batch CLI).
+    advisory_seed = work_dir / "advisory" / "ghidra"
+
+    manifest = dump_source_tree(
+        out_dir=out_dir,
+        summaries=unique,
+        ghidra_facts=Path(ghidra_facts) if ghidra_facts else None,
+        advisory_dir=advisory_seed if advisory_seed.is_dir() else None,
+        target_name=args.input.name if hasattr(args.input, "name") else "binary",
+    )
+    receipt = {
+        "schema": "agentdecompile.dump-source.v1",
+        "status": manifest.get("status"),
+        "outDir": str(out_dir),
+        "workDir": str(work_dir),
+        "summaries": [str(p) for p in unique],
+        "ghidraFacts": str(ghidra_facts) if ghidra_facts else None,
+        "matchedCount": manifest.get("matchedCount"),
+        "codeSliceMatchedCount": manifest.get("codeSliceMatchedCount"),
+        "ghidraCount": manifest.get("ghidraCount"),
+        "claimBoundary": manifest.get("claimBoundary"),
+    }
+    (work_dir / "dump-source.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if not args.json:
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0 if manifest.get("status") == "complete" else 1
 
 
 def build_reconstruct_namespace(
