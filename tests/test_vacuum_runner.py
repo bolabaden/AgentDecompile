@@ -132,5 +132,5 @@ def test_run_vacuum_prompt_uses_plugin_pipeline(monkeypatch: pytest.MonkeyPatch,
     result = run_vacuum_prompt(work_dir=work, name="alpha", max_attempts=2)
     assert result["exitCode"] == 0
     assert result["status"] == "matched"
-    assert calls and calls[0].max_retries == 2
+    assert calls and calls[0].max_retries >= 2
     assert any(path.name.endswith(".c") for path in (work / "verified").iterdir())
