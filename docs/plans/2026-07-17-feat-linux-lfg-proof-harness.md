@@ -1,7 +1,7 @@
 ---
 title: "feat: Linux-capable /lfg proof harness"
 type: feat
-status: active
+status: completed
 date: 2026-07-17
 origin: docs/plans/2026-07-17-feat-phase6-context-ghidra-propose.md
 deepened: false
