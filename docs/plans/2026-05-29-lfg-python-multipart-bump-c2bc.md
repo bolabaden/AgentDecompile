@@ -16,11 +16,13 @@ origin: dependabot PR #61
 Apply Dependabot [#61](https://github.com/bolabaden/AgentDecompile/pull/61): `python-multipart` 0.0.26→0.0.27 and `pip` 26.1→26.1.1 in the uv lockfile.
 
 ```mermaid
+
 flowchart TD
   A[Apply pyproject + uv.lock] --> B[uv sync]
   B --> C[pytest unit]
   C --> D[Open PR supersedes #61]
 ```
+
 
 ## Requirements
 
@@ -40,6 +42,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv sync --all-extras --dev
 uv run pytest -m unit -q --timeout=120
 ```
+

@@ -80,12 +80,14 @@ The merge-gate plan (`docs/plans/2026-05-24-lfg-crud-mega-stack-merge-gate-c2bc.
 > *This illustrates the intended approach and is directional guidance for review, not implementation specification.*
 
 ```mermaid
+
 flowchart TD
   V[U1–U2: Local pytest + ruff] --> D[U3: Doc/plan commits]
   D --> P[U4: PR #111 merge-ready body]
   P --> C[U5: Confirm CI green]
   C --> H[Human squash merge #111]
 ```
+
 
 ---
 
@@ -261,8 +263,10 @@ flowchart TD
 ## Verification (reference)
 
 ```bash
+
 uv run pytest tests/test_manage_strings.py tests/test_manage_data_types.py tests/test_manage_function_tags.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_server/providers/datatypes.py src/agentdecompile_cli/mcp_server/providers/strings.py src/agentdecompile_cli/mcp_server/providers/getfunction.py
 gh pr checks 111
 ```
+

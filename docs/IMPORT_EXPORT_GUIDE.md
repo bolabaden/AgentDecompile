@@ -1,6 +1,7 @@
 # AgentDecompile Import/Export Guide
 
 ```mermaid
+
 flowchart TD
   A[import-binary] --> B[project program]
   B --> C[export sarif]
@@ -9,13 +10,14 @@ flowchart TD
   B --> F[resource static-analysis]
 ```
 
+
 This document explains how to import and export binary files and analysis data using AgentDecompile tools.
 
 This is a current usage guide. For the shortest examples, use `QUICKSTART_IMPORT_EXPORT.md`. For canonical tool signatures, use `../TOOLS_LIST.md`.
 
 ## Overview
 
-AgentDecompile provides comprehensive import/export capabilities through two main tools:
+AgentDecompile provides full import/export capabilities through two main tools:
 
 - **`import-binary`** - Import binary files and entire directories into the Ghidra project
 - **`export`** - Export programs in multiple formats (SARIF, GZF, C/C++, etc.)
@@ -39,6 +41,7 @@ Import binary files or entire directories for analysis in Ghidra.
 ### Basic Usage
 
 ```bash
+
 # Import a single binary
 agentdecompile-cli tool import-binary '{
   "path": "/path/to/binary.exe",
@@ -55,6 +58,7 @@ agentdecompile-cli tool import-binary '{
   "analyzeAfterImport": true
 }'
 ```
+
 
 ### Parameters
 
@@ -73,6 +77,7 @@ agentdecompile-cli tool import-binary '{
 ### Response
 
 ```json
+
 {
   "success": true,
   "importedFrom": "/path/to/binaries",
@@ -88,6 +93,7 @@ agentdecompile-cli tool import-binary '{
 }
 ```
 
+
 ## Tool: `export`
 
 ### Purpose
@@ -98,6 +104,7 @@ Export program data in various formats for analysis, documentation, or archival.
 #### Export SARIF (Security Analysis)
 
 ```bash
+
 # Export static analysis results as SARIF 2.1.0
 agentdecompile-cli tool export '{
   "programPath": "/binaries/app.exe",
@@ -106,14 +113,16 @@ agentdecompile-cli tool export '{
 }'
 ```
 
+
 **SARIF Feature Highlights:**
-- Comprehensive analysis data collection (external references, bookmarks, function analysis)
+- full analysis data collection (external references, bookmarks, function analysis)
 - SARIF 2.1.0 compliant format
 - Integration with security scanning tools (CodeQL, semgrep, etc.)
 - Suitable for CI/CD pipelines and compliance reporting
 
 **Example SARIF Structure:**
 ```json
+
 {
   "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
   "version": "2.1.0",
@@ -169,9 +178,11 @@ agentdecompile-cli tool export '{
 }
 ```
 
+
 #### Export GZF (Ghidra Archive)
 
 ```bash
+
 # Export as Ghidra Zipped File for archival/sharing
 agentdecompile-cli tool export '{
   "programPath": "/binaries/app.exe",
@@ -179,6 +190,7 @@ agentdecompile-cli tool export '{
   "format": "gzf"
 }'
 ```
+
 
 **GZF Feature Highlights:**
 - Compressed Ghidra project snapshot
@@ -189,6 +201,7 @@ agentdecompile-cli tool export '{
 #### Export C/C++ Source
 
 ```bash
+
 # Export decompiled C++ source code with types
 agentdecompile-cli tool export '{
   "programPath": "/binaries/app.exe",
@@ -209,6 +222,7 @@ agentdecompile-cli tool export '{
 }'
 ```
 
+
 **C/C++ Export Parameters:**
 - `createHeader` - Generate header file with declarations (default: `true`)
 - `includeTypes` - Emit type definitions (default: `true`)
@@ -218,6 +232,7 @@ agentdecompile-cli tool export '{
 #### Export Other Formats
 
 ```bash
+
 # XML format
 agentdecompile-cli tool export '{
   "programPath": "/binaries/app.exe",
@@ -232,6 +247,7 @@ agentdecompile-cli tool export '{
   "format": "html"
 }'
 ```
+
 
 ### Export Parameters
 
@@ -249,6 +265,7 @@ agentdecompile-cli tool export '{
 ### Export Response
 
 ```json
+
 {
   "action": "export",
   "format": "sarif",
@@ -259,11 +276,13 @@ agentdecompile-cli tool export '{
 }
 ```
 
+
 ## Workflow Examples
 
 ### Example 1: Complete Analysis Workflow
 
 ```bash
+
 # 1. Import binary
 agentdecompile-cli tool import-binary '{
   "path": "/myapp/binary.exe",
@@ -292,9 +311,11 @@ agentdecompile-cli tool export '{
 }'
 ```
 
+
 ### Example 2: Batch Directory Import with Analysis
 
 ```bash
+
 # Import entire directory with folder structure preserved
 agentdecompile-cli tool import-binary '{
   "path": "/firmware",
@@ -308,9 +329,11 @@ agentdecompile-cli tool import-binary '{
 # (Note: currently requires running CLI separately for each program)
 ```
 
+
 ### Example 3: CI/CD Integration
 
 ```bash
+
 #!/bin/bash
 # Script to automatically export SARIF for CI/CD
 
@@ -337,17 +360,20 @@ agentdecompile-cli tool export "{
 sarif-fmt "$OUTPUT_SARIF"  # Format output
 ```
 
+
 ## Resource API
 
 In addition to tools, AgentDecompile provides MCP resources for reading data:
 
 ### `ghidra://static-analysis-results`
 
-Read comprehensive static analysis results in SARIF 2.1.0 format:
+Read full static analysis results in SARIF 2.1.0 format:
 
 ```bash
+
 agentdecompile-cli resource static-analysis
 ```
+
 
 This resource provides real-time analysis data and is equivalent to exporting with `format="sarif"`.
 
@@ -381,11 +407,13 @@ To export custom analysis, you can extend the SARIF generation in `export` tool 
 For local-only imports, AgentDecompile now fails early instead of pretending version control was enabled:
 
 ```bash
+
 agentdecompile-cli tool import-binary '{
   "path": "/binaries/app.exe",
   "enableVersionControl": true
 }'
 ```
+
 
 Use shared-project version control only when all of the following are true:
 - You opened a shared Ghidra server project, not a local-only project.
@@ -413,6 +441,7 @@ Shared version-control import responses may include `"inSessionAnalysisPending":
 For very large binaries you may set `analyzeAfterImport=false` on **shared/headless import** to defer headless analysis, then use the program in-session:
 
 ```bash
+
 agentdecompile-cli tool import-binary '{
   "path": "/large_binary.bin",
   "analyzeAfterImport": false
@@ -427,6 +456,7 @@ agentdecompile-cli tool analyze-program '{
 }'
 ```
 
+
 ## Troubleshooting
 
 ### Export Fails with "No Program Loaded"
@@ -434,6 +464,7 @@ agentdecompile-cli tool analyze-program '{
 **Solution:** Use the full programPath from `list binaries`:
 
 ```bash
+
 # Get program path
 agentdecompile-cli list binaries -f json
 
@@ -444,6 +475,7 @@ agentdecompile-cli tool export '{
   "format": "sarif"
 }'
 ```
+
 
 ### SARIF Contains No Results
 

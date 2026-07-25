@@ -14,6 +14,7 @@ origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 Extend **`run-external-re-scan`** so agents can run **capa + binwalk + yara** in one MCP call via optional `tools` array, closing the KB “partial” external RE wrapper gap without adding a new tool.
 
 ```mermaid
+
 flowchart TD
   A[run-external-re-scan] --> B{tools array?}
   B -->|no| C[single tool payload unchanged]
@@ -21,6 +22,7 @@ flowchart TD
   D --> E[capa / binwalk / yara skip if no rules]
   E --> F[scans map + aggregate counts]
 ```
+
 
 ## Requirements
 
@@ -44,7 +46,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_run_external_re_scan.py -m unit -v
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/external_re_scan.py
 ```
+

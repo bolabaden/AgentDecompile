@@ -29,6 +29,7 @@ MCP clients connect and call `tools/list` without tiered bootstrap guidance. The
 ## Solution (PR #99)
 
 ```mermaid
+
 flowchart TD
   A[MCP initialize] --> B[InitializeResult.instructions]
   B --> C[build_initialize_instructions]
@@ -38,6 +39,7 @@ flowchart TD
   G[HTTP server.py] --> C
   H[stdio bridge.py] --> C
 ```
+
 
 | Section | Content |
 |---------|---------|

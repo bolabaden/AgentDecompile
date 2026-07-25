@@ -148,7 +148,7 @@ Each entry: **symbol** (type), **where used**, **what the reference currently sa
 
 | Symbol | Where used | Reference | To add |
 |--------|------------|-----------|--------|
-| **GenSignatures.openProgram(prog, ...)** | ghidrecomp/bsim.py:171 | B.10.12 says "opens program for signature generation". | Add full signature: e.g. `openProgram(program, ...) → void` and `addFunctionTags(...)` (bsim.py:150). |
+| **GenSignatures.openProgram(prog,...)** | ghidrecomp/bsim.py:171 | B.10.12 says "opens program for signature generation". | Add full signature: e.g. `openProgram(program, ...) → void` and `addFunctionTags(...)` (bsim.py:150). |
 
 ### A.21 FunctionTag
 
@@ -236,14 +236,14 @@ Each entry: **symbol** (type), **where used**, **what the reference currently sa
    Where behavior differs by Ghidra or PyGhidra version (e.g. getComment(int vs CommentType, getProjectData() on GhidraProject), keep a short "Version note" in the reference.
 
 6. **Index / quick reference**  
-   Consider adding an alphabetical index of all documented symbols (Program, Function, Listing, ...) with section numbers for faster lookup.
+   Consider adding an alphabetical index of all documented symbols (Program, Function, Listing,...) with section numbers for faster lookup.
 
 ---
 
 **Summary**
 
 - **Missing APIs (A):** 40+ symbols or method overloads used in code but missing or under-specified in the reference; highest impact: CodeUnit (getComment, getAddress), DomainFile (getParent, pathname, getContentType), DomainFolder (full API), ProjectData, Function.getSymbol(), Listing getCodeUnits(Memory) and getInstructions(boolean), setComment(..., null), DefinedDataIterator/DefinedStringIterator, CheckinHandler override method, Component/DataType/Structure/Variable methods, Address.equals, AddressSpace.getAddress.
-- **Incomplete rows (B):** 5 rows with "per API", "various", "etc.", or "see ... docs" that should be replaced with concrete signatures or explicit lists.
+- **Incomplete rows (B):** 5 rows with "per API", "various", "etc.", or "see... docs" that should be replaced with concrete signatures or explicit lists.
 - **Edge cases (C):** 10 items (null clearing, iterators, overload resolution, DomainFolder import, etc.).
 - **Recommendations (D):** 6 (CodeUnit constants, iterator consistency, TYPE_CHECKING alignment, version notes, index).
 

@@ -13,11 +13,13 @@ pr: https://github.com/bolabaden/AgentDecompile/pull/65
 PR [#65](https://github.com/bolabaden/AgentDecompile/pull/65) is doc-only post-merge closeout for PR #64. Verify CI, squash merge to `master`.
 
 ```mermaid
+
 flowchart TD
   A[PR #65 mergeable] --> B[pytest + frontmatter OK]
   B --> C[Squash merge to master]
   C --> D[Mark plans completed]
 ```
+
 
 ## Requirements
 
@@ -37,6 +39,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 python3 scripts/validate-frontmatter.py docs/solutions/architecture-patterns/capabilities-mcp-resource.md
 uv run pytest -m unit -q --timeout=120
 ```
+

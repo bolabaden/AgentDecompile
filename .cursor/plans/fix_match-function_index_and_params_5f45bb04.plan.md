@@ -58,6 +58,7 @@ No change to "callers" or "callees" modes (they do not use the index).
 ## Flow (after fix)
 
 ```mermaid
+
 flowchart LR
   A[Client: match-function symbol WinMain] --> B[Normalize args]
   B --> C[Resolve func by name/address]
@@ -66,6 +67,7 @@ flowchart LR
   E --> F[target_feature found]
   F --> G[Return similar/callers/callees/signature results]
 ```
+
 
 
 
@@ -85,7 +87,7 @@ flowchart LR
 ## Files to change
 
 
-| File                                                                                                                     | Changes                                                                                                                                             |
+| File | Changes |
 | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [src/agentdecompile_cli/mcp_server/providers/getfunction.py](src/agentdecompile_cli/mcp_server/providers/getfunction.py) | Index keyed by address; by_identity/by_caller/by_callee use address strings; targetProgramPaths check and error; signature mode compare by address. |
 | [src/agentdecompile_cli/mcp_server/tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py)               | Add `"function"` to `_get_address_or_symbol` key list.                                                                                              |

@@ -29,6 +29,7 @@ When `AGENTDECOMPILE_AUTO_CHECKIN=1`, the server runs `checkin-program` silently
 ## Solution (PR #97)
 
 ```mermaid
+
 flowchart TD
   A[Mutating tool succeeds] --> B{auto-checkin enabled?}
   B -->|No| C[uiVisibility + guiHint only]
@@ -37,6 +38,7 @@ flowchart TD
   E --> F[attach_auto_checkin_to_payload]
   F --> G[JSON autoCheckin + markdown ### Auto Check-in]
 ```
+
 
 | Field | Purpose |
 |-------|---------|

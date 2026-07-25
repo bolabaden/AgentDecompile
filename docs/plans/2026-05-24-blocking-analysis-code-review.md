@@ -15,6 +15,7 @@ Run a structured review of branch `impl/blocking-analysis-gate-c2bc` vs `master`
 ## Scope
 
 ```mermaid
+
 flowchart TD
     A[git diff f40d81ea..HEAD] --> B[code-reviewer pass]
     B --> C{Crit/Important?}
@@ -23,6 +24,7 @@ flowchart TD
     D --> F[pytest unit + gate tests]
     F --> G[Push PR #39]
 ```
+
 
 | In scope | Out of scope |
 |----------|----------------|

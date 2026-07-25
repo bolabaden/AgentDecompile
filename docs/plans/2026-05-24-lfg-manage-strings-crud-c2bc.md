@@ -14,11 +14,13 @@ origin: docs/audits/2026-05-24-agent-native-audit.md
 Close the agent-native audit strings CRUD gap (1/4 → 4/4) by adding `create`, `update`, and `delete` modes to `manage-strings`, with unit tests and UI-hint wiring for mutating modes only.
 
 ```mermaid
+
 flowchart TD
   A[manage-strings mode] --> B{mutating?}
   B -->|create/update/delete| C[transaction: write bytes + createData/clear]
   B -->|list/search/count| D[existing read path]
 ```
+
 
 ---
 

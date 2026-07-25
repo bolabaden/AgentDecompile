@@ -9,7 +9,7 @@ isProject: false
 
 ## Enhancement Summary
 
-**Deepened on:** 2026-03-11  
+**Deepened on:** 2026-03-11 
 **Sections enhanced:** 7 (Why not docs/, Canonical locations, Plugin-style layout, Target structure, Implementation, File summary, Result)  
 **Research sources:** Cursor Docs (Agent Skills), MCP official debugging guide, Agent Skills progressive disclosure, MCP Inspector docs.
 
@@ -35,10 +35,10 @@ isProject: false
 ### Canonical skill locations (Cursor docs, 2025–2026)
 
 
-| Location              | Scope                         |
+| Location | Scope |
 | --------------------- | ----------------------------- |
 | `**.cursor/skills/`** | Project-level (Cursor native) |
-| `**.agents/skills/`** | Project-level                 |
+| `**.agents/skills/`** | Project-level |
 | `~/.cursor/skills/`   | User-level (global)           |
 
 
@@ -59,7 +59,7 @@ This repo already uses `**.cursor/`** (plans, hooks, mcp.json, settings). Puttin
 
 **References:**
 
-- [Agent Skills  Cursor Docs](https://cursor.com/docs/skills) — skill directories, SKILL.md format, optional scripts/references/assets.
+- [Agent Skills Cursor Docs](https://cursor.com/docs/skills) — skill directories, SKILL.md format, optional scripts/references/assets.
 
 ---
 
@@ -83,9 +83,9 @@ We implement the same pattern in the repo: one skill folder under `.cursor/skill
 **Optional directories (per Cursor docs):**
 
 
-| Directory     | Purpose                                   |
+| Directory | Purpose |
 | ------------- | ----------------------------------------- |
-| `scripts/`    | Executable code agents can run            |
+| `scripts/`    | Executable code agents can run |
 | `references/` | Additional documentation loaded on demand |
 | `assets/`     | Static resources (templates, images)      |
 
@@ -100,6 +100,7 @@ We implement the same pattern in the repo: one skill folder under `.cursor/skill
 ## Target structure
 
 ```
+
 .cursor/
 └── skills/
     └── mcp-debugging/
@@ -109,6 +110,7 @@ We implement the same pattern in the repo: one skill folder under `.cursor/skill
             ├── WORKFLOWS.md             # Behavior, workflows, checklists (ex-AGENTS workflow doc)
             └── CLAUDE_MCP_DEBUG.md      # Claude prompts, tool patterns, edge cases (ex-CLAUDE-MCP-DEBUG)
 ```
+
 
 - **SKILL.md**: Short description, “when to use,” and links to the three reference files. Frontmatter: `name: mcp-debugging`, `description` with trigger keywords (MCP server issues, timeouts, schema, GUI/coords, sandbox, self-healing).
 - **references/**: Use the exact markdown content you provided for each of the three source docs (only filenames normalized: no `docs/mcp-debugging/` path).
@@ -144,7 +146,7 @@ We implement the same pattern in the repo: one skill folder under `.cursor/skill
 ### 2. Create references (exact body text from your three docs)
 
 
-| File                                                             | Content source                                             |
+| File | Content source |
 | ---------------------------------------------------------------- | ---------------------------------------------------------- |
 | `.cursor/skills/mcp-debugging/references/CLIS_AND_META_DEBUG.md` | Your SKILLS.md (5 CLIs, meta-debug loop, checklist)        |
 | `.cursor/skills/mcp-debugging/references/WORKFLOWS.md`           | Your AGENTS.md (behavior, workflows, checklists)           |
@@ -193,14 +195,14 @@ This keeps a single AGENTS.md while making the skill discoverable from the main 
 ## File summary
 
 
-| Action | Path                                                             |
+| Action | Path |
 | ------ | ---------------------------------------------------------------- |
 | Create | `.cursor/skills/mcp-debugging/SKILL.md`                          |
 | Create | `.cursor/skills/mcp-debugging/references/CLIS_AND_META_DEBUG.md` |
 | Create | `.cursor/skills/mcp-debugging/references/WORKFLOWS.md`           |
 | Create | `.cursor/skills/mcp-debugging/references/CLAUDE_MCP_DEBUG.md`    |
-| Edit   | `AGENTS.md` — add MCP debugging section + link to skill          |
-| Edit   | `docs/INDEX.md` — add skill entry + optional quick-nav line      |
+| Edit | `AGENTS.md` — add MCP debugging section + link to skill |
+| Edit | `docs/INDEX.md` — add skill entry + optional quick-nav line |
 
 
 **Do not create** `docs/mcp-debugging/`; skills live under `.cursor/skills/` per Cursor and plugin convention.

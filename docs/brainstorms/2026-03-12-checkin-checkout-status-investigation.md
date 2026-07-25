@@ -1,6 +1,6 @@
 # Check-in / Check-out / Status Implementation Investigation
 
-**Date**: 2026-03-12  
+**Date**: 2026-03-12 
 **Scope**: Determine if version-control operations (check-in, check-out, status, undo checkout, add to version control, update/merge) are fully implemented and aligned with Ghidra/PyGhidra documentation.
 
 ---

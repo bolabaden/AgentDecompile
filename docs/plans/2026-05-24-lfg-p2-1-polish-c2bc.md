@@ -29,11 +29,13 @@ Close P2-1 review follow-ups: enforce **COBRA_CASE** at runtime on enum member w
 ## Implementation Units
 
 ```mermaid
+
 flowchart TD
   A[U1 COBRA_CASE enforcement] --> T[Unit tests]
   B[U2 UI hint + auto-checkin scoping] --> T
   C[U3 Residual doc] --> D[Push PR #49]
 ```
+
 
 - U1. `require_cobra_case_member_name()` in `enums.py`; call from create/add/edit paths.
 - U2. `payload_has_mutating_action()` in `program_metadata.py`; wire auto-checkin in `tool_providers.py`.
@@ -43,6 +45,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_manage_enums.py tests/test_ui_hints.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

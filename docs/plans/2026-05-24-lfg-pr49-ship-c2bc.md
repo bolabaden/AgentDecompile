@@ -15,10 +15,12 @@ Close out **PR #49**: agent-native audit docs + P1-1 `projectContext` enrichment
 ## Flow
 
 ```mermaid
+
 flowchart TD
     D[Doc closeout residual + audit rows] --> V[pytest unit]
     V --> S[Push + PR ready]
 ```
+
 
 ## Requirements
 
@@ -47,6 +49,8 @@ File: `src/agentdecompile_cli/mcp_server/program_metadata.py`
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_project_context.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

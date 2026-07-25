@@ -48,6 +48,8 @@ The agent-native audit residual tracker marks every P1–P3 item **Done**; only 
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 gh pr checks 49
 ```
+

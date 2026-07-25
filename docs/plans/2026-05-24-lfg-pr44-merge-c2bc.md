@@ -15,10 +15,12 @@ Complete `/lfg` for [#44](https://github.com/bolabaden/AgentDecompile/pull/44): 
 ## Flow
 
 ```mermaid
+
 flowchart TD
     C[CI green] --> T[Test empty programPath in timeout JSON]
     T --> M[Merge PR #44]
 ```
+
 
 ## Requirements
 
@@ -42,6 +44,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_tool_providers_analysis_gate.py -m unit -q
 gh pr checks 44
 ```
+

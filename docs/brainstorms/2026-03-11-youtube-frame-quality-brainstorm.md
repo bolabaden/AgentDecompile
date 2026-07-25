@@ -1,6 +1,6 @@
 # Brainstorm: Fix Atrocious Quality of Extracted Frames (YouTube-Transcript.ps1)
 
-**Date:** 2026-03-11  
+**Date:** 2026-03-11 
 **Context:** User has reported repeatedly that extracted PNG frames from the YouTube-Transcript.ps1 script are blurry, pixelated, and unusable—even at 1920p scaling. Screenshots show a Ghidra UI with poor visual fidelity across the entire frame.
 
 ---
@@ -68,4 +68,4 @@ So the **source file** written by the script was already lower quality than the 
 ## Resolved Questions
 
 - *Why was quality still bad after CRF 18 and lanczos?* → Re-encoding (VP9→H264) was the bottleneck; CRF 18 still loses clarity on text/UI.
-- *Will users mind .mkv instead of .mp4?* → For frame extraction and local use, MKV is fine. We can add a “prefer MP4” option later if needed.
+- *Will users mind.mkv instead of.mp4?* → For frame extraction and local use, MKV is fine. We can add a “prefer MP4” option later if needed.

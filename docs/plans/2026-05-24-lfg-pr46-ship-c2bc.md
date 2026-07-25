@@ -18,10 +18,12 @@ PR [#46](https://github.com/bolabaden/AgentDecompile/pull/46) implements `tests/
 ## Flow
 
 ```mermaid
+
 flowchart TD
     V[Re-verify unit + lfg smoke locally] --> D[Document lfg marker in tests/README]
     D --> R[Mark PR ready + update description]
 ```
+
 
 ## Requirements
 
@@ -50,6 +52,8 @@ Run `gh pr ready 46`; refresh PR body if needed via manage tool.
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_lfg_e2e.py -m "not lfg" -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

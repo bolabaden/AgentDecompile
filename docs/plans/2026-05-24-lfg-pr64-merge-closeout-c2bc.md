@@ -14,11 +14,13 @@ merge_sha: cd4b069
 Post-merge documentation for `agentdecompile://capabilities` (PR #64 squash `cd4b069`).
 
 ```mermaid
+
 flowchart TD
   A[PR #64 merged] --> B[Compound learning doc]
   B --> C[Residual tracker none]
   C --> D[Plan merge_sha updates]
 ```
+
 
 ## Requirements
 
@@ -32,6 +34,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 python3 scripts/validate-frontmatter.py docs/solutions/architecture-patterns/capabilities-mcp-resource.md
 ```
+

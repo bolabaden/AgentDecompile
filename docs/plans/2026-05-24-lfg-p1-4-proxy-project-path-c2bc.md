@@ -49,12 +49,14 @@ Multi-project proxy deployments need clients to send `X-AgentDecompile-Project-P
 ## High-Level Technical Design
 
 ```mermaid
+
 flowchart LR
   Client["MCP client"] -->|"X-AgentDecompile-Project-Path"| Proxy["agentdecompile-proxy"]
   Proxy -->|"forward allowlist"| Bridge["stdio bridge"]
   Bridge --> Backend["agentdecompile-server"]
   Backend --> Ctx["CURRENT_REQUEST_PROJECT_PATH_OVERRIDE"]
 ```
+
 
 > Directional guidance for review, not implementation specification.
 
@@ -70,6 +72,8 @@ flowchart LR
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_proxy_forwarded_headers.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

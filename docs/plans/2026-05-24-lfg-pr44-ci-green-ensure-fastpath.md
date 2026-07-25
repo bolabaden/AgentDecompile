@@ -14,12 +14,14 @@ Record green **Unit tests (no Ghidra)** CI on [#44](https://github.com/bolabaden
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Plan] --> F[Pre-lock skip in blocking_ensure_analyzed]
     F --> T[Unit test]
     T --> D[Residual CI green + HEAD]
     D --> PUSH[commit push]
 ```
+
 
 ## Requirements traceability
 
@@ -32,6 +34,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

@@ -1,6 +1,6 @@
 ---
 name: Shared/local checkout-checkin + sync E2E
-overview: Verify shared Ghidra server projects and local .gpr projects both support checkout/checkin with real edits (rename/label), persistence after MCP server restart, and sync-project pull/push. Optional code hardening from code review (exclusive checkout, honest check-in-all, push transaction policy).
+overview: Verify shared Ghidra server projects and local.gpr projects both support checkout/checkin with real edits (rename/label), persistence after MCP server restart, and sync-project pull/push. Optional code hardening from code review (exclusive checkout, honest check-in-all, push transaction policy).
 todos:
   - id: verify-shared-three-cycles
     content: "E2E: shared open → 3× (checkout → rename or label → checkin) → list-project-files; use tool-seq + same --server-url"
@@ -9,7 +9,7 @@ todos:
     content: Restart agentdecompile-server only; reopen shared; checkout; assert renames/labels via get-function or search-symbols
     status: completed
   - id: verify-local-three-cycles
-    content: "E2E: open local .gpr → 3× (edit → checkin-program or save path) → list-project-files"
+    content: "E2E: open local.gpr → 3× (edit → checkin-program or save path) → list-project-files"
     status: completed
   - id: verify-local-restart
     content: Restart MCP server; reopen same local project; assert edits persist
@@ -51,13 +51,13 @@ isProject: false
 ## Implementation map (reference)
 
 
-| Concern                           | Primary code                                                                                                                                                                                  |
+| Concern | Primary code |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Checkout / checkin / status       | [import_export.py](src/agentdecompile_cli/mcp_server/providers/import_export.py) `_handle_checkout`, `_handle_checkin`, `_handle_checkout_status`, `_resolve_domain_file_for_checkout_status` |
-| Path canonicalization             | [session_context.py](src/agentdecompile_cli/mcp_server/session_context.py) `canonicalize_program_path`                                                                                        |
-| Shared repo checkout              | [project.py](src/agentdecompile_cli/mcp_server/providers/project.py) `_checkout_shared_program`                                                                                               |
+| Checkout / checkin / status | [import_export.py](src/agentdecompile_cli/mcp_server/providers/import_export.py) `_handle_checkout`, `_handle_checkin`, `_handle_checkout_status`, `_resolve_domain_file_for_checkout_status` |
+| Path canonicalization | [session_context.py](src/agentdecompile_cli/mcp_server/session_context.py) `canonicalize_program_path`                                                                                        |
+| Shared repo checkout | [project.py](src/agentdecompile_cli/mcp_server/providers/project.py) `_checkout_shared_program`                                                                                               |
 | Checkout reclaim (foreign holder) | [import_export.py](src/agentdecompile_cli/mcp_server/providers/import_export.py) `_ensure_versioned_file_ready_for_checkin`                                                                   |
-| Sync pull/push                    | [project.py](src/agentdecompile_cli/mcp_server/providers/project.py) `_sync_shared_repository`, `_pull_shared_repository_to_local`, `_push_local_project_to_shared`                           |
+| Sync pull/push | [project.py](src/agentdecompile_cli/mcp_server/providers/project.py) `_sync_shared_repository`, `_pull_shared_repository_to_local`, `_push_local_project_to_shared`                           |
 
 
 ## Phase A — Shared project: three cycles + edits
@@ -99,9 +99,9 @@ Run as **one `tool-seq`** (or one HTTP session with stable session id).
 ## Phase E — Optional code hardening (code-reviewer)
 
 
-| Item                                       | Action                                                                                                                    |
+| Item | Action |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `exclusive` ignored on shared checkout     | Pass `exclusive` into `_checkout_shared_program`; use Ghidra exclusive checkout type if API allows.                       |
+| `exclusive` ignored on shared checkout | Pass `exclusive` into `_checkout_shared_program`; use Ghidra exclusive checkout type if API allows.                       |
 | Check-in all + versioned + `!canCheckin()` | Avoid reporting `save_local` + success as server check-in; return failure or explicit warning with checkout holder hints. |
 | Sync push `endTransaction(..., true)`      | Document that push may commit open transactions, or match policy to import_export transaction helpers.                    |
 
@@ -111,6 +111,7 @@ Run as **one `tool-seq`** (or one HTTP session with stable session id).
 Replace `P`, server args, and tool payloads (addresses) with real values from your binary.
 
 ```powershell
+
 $seq = @'
 [
   {"name":"open","arguments":{"shared":true,"path":"REPO","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"ghidra","serverPassword":"admin"}},
@@ -129,6 +130,7 @@ $seq = @'
 '@
 uv run python -m agentdecompile_cli.cli --server-url http://127.0.0.1:8080 tool-seq $seq
 ```
+
 
 After restart, run a shorter seq: `open` → `checkout-program` → `get-function` / `search-symbols` with identifiers from the renames.
 

@@ -30,6 +30,7 @@ Agents and skills should **not default to Ghidra** for every RE task. Use the **
 This document is the institutional routing guide for AgentDecompile agents, skills, and MCP prompts.
 
 ```mermaid
+
 flowchart TD
   Q[Analysis question] --> T0{Tier 0: static file / OS tools}
   T0 -->|sufficient| OUT[Structured artifact / answer]
@@ -41,6 +42,7 @@ flowchart TD
   T3 -->|insufficient| T4[Tier 3: decompile / dataflow / mutate]
   T4 --> OUT
 ```
+
 
 ## Core workflow (multi-agent RE)
 

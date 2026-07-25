@@ -15,10 +15,12 @@ Final `/lfg` confirmation for [#44](https://github.com/bolabaden/AgentDecompile/
 ## Flow
 
 ```mermaid
+
 flowchart TD
     C[CI green on 253bb4b] --> T[Test analysis_timeout_error_response]
     T --> R[Review push]
 ```
+
 
 ## Requirements
 
@@ -43,5 +45,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_tool_providers_analysis_gate.py -m unit -q
 ```
+

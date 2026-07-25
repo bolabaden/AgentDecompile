@@ -15,11 +15,13 @@ origin: docs/plans/2026-05-24-lfg-discovery-arc-audit-sync-c2bc.md
 PR #101 syncs the agent-native audit to the post-merge discovery arc state. Closeout adds merge-order guidance, updates compound doc with PR #101, and finalizes residual tracker.
 
 ```mermaid
+
 flowchart TD
   A[PR #101 audit sync] --> B[Merge order doc in discovery arc]
   B --> C[Residual tracker PR #101 Done]
   C --> D[pytest -m unit green]
 ```
+
 
 ---
 
@@ -44,5 +46,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 ```
+

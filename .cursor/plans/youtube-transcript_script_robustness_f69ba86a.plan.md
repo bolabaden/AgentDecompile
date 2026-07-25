@@ -1,6 +1,6 @@
 ---
 name: YouTube-Transcript script robustness
-overview: Harden the YouTube-Transcript.ps1 script so frame-extraction parameters are intuitive, directory-vs-file confusion is eliminated, transient yt-dlp/network failures are handled gracefully, and extracted frame PNGs are high quality (default 1080p, configurable).
+overview: Harden the YouTube-Transcript.ps1 script so frame-extraction parameters are clear, directory-vs-file confusion is eliminated, transient yt-dlp/network failures are handled gracefully, and extracted frame PNGs are high quality (default 1080p, configurable).
 todos:
   - id: param-clarity
     content: Clarify -FrameVideoPath vs frame output dir; add -FramesOutDir; accept dir or file for FrameVideoPath
@@ -15,7 +15,7 @@ todos:
     content: Make all frame/video errors actionable (what to pass, example commands)
     status: completed
   - id: doc-examples
-    content: Update .SYNOPSIS/.EXAMPLE and help for new params and common workflows
+    content: Update.SYNOPSIS/.EXAMPLE and help for new params and common workflows
     status: completed
 isProject: false
 ---
@@ -25,22 +25,22 @@ isProject: false
 ## Root causes of your errors
 
 
-| What you ran                                     | What went wrong                                                         | Root cause                                                                                                                                                                                                                      |
+| What you ran | What went wrong | Root cause |
 | ------------------------------------------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-Subs -ExtractFrames -Interval 5` (no `-Video`) | "Could not locate source video for frame extraction"                    | ExtractFrames needs a video source; script didn’t make it obvious that you must use `-Video` or `-FrameVideoPath <file>`.                                                                                                       |
-| `-FrameVideoPath ..\docs\from_video\frames\`     | "Could not determine video duration for: ...\frames                     | You passed the **frames output folder**; script treats `-FrameVideoPath` as the **video file** (or path to it). It then ran ffprobe on a directory path. Naming/semantics are confusing; no separate “frames output dir” param. |
+| `-FrameVideoPath ..\docs\from_video\frames\`     | "Could not determine video duration for:...\frames | You passed the **frames output folder**; script treats `-FrameVideoPath` as the **video file** (or path to it). It then ran ffprobe on a directory path. Naming/semantics are confusing; no separate “frames output dir” param. |
 | `-FrameVideoPath -Subs ...` (no value)           | "Missing an argument for parameter 'FrameVideoPath'"                    | PowerShell requires a string after `-FrameVideoPath`; there’s no way to “use auto-detect only” without omitting the switch.                                                                                                     |
-| Same URL, one run                                | "Could not get video title from URL" / "Invoke-YtDlpJson: empty stdout" | Transient yt-dlp or network failure; script doesn’t retry.                                                                                                                                                                      |
-| Frames extracted                                 | PNGs "horrible quality, unusable"                                       | No scale filter in ffmpeg; output is whatever the decoder gives (can be low res). No resolution/quality options.                                                                                                                |
+| Same URL, one run | "Could not get video title from URL" / "Invoke-YtDlpJson: empty stdout" | Transient yt-dlp or network failure; script doesn’t retry.                                                                                                                                                                      |
+| Frames extracted | PNGs "horrible quality, unusable"                                       | No scale filter in ffmpeg; output is whatever the decoder gives (can be low res). No resolution/quality options.                                                                                                                |
 
 
 ---
 
 ## Design goals
 
-1. **Intuitive** – Users can guess: “video file goes here, frame folder goes there,” and “frames will be 1080p unless I say otherwise.”
+1. **clear** – Users can guess: “video file goes here, frame folder goes there,” and “frames will be 1080p unless I say otherwise.”
 2. **Flexible** – Subs-only, video+subs, frames from existing video file or from just-downloaded video; optional frame output dir and resolution.
-3. **Robust** – Transient yt-dlp/network failures retried; errors tell you exactly what to pass (e.g. `-Video` or `-FrameVideoPath C:\path\to\video.mp4`).
+3. **reliable** – Transient yt-dlp/network failures retried; errors tell you exactly what to pass (e.g. `-Video` or `-FrameVideoPath C:\path\to\video.mp4`).
 4. **Frame quality** – Default 1080p; configurable resolution/size so PNGs are usable.
 
 ---
@@ -67,7 +67,7 @@ isProject: false
 - When no video source is found for frame extraction, say exactly what to do, e.g.  
 “Frame extraction needs a video. Use -Video to download it, or -FrameVideoPath with the path to your video file (e.g. -FrameVideoPath 'C:\path\to\video.mp4').”
 - When `-FrameVideoPath` points to a directory and no video is found there:  
-“No video file found in directory: . Use -FrameVideoPath with a path to a .mp4/.mkv file, or use -Video to download the video.”
+“No video file found in directory:. Use -FrameVideoPath with a path to a.mp4/.mkv file, or use -Video to download the video.”
 
 ---
 
@@ -116,7 +116,7 @@ isProject: false
 - **frame-quality**: Add default 1080p scale in `Export-FramesAtInterval`; add `-FrameSize` (and optionally `-FrameWidth`/`-FrameHeight`); thread through from params to `Export-FramesAtInterval`; document.
 - **retry-ytdlp**: In URL metadata path, retry `Invoke-YtDlpJson` up to 2 times with short delay on empty/null or missing title; improve final error message.
 - **errors-actionable**: Audit all `Fail` messages for frame/video/sub flows; add one-line “do this” (e.g. “Use -Video or -FrameVideoPath ”) where needed.
-- **doc-examples**: Update .SYNOPSIS, .DESCRIPTION, .EXAMPLE, and parameter help for `-FrameVideoPath`, `-FramesOutDir`, `-FrameSize` (and any new params); add examples for “subs + frames from existing video” and “video + subs + frames at 1080p.”
+- **doc-examples**: Update.SYNOPSIS,.DESCRIPTION,.EXAMPLE, and parameter help for `-FrameVideoPath`, `-FramesOutDir`, `-FrameSize` (and any new params); add examples for “subs + frames from existing video” and “video + subs + frames at 1080p.”
 
 ---
 
@@ -125,6 +125,7 @@ isProject: false
 After implementation, these should work as intended:
 
 ```powershell
+
 # Subs + frames: must provide video source (download or path)
 .\YouTube-Transcript.ps1 -Url "..." -OutDir .\out -Subs -ExtractFrames -Interval 5 -Video
 
@@ -137,5 +138,6 @@ After implementation, these should work as intended:
 # Frames at 720p to save space
 .\YouTube-Transcript.ps1 -Url "..." -OutDir .\out -Video -Subs -ExtractFrames -Interval 5 -FrameSize 720p
 ```
+
 
 No other changes beyond writing and filling out this plan file.

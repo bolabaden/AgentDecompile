@@ -14,14 +14,18 @@ isProject: false
 **Change:** In [src/agentdecompile_cli/cli.py](src/agentdecompile_cli/cli.py), in `_call_raw` (around line 658), change:
 
 ```python
+
 payload.setdefault("format", "json")
 ```
+
 
 to:
 
 ```python
+
 payload.setdefault("format", "markdown")
 ```
+
 
 **Effect:** All CLI-invoked tools (including migrate-metadata, match-function, get-function) will request markdown from the server by default. The server already converts tool JSON to markdown when `format != "json"` (see [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py) around 2079–2084 via `render_tool_response`). Users who need machine-readable output can still pass `-f json`.
 
@@ -71,10 +75,10 @@ No change: when the user calls get-function directly, they do not pass `maxCalle
 ## 3. Summary of files and edits
 
 
-| Area                 | File                                                                         | Edits                                                                                                                                                                                                                                                                                           |
+| Area | File | Edits |
 | -------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Default format       | [cli.py](src/agentdecompile_cli/cli.py)                                      | In `_call_raw`: `payload.setdefault("format", "markdown")`.                                                                                                                                                                                                                                     |
-| get-function caps    | [dissect.py](src/agentdecompile_cli/mcp_server/providers/dissect.py)         | Schema: add `maxCallers`, `maxCallees`. Handler: read them; pass limit into `_collect_callers`/`_collect_callees`; collectors use `islice` when limit set.                                                                                                                                      |
+| Default format | [cli.py](src/agentdecompile_cli/cli.py)                                      | In `_call_raw`: `payload.setdefault("format", "markdown")`.                                                                                                                                                                                                                                     |
+| get-function caps | [dissect.py](src/agentdecompile_cli/mcp_server/providers/dissect.py)         | Schema: add `maxCallers`, `maxCallees`. Handler: read them; pass limit into `_collect_callers`/`_collect_callees`; collectors use `islice` when limit set.                                                                                                                                      |
 | Match/migrate detail | [getfunction.py](src/agentdecompile_cli/mcp_server/providers/getfunction.py) | Add `_detail_limits(result_count)`. Add optional `detail_result_count` to `_handle_match_cross_program`; in bulk loop pass `len(identifiers)*len(targets)`. In enrichment block compute limits from result count and pass `maxCallers`, `maxCallees`, `maxInstructions` into get-function call. |
 
 
@@ -89,6 +93,7 @@ If desired, the default **display** format (`_DEFAULT_OUTPUT_FORMAT = "text"`) c
 ## 5. Mermaid: flow after changes
 
 ```mermaid
+
 flowchart LR
   subgraph cli [CLI]
     A[User runs migrate-metadata] --> B["_call_raw: format=markdown"]
@@ -105,6 +110,7 @@ flowchart LR
   end
   J --> K[CLI prints markdown]
 ```
+
 
 
 

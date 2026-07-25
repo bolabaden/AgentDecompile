@@ -18,11 +18,13 @@ Apply Dependabot [#35](https://github.com/bolabaden/AgentDecompile/pull/35) (`pi
 ## Flow
 
 ```mermaid
+
 flowchart TD
     U[Apply pyproject + uv.lock from #35] --> T[pytest unit]
     T --> D[Mark stale plans completed]
     D --> P[Open PR]
 ```
+
 
 ## Requirements
 
@@ -42,6 +44,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv sync --all-extras --dev
 uv run pytest -m unit -q --timeout=120
 ```
+

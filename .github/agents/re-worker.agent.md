@@ -73,6 +73,7 @@ Look for:
 ## Function Artifact Schema
 
 ```json
+
 {
   "address": "0x<hex>",
   "name": "<current name or suggested name>",
@@ -121,6 +122,7 @@ Look for:
   ]
 }
 ```
+
 
 ## Confidence Scoring Guide
 

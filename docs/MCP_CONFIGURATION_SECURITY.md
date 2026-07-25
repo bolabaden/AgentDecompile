@@ -83,8 +83,10 @@ See [`mcp.example.json`](./mcp.example.json) for a complete secure configuration
 ### 1. Copy Example Configuration
 
 ```bash
+
 cp docs/mcp.example.json ~/.config/mcp/mcp.json
 ```
+
 
 *(Adjust path based on your MCP client location)*
 
@@ -93,6 +95,7 @@ cp docs/mcp.example.json ~/.config/mcp/mcp.json
 Edit the `inputs` section to set appropriate defaults for your environment:
 
 ```json
+
 {
   "id": "ad-http-host",
   "type": "promptString",
@@ -100,6 +103,7 @@ Edit the `inputs` section to set appropriate defaults for your environment:
   "default": "your-server.example.com"
 }
 ```
+
 
 ### 3. Start MCP Client
 
@@ -110,6 +114,7 @@ The MCP client will prompt you for required inputs when connecting to AgentDecom
 If you prefer pure environment variable configuration without prompts, use the CLI directly:
 
 ```bash
+
 export AGENT_DECOMPILE_GHIDRA_SERVER_HOST="your-host"
 export AGENT_DECOMPILE_GHIDRA_SERVER_PORT="13100"
 export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME="your-username"
@@ -118,6 +123,7 @@ export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY="your-repo"
 
 agentdecompile-server --transport stdio
 ```
+
 
 See [USAGE.md](../USAGE.md) for complete CLI documentation.
 

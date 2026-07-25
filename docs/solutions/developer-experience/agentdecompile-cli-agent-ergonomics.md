@@ -26,11 +26,13 @@ Agents need non-interactive discovery, copy-pasteable `--help` examples, JSON to
 Prefer these entry points (see `src/agentdecompile_cli/cli_agent_help.py`):
 
 ```bash
+
 agentdecompile-cli -f json tool --list-tools
 agentdecompile-cli tool list-functions '{"programPath":"/path/to/binary","limit":5}'
 echo '[{"name":"list-project-files","arguments":{}}]' | agentdecompile-cli tool-seq --stdin
 agentdecompile-cli tool-seq @/tmp/steps.json
 ```
+
 
 Usage errors include example invocations (missing `NAME`, invalid JSON, missing steps).
 
@@ -48,9 +50,11 @@ Agents retry often; actionable errors and machine-readable `--list-tools` output
 Missing tool name:
 
 ```bash
+
 agentdecompile-cli tool
 # Error includes: agentdecompile-cli tool --list-tools
 ```
+
 
 ## Related
 

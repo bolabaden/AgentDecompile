@@ -29,10 +29,12 @@ Combines:
 ## Verification (re-verified 2026-05-29)
 
 ```
+
 uv run pytest tests/test_manage_strings.py tests/test_manage_data_types.py tests/test_manage_function_tags.py -m unit -q  # 17 passed
 uv run pytest -m unit -q --timeout=120  # 254 passed
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_server/providers/{strings,datatypes,getfunction}.py  # clean
 ```
+
 
 ## Plans
 

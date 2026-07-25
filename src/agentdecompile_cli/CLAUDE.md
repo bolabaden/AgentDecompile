@@ -3,6 +3,7 @@
 This guide is for contributors/agents working specifically in `src/agentdecompile_cli`.
 
 ```mermaid
+
 flowchart TD
     A[Client tool call] --> B[registry.resolve_tool_name]
     B --> C[ToolProviderManager.call_tool]
@@ -12,6 +13,7 @@ flowchart TD
     F --> G[GhidraTools / program services]
     G --> H[Structured MCP response]
 ```
+
 
 ## 1) Package Purpose
 
@@ -120,7 +122,7 @@ For modifications in `agentdecompile_cli`:
 
 This package must support both:
 - Human-driven CLI usage with varied naming styles.
-- Agent-driven MCP usage with robust intent recovery.
+- Agent-driven MCP usage with reliable intent recovery.
 
 Normalization and canonical routing are the compatibility backbone for both.
 

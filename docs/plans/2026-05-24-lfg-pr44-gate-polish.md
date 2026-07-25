@@ -14,6 +14,7 @@ Ship [#44](https://github.com/bolabaden/AgentDecompile/pull/44) with measurable 
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Plan] --> PERF[Adaptive analysis idle polling]
     PERF --> SKIP[Skip redundant idle wait when session marked analyzed]
@@ -21,6 +22,7 @@ flowchart TD
     TEST --> V[pytest gate modules]
     V --> PUSH[commit push PR #44]
 ```
+
 
 ## Requirements traceability
 
@@ -44,5 +46,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
 ```
+

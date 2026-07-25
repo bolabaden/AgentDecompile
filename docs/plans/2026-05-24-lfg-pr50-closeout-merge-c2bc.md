@@ -20,11 +20,13 @@ PR #49 is merged (`13200d6`). PR #50 holds docs-only post-merge closeout. Merge 
 ## Flow
 
 ```mermaid
+
 flowchart TD
     M[Merge PR #50] --> P[Pull master]
     P --> T[pytest -m unit]
     T --> D[Record PR #50 merge in residual doc]
 ```
+
 
 ---
 
@@ -53,7 +55,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 ```
+
 
 **Result (2026-05-28):** 124 passed on `master` at `049a9f7`.

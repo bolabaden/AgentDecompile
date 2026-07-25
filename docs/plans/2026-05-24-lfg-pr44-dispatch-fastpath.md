@@ -15,6 +15,7 @@ Reduce redundant Ghidra polling on the hot MCP dispatch path when a program is a
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Plan] --> F[wait_for_ready idle skip when session analyzed]
     F --> T[Unit test + tests/README]
@@ -22,6 +23,7 @@ flowchart TD
     S --> V[pytest gate]
     V --> PUSH[commit push]
 ```
+
 
 ## Requirements traceability
 
@@ -35,5 +37,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
 ```
+

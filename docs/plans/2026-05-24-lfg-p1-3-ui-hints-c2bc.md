@@ -58,6 +58,8 @@ The agent-native audit scores UI integration at 0/23 live CodeBrowser sync. Muta
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_ui_hints.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

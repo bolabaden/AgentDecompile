@@ -15,11 +15,13 @@ origin: docs/plans/2026-05-24-lfg-empty-session-hints-c2bc.md
 PR #96 ships proactive empty-session bootstrap hints. This closeout compounds the learning, syncs residual tracker, and cross-links agent-native pattern docs.
 
 ```mermaid
+
 flowchart TD
   A[PR #96 feature] --> B[Compound doc empty-session-bootstrap-hints]
   B --> C[Residual tracker + solutions index]
   C --> D[pytest -m unit green]
 ```
+
 
 ---
 
@@ -46,6 +48,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_empty_session_hints.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

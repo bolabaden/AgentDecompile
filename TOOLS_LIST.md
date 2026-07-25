@@ -1,10 +1,12 @@
-# Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)
+# AgentDecompile tools reference
 
-This document provides an exhaustive, consolidated reference for all canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), including all aliases and synonyms. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+Canonical tool list: `src/agentdecompile_cli/registry.py` (**70 tools**, **66 advertised** by default). Each tool is documented once under its canonical kebab-case name; aliases point here.
 
-**Legacy naming policy**: only the default curated advertised tool names are considered primary. Any other tool name in this document (including non-default canonical names and synonyms) is a legacy compatibility name. Legacy names remain callable, and can be re-advertised by setting `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
+**Arguments:** Implementations accept camelCase, snake_case, and kebab-case (`programPath`, `program_path`, `program-path`).
 
-**GUI vs Headless**: `programPath` (and synonyms) is optional in GUI mode (uses active program) but required in headless for program-scoped tools.
+**Legacy names:** Hidden from `tools/list` unless `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`. Still callable via raw MCP/CLI.
+
+**Headless vs GUI:** In headless MCP mode, program-scoped tools need `programPath`. In GUI mode it defaults to the active program.
 
 ## Server Configuration
 
@@ -18,6 +20,7 @@ Control which Ghidra project the server uses via environment variable or CLI arg
 | Project name | `AGENT_DECOMPILE_PROJECT_NAME` (alias: `AGENTDECOMPILE_PROJECT_NAME`) | `--project-name <name>` | Ignored when pointing to a `.gpr` file. Default: current working directory name. |
 
 ```bash
+
 # Directory-backed project (creates if absent)
 agentdecompile-server -t streamable-http \
   --project-path /my/projects/analysis \
@@ -31,9 +34,10 @@ agentdecompile-server -t streamable-http \
 AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 ```
 
+
 ## Table of Contents
 
-- [Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)](#exhaustive-agentdecompile-tools-reference-python-mcp-implementation)
+- [AgentDecompile tools reference](#agentdecompile-tools-reference)
   - [Server Configuration](#server-configuration)
     - [Local project](#local-project)
   - [Table of Contents](#table-of-contents)
@@ -96,18 +100,10 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`search-symbols`](#search-symbols)
     - [`svr-admin`](#svr-admin)
     - [`suggest`](#suggest)
-  - [Usage Tips](#usage-tips)
-    - [Start with High-Level Analysis](#start-with-high-level-analysis)
-    - [Trace Data Flow](#trace-data-flow)
-    - [Find Patterns](#find-patterns)
-    - [Organize Findings](#organize-findings)
-    - [Analyze C++ Binaries](#analyze-c-binaries)
-    - [Manage Functions and Variables](#manage-functions-and-variables)
-    - [Transfer Analysis Across Similar Binaries](#transfer-analysis-across-similar-binaries)
-- [Reverse Engineering Skills \& Workflows](#reverse-engineering-skills--workflows)
-  - [Binary Triage Skill](#binary-triage-skill)
-    - [Systematic Triage Workflow](#systematic-triage-workflow)
-      - [1. Identify the Program](#1-identify-the-program)
+  - [Usage tips](#usage-tips)
+- [Workflows](#workflows)
+  - [Binary triage](#binary-triage)
+    - [Steps](#steps)
       - [2. Survey Memory Layout](#2-survey-memory-layout)
       - [3. Survey Strings](#3-survey-strings)
       - [4. Survey Symbols and Imports](#4-survey-symbols-and-imports)
@@ -1621,53 +1617,31 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 **Examples**:
 - Suggest name: `suggest programPath="/bin.exe" suggestionType="name" address="0x401000"`.
 
-## Usage Tips
+## Usage tips
 
-### Start with High-Level Analysis
-
-`list-functions` then `get-call-graph` for main.
-
-### Trace Data Flow
-
-`analyze-data-flow` backward from address.
-
-### Find Patterns
-
-`search-constants` for deadbeef.
-
-### Organize Findings
-
-`manage-bookmarks` for encryption function.
-
-### Analyze C++ Binaries
-
-`analyze-vtables` for vtable at address.
-
-### Manage Functions and Variables
-
-`rename-function` and `set-function-prototype` to rename and set prototype.
-
-### Transfer Analysis Across Similar Binaries
-
-`match-function` to propagate from program1 to program2.
+| Goal | Start with |
+|------|------------|
+| Overview | `list-functions`, then `get-call-graph` from entry/main |
+| Data flow | `analyze-data-flow` backward from an address |
+| Constants | `search-constants` |
+| Bookmarks | `manage-bookmarks` on interesting sites |
+| C++ / vtables | `analyze-vtables` |
+| Rename / types | `rename-function`, `set-function-prototype` |
+| Cross-binary | `match-function` between two open programs |
 
 ---
 
-# Reverse Engineering Skills & Workflows
+# Workflows
 
-This section provides comprehensive methodologies, workflows, and pattern recognition guides for various reverse engineering tasks. These skills complement the tools above by providing strategic approaches to common RE challenges.
+Suggested tool order for common RE tasks. Adjust for your binary.
 
-## Binary Triage Skill
+## Binary triage
 
-**Purpose**: Performs initial binary survey by examining memory layout, strings, imports/exports, and functions to quickly understand what a binary does and identify suspicious behavior.
+First pass on an unknown binary: figure out what it is and where to dig deeper.
 
-**When to use**: First examining a binary, when asked to triage/survey/analyze a program, or getting an overview before deeper reverse engineering.
+### Steps
 
-### Systematic Triage Workflow
-
-Follow this workflow using AgentDecompile MCP tools:
-
-#### 1. Identify the Program
+#### 1. Identify the program
 - Use `get-current-program` to see the active program
 - Or use `list-project-files` to see available programs in the project
 - Note the `programPath` (e.g., "/Hatchery.exe") for use in subsequent tools
@@ -1748,23 +1722,23 @@ Follow this workflow using AgentDecompile MCP tools:
 
 ---
 
-## Deep Analysis Skill
+## Deep analysis
 
-**Purpose**: Performs focused, depth-first investigation of specific reverse engineering questions through iterative analysis and database improvement. Answers questions like "What does this function do?", "Does this use crypto?", "What's the C2 address?".
+Focused investigation after triage — answer specific questions ("what does this function do?", "where is the C2?", etc.) by iterating read → understand → improve annotations → verify.
 
-**When to use**: After binary-triage for investigating specific suspicious areas or when asked focused questions about binary behavior.
-
-### The Investigation Loop
+### Investigation loop
 
 Follow this iterative process (repeat 3-7 times per question):
 
 #### 1. READ - Gather Current Context (1-2 tool calls)
 ```
+
 Get decompilation/data at focus point:
 - get-functions (limit=20-50 lines, includeIncomingReferences=true, includeReferenceContext=true)
 - get-references (direction="to"/"from", includeRefContext=true)
 - get-data or inspect-memory for data structures
 ```
+
 
 #### 2. UNDERSTAND - Analyze What You See
 Ask yourself:
@@ -1776,6 +1750,7 @@ Ask yourself:
 #### 3. IMPROVE - Make Small Database Changes (1-3 tool calls)
 Prioritize clarity improvements:
 ```
+
 rename-variable: var_1 → encryption_key, iVar2 → buffer_size
 set-local-variable-type: local_10 from undefined4 to uint32_t
 set-function-prototype: void FUN_00401234(uint8_t* data, size_t len)
@@ -1783,25 +1758,32 @@ apply-data-type: Apply uint8_t[256] to S-box constant
 manage-comments with mode='set': Document key findings in code
 ```
 
+
 #### 4. VERIFY - Re-read to Confirm Improvement (1 tool call)
 ```
+
 get-functions again → Verify changes improved readability
 ```
 
+
 #### 5. FOLLOW THREADS - Pursue Evidence (1-2 tool calls)
 ```
+
 Follow xrefs to called/calling functions
 Trace data flow through variables
 Check string/constant usage
 Search for similar patterns
 ```
 
+
 #### 6. TRACK PROGRESS - Document Findings (1 tool call)
 ```
+
 manage-bookmarks action='create' type="Analysis" category="[Topic]" → Mark important findings
 manage-bookmarks action='create' type="TODO" → Track unanswered questions
 manage-bookmarks action='create' type="Note" category="Evidence" → Document key evidence
 ```
+
 
 #### 7. ON-TASK CHECK - Stay Focused
 Every 3-5 tool calls, ask:
@@ -1866,13 +1848,11 @@ Every 3-5 tool calls, ask:
 
 ---
 
-## CTF Reverse Engineering Skill
+## CTF reverse engineering
 
-**Purpose**: Solve CTF reverse engineering challenges using systematic analysis to find flags, keys, or passwords.
+Crackmes, validators, obfuscated logic — find flags, keys, or passwords by understanding the program.
 
-**When to use**: For crackmes, binary bombs, key validators, obfuscated code, algorithm recovery, or any challenge requiring program comprehension to extract hidden information.
-
-### The Three Questions Framework
+### Three questions
 
 Every reverse engineering challenge boils down to answering:
 
@@ -1904,10 +1884,12 @@ Every reverse engineering challenge boils down to answering:
 
 **Investigation:**
 ```
+
 search-code pattern for XOR operations
 get-functions at suspicious function
 inspect-memory at key location to extract XOR key
 ```
+
 
 **Solution:** XOR is self-inverse - `decrypt(x) = encrypt(x)`
 
@@ -1921,10 +1903,12 @@ inspect-memory at key location to extract XOR key
 
 **Investigation:**
 ```
+
 search-strings pattern="[A-Za-z0-9+/]{64}" for alphabet
 search-code pattern="& 0x3f" for 6-bit masking
 get-functions at encoding function to confirm 3→4 byte transformation
 ```
+
 
 #### Block Cipher Patterns (AES, DES)
 
@@ -1936,12 +1920,14 @@ get-functions at encoding function to confirm 3→4 byte transformation
 
 **Investigation:**
 ```
+
 search-code pattern for round loops
 inspect-memory at constant arrays
 Compare first bytes to known S-boxes:
   AES: 63 7c 77 7b f2 6b 6f c5
   DES S1: 0e 04 0d 01 02 0f 0b 08
 ```
+
 
 #### Input Validation Patterns
 
@@ -1953,11 +1939,13 @@ Compare first bytes to known S-boxes:
 
 **Investigation:**
 ```
+
 list-functions to find main/entry
 get-functions at main with includeCallees=true
 get-references to input functions (scanf, read, gets)
 Trace validation logic flow
 ```
+
 
 ### Static vs Dynamic Approach
 
@@ -1980,13 +1968,11 @@ Trace validation logic flow
 
 ---
 
-## CTF Cryptography Skill
+## CTF cryptography
 
-**Purpose**: Solve CTF cryptography challenges by identifying, analyzing, and exploiting weak crypto implementations in binaries to extract keys or decrypt data.
+Custom ciphers, weak implementations, embedded keys — identify the algorithm and recover plaintext or keys.
 
-**When to use**: For custom ciphers, weak crypto, key extraction, or algorithm identification challenges.
-
-### Four-Phase Framework
+### Phases
 
 #### Phase 1: Crypto Detection
 **Goal**: Determine if and where cryptography is used
@@ -1999,10 +1985,12 @@ Trace validation logic flow
 
 **Tools:**
 ```
+
 search-strings pattern for crypto keywords (encrypt, decrypt, key, AES, RSA)
 manage-symbols includeExternal=true for crypto API imports
 search-constants for known crypto magic numbers
 ```
+
 
 **Key question**: "Is there crypto, and if so, what kind?"
 
@@ -2037,10 +2025,12 @@ search-constants for known crypto magic numbers
 
 **Tools:**
 ```
+
 inspect-memory at constant arrays to compare S-boxes
 get-functions to analyze round structure
 search-code for characteristic patterns (rotations, permutations)
 ```
+
 
 **Key question**: "What algorithm is this, or is it custom?"
 
@@ -2063,10 +2053,12 @@ search-code for characteristic patterns (rotations, permutations)
 
 **Tools:**
 ```
+
 get-references to crypto functions to trace key/data flow
 inspect-memory at key storage locations
 get-functions at key derivation functions
 ```
+
 
 **Key question**: "How is it implemented, and where are the weaknesses?"
 
@@ -2077,7 +2069,7 @@ get-functions at key derivation functions
 - Extract hardcoded keys from binary data
 - Exploit weak key derivation (predictable RNG, poor entropy)
 - Break custom ciphers (frequency analysis, known-plaintext, etc.)
-- Leverage implementation flaws (timing, side channels, logic errors)
+- use implementation flaws (timing, side channels, logic errors)
 - Reverse engineer decryption routines to understand transformation
 
 **Extraction techniques:**
@@ -2092,14 +2084,17 @@ get-functions at key derivation functions
 
 #### AES Recognition
 ```
+
 S-box starts: 63 7c 77 7b f2 6b 6f c5...
 Round counts: 10 (AES-128), 12 (AES-192), 14 (AES-256)
 128-bit state (16 bytes, 4x4 matrix)
 Rcon array for key expansion
 ```
 
+
 #### DES Recognition
 ```
+
 64-bit blocks (8 bytes)
 16 rounds
 Permutation tables (IP, FP)
@@ -2107,31 +2102,34 @@ Permutation tables (IP, FP)
 Feistel structure (split, swap, repeat)
 ```
 
+
 #### RC4 Recognition
 ```
+
 256-byte state array
 KSA (Key Scheduling Algorithm): array initialization
 PRGA (Pseudo-Random Generation Algorithm): swap-based generation
 Simple XOR with keystream
 ```
 
+
 #### RSA Recognition
 ```
+
 Very large integers (128-512+ bytes)
 Modular exponentiation: result = base^exp mod modulus
 Magic constant 0x10001 (65537) common public exponent
 Slow execution (big-number arithmetic)
 ```
 
+
 ---
 
-## CTF Binary Exploitation (Pwn) Skill
+## CTF binary exploitation (pwn)
 
-**Purpose**: Solve CTF binary exploitation challenges by discovering and exploiting memory corruption vulnerabilities to read flags.
+Buffer overflows, format strings, heap bugs, ROP — find a memory corruption path to arbitrary code or flag reads.
 
-**When to use**: For buffer overflows, format strings, heap exploits, ROP challenges, or any pwn/exploitation task.
-
-### The Exploitation Mindset
+### Mindset
 
 **Think in three layers:**
 
@@ -2205,25 +2203,31 @@ For every CTF pwn challenge, ask these questions **in order**:
 
 **Investigation strategy:**
 ```
+
 manage-symbols includeExternal=true to find unsafe API imports
 get-references to unsafe functions to locate usage points
 get-functions with includeReferenceContext=true to analyze calling context
 Trace data flow from input to unsafe operation
 ```
 
+
 #### Format String Vulnerabilities
 
 **Vulnerable pattern:**
 ```c
+
 printf(user_input);          // VULNERABLE
 fprintf(fp, user_input);     // VULNERABLE
 ```
 
+
 **Safe pattern:**
 ```c
+
 printf("%s", user_input);    // SAFE
 fprintf(fp, "Data: %s\n", user_input); // SAFE
 ```
+
 
 **Exploitation primitives:**
 - `%x` or `%p` → Leak stack values (addresses, canaries)
@@ -2233,16 +2237,19 @@ fprintf(fp, "Data: %s\n", user_input); // SAFE
 
 **Investigation strategy:**
 ```
+
 search-code pattern for printf/fprintf/sprintf
 get-functions at each match with includeContext=true
 Check if format string argument is constant or variable
 Trace format string source to user input
 ```
 
+
 #### Buffer Overflow Analysis
 
 **Stack layout understanding:**
 ```
+
 High addresses
 ├── Function arguments
 ├── Return address         ← Critical target
@@ -2252,14 +2259,17 @@ High addresses
 Low addresses
 ```
 
+
 **Investigation strategy:**
 ```
+
 get-functions at vulnerable function
 Identify buffer size from decompilation
 Check input size vs buffer size
 Calculate offset to return address
 Use manage-bookmarks to mark vulnerability location
 ```
+
 
 ### Exploitation Techniques
 
@@ -2269,6 +2279,7 @@ Use manage-bookmarks to mark vulnerability location
 
 **Investigation:**
 ```
+
 search-code pattern for useful gadgets:
   - pop rdi; ret (set first argument)
   - pop rsi; ret (set second argument)
@@ -2277,17 +2288,20 @@ search-code pattern for useful gadgets:
 get-functions to find gadget addresses
 ```
 
+
 #### GOT/PLT Overwrite
 
 **Concept**: Overwrite Global Offset Table entries to redirect library function calls.
 
 **Investigation:**
 ```
+
 list-imports to find library functions
 get-references to GOT entries
 Identify writable GOT location
 Calculate offset from overflow point to GOT
 ```
+
 
 #### Shellcode Injection
 
@@ -2295,10 +2309,12 @@ Calculate offset from overflow point to GOT
 
 **Investigation:**
 ```
+
 Check for executable stack (DEP/NX disabled)
 Find controlled buffer location
 Calculate jump address to shellcode
 ```
+
 
 ### Practical Workflow
 

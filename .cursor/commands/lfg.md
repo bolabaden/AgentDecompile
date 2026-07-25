@@ -31,8 +31,10 @@
 **Driver command:**
 
 ```powershell
+
 .\scripts\lfg_cmd_sequence.ps1 -RunId "<id>" [-GhidraPort 25100] [-SkipLocalHeadless:$false] ...
 ```
+
 
 ---
 
@@ -152,8 +154,8 @@ After step **H**, the script runs **additional `tool-seq` groups** against **`/s
 
 **Phase B — local mutations + checkin**
 
-- **`12_ext_checkout_mutate`:** `checkout-program` → `manage-bookmarks` set → `manage-comments` set → `manage-function-tags` add  
-- **`12_ext_verify_mutations`:** list/get modes for bookmarks, comments, function-tags  
+- **`12_ext_checkout_mutate`:** `checkout-program` → `manage-bookmarks` set → `manage-comments` set → `manage-function-tags` add 
+- **`12_ext_verify_mutations`:** list/get modes for bookmarks, comments, function-tags 
 - **`12_ext_checkin`:** `checkin-program` (throws on failure — **`Invoke-LfgSeq`**)
 
 **Phase C — shared program (analyze + read + checkin)**

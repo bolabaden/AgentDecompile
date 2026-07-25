@@ -14,6 +14,7 @@ origin: docs/audits/2026-05-24-agent-native-audit.md
 Add a concise MCP `initialize` instructions preamble so agents receive tiered bootstrap guidance, discovery pointers, and session rules at connect time — closing the agent-native audit gap "Agent self-describes ⚠️ per-tool; no initialize preamble" without duplicating the full `agentdecompile://capabilities` inventory.
 
 ```mermaid
+
 flowchart TD
   A[MCP client initialize] --> B[InitializeResult.instructions]
   B --> C[Tier 0-3 bootstrap summary]
@@ -21,6 +22,7 @@ flowchart TD
   B --> E[Session rules: mcp-session-id, analysis gate]
   C --> F[Agent routes before tools/list]
 ```
+
 
 ---
 

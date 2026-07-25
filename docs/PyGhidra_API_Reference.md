@@ -426,12 +426,12 @@ The Ghidra Java API is accessed from Python via JPype after PyGhidra has started
 | `removeParameter` | `ordinal: int` | `void` (deprecated) |
 | `removeTag` | `name: String` | `void` |
 | `removeVariable` | `var: Variable` | `void` |
-| `replaceParameters` | `updateType: FunctionUpdateType, force: boolean, source: SourceType, ... params` | `void` |
+| `replaceParameters` | `updateType: FunctionUpdateType, force: boolean, source: SourceType,... params` | `void` |
 | `replaceParameters` | `params: List<Variable>, updateType: FunctionUpdateType, force: boolean, source: SourceType` | `void` |
 
-**Documentation (Function other).** — **`addTag(name)`** / **`removeTag(name)`**: Add or remove a function tag by name; **`addTag`** returns true if added. — **`addLocalVariable(var, source)`**: Add a local variable; **var** is a **Variable** (name, type, storage). — **`replaceParameters(updateType, force, source, ...params)`** / **`replaceParameters(params, updateType, force, source)`**: Replace the entire parameter list; **updateType** is **FunctionUpdateType** (e.g. **CUSTOM** to keep custom storage, **DYNAMIC** to re-analyze); **force** allows replacing even when types differ; use **SourceType.USER_DEFINED** for user changes. Prefer this over deprecated **addParameter** / **insertParameter** / **moveParameter** / **removeParameter**. — **`removeVariable(var)`**: Remove a local variable. — **`promoteLocalUserLabelsToGlobal()`**: Promote user-defined local labels to global scope (e.g. after extracting a function). — **FunctionTag**: From **`getTags()`**; **`getName()`** returns the tag string. **Namespace** (e.g. from **`Symbol.getParentNamespace()`**): **`getParentNamespace()`** walks up the namespace tree. **Parameter**: **`getName()`**, **`getDataType()`**, **`getLength()`**; **FunctionSignature** is used for full prototype string.
+**Documentation (Function other).** — **`addTag(name)`** / **`removeTag(name)`**: Add or remove a function tag by name; **`addTag`** returns true if added. — **`addLocalVariable(var, source)`**: Add a local variable; **var** is a **Variable** (name, type, storage). — **`replaceParameters(updateType, force, source,...params)`** / **`replaceParameters(params, updateType, force, source)`**: Replace the entire parameter list; **updateType** is **FunctionUpdateType** (e.g. **CUSTOM** to keep custom storage, **DYNAMIC** to re-analyze); **force** allows replacing even when types differ; use **SourceType.USER_DEFINED** for user changes. Prefer this over deprecated **addParameter** / **insertParameter** / **moveParameter** / **removeParameter**. — **`removeVariable(var)`**: Remove a local variable. — **`promoteLocalUserLabelsToGlobal()`**: Promote user-defined local labels to global scope (e.g. after extracting a function). — **FunctionTag**: From **`getTags()`**; **`getName()`** returns the tag string. **Namespace** (e.g. from **`Symbol.getParentNamespace()`**): **`getParentNamespace()`** walks up the namespace tree. **Parameter**: **`getName()`**, **`getDataType()`**, **`getLength()`**; **FunctionSignature** is used for full prototype string.
 
-**Documentation (FunctionUpdateType).** **FunctionUpdateType** (ghidra.program.model.listing) is an enum that controls how parameters are updated when calling **`function.replaceParameters(updateType, force, source, ...)`**. **CUSTOM** preserves existing custom variable storage (parameter locations) and only updates types/names as specified. **DYNAMIC** allows the analyzer to re-infer parameter storage and types, which can overwrite custom layout. Use **CUSTOM** when you have manually placed parameters and want to keep their storage; use **DYNAMIC** when you want analysis to recompute the prototype. Other values (e.g. **DEFAULT**) exist in the Ghidra API; see Javadoc for the full set. Always pass a valid **SourceType** (e.g. **USER_DEFINED**) for the source of the change.
+**Documentation (FunctionUpdateType).** **FunctionUpdateType** (ghidra.program.model.listing) is an enum that controls how parameters are updated when calling **`function.replaceParameters(updateType, force, source,...)`**. **CUSTOM** preserves existing custom variable storage (parameter locations) and only updates types/names as specified. **DYNAMIC** allows the analyzer to re-infer parameter storage and types, which can overwrite custom layout. Use **CUSTOM** when you have manually placed parameters and want to keep their storage; use **DYNAMIC** when you want analysis to recompute the prototype. Other values (e.g. **DEFAULT**) exist in the Ghidra API; see Javadoc for the full set. Always pass a valid **SourceType** (e.g. **USER_DEFINED**) for the source of the change.
 
 **Documentation (FunctionTag).** **FunctionTag** represents a tag attached to a function (e.g. "vulnerable", "crypto", "network"). Obtain from **`function.getTags()`** which returns a **Set<FunctionTag>**; iterate to get individual tags. **`getName() → String`** returns the tag name. Use tags to categorize or mark functions for analysis workflows. Add tags with **`function.addTag(name)`** and remove with **`function.removeTag(name)`**.
 
@@ -742,7 +742,7 @@ The Ghidra Java API is accessed from Python via JPype after PyGhidra has started
 ## B.6 DecompInterface / DecompileOptions / DecompileResults (ghidra.app.decompiler)
 
 **Import:** `ghidra.app.decompiler.DecompInterface`, `ghidra.app.decompiler.DecompileOptions`, `ghidra.app.decompiler.DecompileResults`  
-**Primary object:** decompiler is driven by **Program** then **Function** (e.g. `openProgram(program)`, `decompileFunction(func, ...)`).
+**Primary object:** decompiler is driven by **Program** then **Function** (e.g. `openProgram(program)`, `decompileFunction(func,...)`).
 
 ### 7.1 DecompInterface
 
@@ -1150,10 +1150,10 @@ The Ghidra Java API is accessed from Python via JPype after PyGhidra has started
 
 | Symbol | Method | Returns |
 |--------|--------|--------|
-| `GenSignatures` | `openProgram(program: Program, ...)` | (opens program for signature generation) |
+| `GenSignatures` | `openProgram(program: Program,...)` | (opens program for signature generation) |
 | | `addFunctionTags(...)` | (used with BSim / match-function) |
 
-**Documentation (BSim / GenSignatures).** **FunctionDatabase** and **GenSignatures** support BSim semantic similarity and match-function style features. **GenSignatures**: **`openProgram(program, ...)`** for signature generation, **`addFunctionTags(...)`** for tagging. **RepositoryAdapter** (versioned shared projects): **`checkout(folderPath, itemName, checkoutType, programPath)`** (or equivalent) for program checkout; see Ghidra shared-project API. **DescriptionManager** (ghidra.features.bsim.query.description) works with **FunctionDatabase** and BSim to manage function descriptions and signatures for similarity search; use when building or querying BSim databases. See Ghidra BSim documentation for **DescriptionManager** and related types.
+**Documentation (BSim / GenSignatures).** **FunctionDatabase** and **GenSignatures** support BSim semantic similarity and match-function style features. **GenSignatures**: **`openProgram(program,...)`** for signature generation, **`addFunctionTags(...)`** for tagging. **RepositoryAdapter** (versioned shared projects): **`checkout(folderPath, itemName, checkoutType, programPath)`** (or equivalent) for program checkout; see Ghidra shared-project API. **DescriptionManager** (ghidra.features.bsim.query.description) works with **FunctionDatabase** and BSim to manage function descriptions and signatures for similarity search; use when building or querying BSim databases. See Ghidra BSim documentation for **DescriptionManager** and related types.
 
 **Documentation (RepositoryAdapter).** **RepositoryAdapter** (ghidra.framework.store) is the interface to a versioned Ghidra repository (shared server or local versioned project). Use it to **checkout** a domain file (e.g. a Program) for editing — **`checkout(folderPath, itemName, checkoutType, programPath)`** (or overloads) — and to **checkin** after changes. It works with **CheckoutType** (exclusive vs non-exclusive). Obtain a RepositoryAdapter from the project or server connection when using shared/versioned projects; for local non-versioned projects you typically use **DomainFile** and **GhidraProject** directly.
 
@@ -1201,7 +1201,7 @@ This section summarizes important behavioral details and pitfalls so you can use
 
 - **java.io.File construction**: When APIs require a **`java.io.File`** (e.g. **`saveAsPackedFile(program, file, overwrite)`**), construct it via JPype: **`JClass("java.io.File")(str(path))`**. This creates a Java File object from a Python string path. Do not pass Python **`Path`** objects directly; convert to string first.
 
-- **Java collections from Python**: When APIs require **`List<T>`** or other Java collections (e.g. **`ApplyFunctionDataTypesCmd(List.of(archiveDTM), ...)`**), use Java's collection factories via JPype: **`JClass("java.util.List").of(item)`** for **`List.of(...)`**, or build the collection in Java and pass it. Python lists are not automatically converted to Java collections.
+- **Java collections from Python**: When APIs require **`List<T>`** or other Java collections (e.g. **`ApplyFunctionDataTypesCmd(List.of(archiveDTM),...)`**), use Java's collection factories via JPype: **`JClass("java.util.List").of(item)`** for **`List.of(...)`**, or build the collection in Java and pass it. Python lists are not automatically converted to Java collections.
 
 - **DataIterator iteration**: **DataIterator** from **`Listing.getData(...)`** follows the same Java iterator pattern: use **`hasNext()`**/ **`next()`** from Python. This applies to all Ghidra iterators; there is no direct Python iteration support unless you wrap the iterator yourself.
 
@@ -1217,7 +1217,7 @@ Use this **exact** pattern so static type checkers (e.g. pyright) get accurate G
    if TYPE_CHECKING:
        from ghidra.<path> import ...  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
    ```
-3. **One pyright comment per import line** (or per multi-line `from ... import (...)` block):  
+3. **One pyright comment per import line** (or per multi-line `from... import (...)` block):  
    `# pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]`
 4. **Import paths must match this document**: Part A for `pyghidra`; Part B and B.10 for `ghidra.*`.
 5. **Runtime imports** of ghidra/pyghidra stay inside the functions that need them (when JVM is up); do not move those into `TYPE_CHECKING`.
@@ -1225,6 +1225,7 @@ Use this **exact** pattern so static type checkers (e.g. pyright) get accurate G
 Example (authoritative):
 
 ```python
+
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -1241,6 +1242,7 @@ if TYPE_CHECKING:
     from ghidra.program.model.symbol import Symbol, SourceType, SymbolType, RefType  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
     from ghidra.util.task import TaskMonitor, ConsoleTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]
 ```
+
 
 Use type aliases when helpful (e.g. `Program as GhidraProgram`) and keep runtime `from ghidra...` inside the functions that execute under PyGhidra.
 

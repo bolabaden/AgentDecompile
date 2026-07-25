@@ -14,12 +14,14 @@ merge_sha: cd4b069
 PR [#64](https://github.com/bolabaden/AgentDecompile/pull/64) adds `agentdecompile://capabilities`. CI failed on ruff F401 (unused `TOOLS` import in `server.py` after tool_reference extraction). Fix lint, verify green, merge.
 
 ```mermaid
+
 flowchart TD
   A[CI ruff F401] --> B[Remove unused import]
   B --> C[ruff + pytest -m unit]
   C --> D[Squash merge PR #64]
   D --> E[Post-merge compound doc optional]
 ```
+
 
 ## Requirements
 
@@ -39,6 +41,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_server/server.py
 uv run pytest -m unit -q --timeout=120
 ```
+

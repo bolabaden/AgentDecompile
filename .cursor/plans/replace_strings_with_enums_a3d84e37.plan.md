@@ -53,8 +53,8 @@ Replace string literals for tool names (and where practical other string constan
 
 ### 5. Tool providers (tool_providers.py, server.py)
 
-- **ToolProviderManager.call_tool(name: str, ...)**: Keep `name: str` for the MCP API. Inside the implementation, resolve once: `canonical = resolve_tool_name(name) or name`, then optionally `tool_enum = resolve_tool_name_enum(name)` for any internal branching or logging that benefits from enum.
-- **recommend_tool(tool_name: str, ...)**: Can accept `ToolName | str` and use `.value` when passing to code that expects string.
+- **ToolProviderManager.call_tool(name: str,...)**: Keep `name: str` for the MCP API. Inside the implementation, resolve once: `canonical = resolve_tool_name(name) or name`, then optionally `tool_enum = resolve_tool_name_enum(name)` for any internal branching or logging that benefits from enum.
+- **recommend_tool(tool_name: str,...)**: Can accept `ToolName | str` and use `.value` when passing to code that expects string.
 - **render_tool_response(normalized_tool_name: str, data)**: Response formatter currently keys by normalized string; can stay as-is (normalized name is the key), or we could pass `ToolName` and use `normalize_identifier(tool.value)` for the key—minimal gain unless we also switch TOOL_GUIDANCE to enum keys.
 - **HANDLERS** in provider subclasses: Keep as `dict[str, str]` (normalized tool name → method name); dispatch is still by normalized string from the request. No change required unless we want to key HANDLERS by enum (then we’d need normalized key from enum, which is redundant with current design).
 
@@ -89,15 +89,15 @@ Replace string literals for tool names (and where practical other string constan
 ## Files to touch (summary)
 
 
-| Area                         | Files                                                                                                                                                                                                                                                                               |
+| Area | Files |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Enum definition and registry | [registry.py](src/agentdecompile_cli/registry.py) (or new enums.py), [tools_schema.py](src/agentdecompile_cli/tools_schema.py)                                                                                                                                                      |
-| CLI                          | [cli.py](src/agentdecompile_cli/cli.py)                                                                                                                                                                                                                                             |
-| Bridge / server              | [bridge.py](src/agentdecompile_cli/bridge.py), [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py), [server.py](src/agentdecompile_cli/mcp_server/server.py) if it references tool names                                                                       |
-| Response / formatter         | [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) (optional enum usage)                                                                                                                                                                              |
-| Executor                     | [executor.py](src/agentdecompile_cli/executor.py)                                                                                                                                                                                                                                   |
-| Providers                    | [bookmarks.py](src/agentdecompile_cli/mcp_server/providers/bookmarks.py), [functions.py](src/agentdecompile_cli/mcp_server/providers/functions.py), [search_everything.py](src/agentdecompile_cli/mcp_server/providers/search_everything.py), and any other with tool name literals |
-| Public API                   | **[init**.py](src/agentdecompile_cli/__init__.py)                                                                                                                                                                                                                                   |
+| CLI | [cli.py](src/agentdecompile_cli/cli.py)                                                                                                                                                                                                                                             |
+| Bridge / server | [bridge.py](src/agentdecompile_cli/bridge.py), [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py), [server.py](src/agentdecompile_cli/mcp_server/server.py) if it references tool names |
+| Response / formatter | [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) (optional enum usage)                                                                                                                                                                              |
+| Executor | [executor.py](src/agentdecompile_cli/executor.py)                                                                                                                                                                                                                                   |
+| Providers | [bookmarks.py](src/agentdecompile_cli/mcp_server/providers/bookmarks.py), [functions.py](src/agentdecompile_cli/mcp_server/providers/functions.py), [search_everything.py](src/agentdecompile_cli/mcp_server/providers/search_everything.py), and any other with tool name literals |
+| Public API | **[init**.py](src/agentdecompile_cli/__init__.py)                                                                                                                                                                                                                                   |
 
 
 ## Out of scope (for a later pass)

@@ -13,6 +13,7 @@ origin: https://github.com/zeldaret/tww/blob/main/docs/decompiling.md
 Implement the decompilation matching workflow from [zeldaret/tww decompiling.md](https://github.com/zeldaret/tww/blob/main/docs/decompiling.md) as **Tier 1 MCP tools** so agents verify **bytecode/object matches** via objdiff without Ghidra JVM startup. Ghidra MCP (Tier 2–3) remains required for **shared/versioned** projects: checkout, struct export, mutations, check-in.
 
 ```mermaid
+
 flowchart TD
   subgraph tier1 [Tier 1 — no Ghidra session]
     M2C[m2c asm to C]
@@ -35,6 +36,7 @@ flowchart TD
   MS --> CI
   MF[match-function] -.->|signature only NOT bytecode| X[do not use for verify]
 ```
+
 
 ## Requirements
 
@@ -77,10 +79,12 @@ flowchart TD
 ### U3 — Verification
 
 ```bash
+
 uv run pytest tests/test_run_decomp_match.py tests/test_tool_analysis_tier.py tests/test_capabilities_resource.py -m unit -v
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/decomp_match.py src/agentdecompile_cli/mcp_server/providers/decomp_match.py
 ```
+
 
 ## Test scenarios
 

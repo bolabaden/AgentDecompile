@@ -7,6 +7,7 @@ Ensure `open` and `import-binary` run real Ghidra auto-analysis (incremental whe
 ## Current problems
 
 ```mermaid
+
 flowchart TD
     A[open / import-binary] --> B{Today}
     B --> C[setAnalyzedFlag True]
@@ -14,6 +15,7 @@ flowchart TD
     B --> E[No run_analysis]
     E --> F[Downstream tools see analyzed but DB empty]
 ```
+
 
 - `project.py` sets `GhidraProgramUtilities.setAnalyzedFlag(True)` without running analyzers.
 - `_set_active_program_info` and `_import_file` mark `ghidra_analysis_complete=True` before analysis.
@@ -23,6 +25,7 @@ flowchart TD
 ## Target behavior
 
 ```mermaid
+
 flowchart TD
     O[open / import-binary] --> G[blocking_ensure_analyzed]
     G --> H{needs analysis?}
@@ -34,6 +37,7 @@ flowchart TD
     T[any other program tool] --> W2[wait on same lock / idle]
     W2 --> P[provider handler]
 ```
+
 
 | Rule | Behavior |
 |------|----------|

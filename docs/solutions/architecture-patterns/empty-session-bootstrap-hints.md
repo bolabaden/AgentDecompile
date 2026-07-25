@@ -29,6 +29,7 @@ On a fresh MCP session, `list-project-files` returned `count: 0` with `"No proje
 ## Solution (PR #96)
 
 ```mermaid
+
 flowchart TD
   A[list-project-files / get-current-program] --> B{payload_indicates_empty_session?}
   B -->|No| C[Normal next steps]
@@ -36,6 +37,7 @@ flowchart TD
   D --> E[sessionEmpty + sessionHint + nextSteps]
   E --> F[JSON + markdown Suggested Next Steps]
 ```
+
 
 | Field | Purpose |
 |-------|---------|

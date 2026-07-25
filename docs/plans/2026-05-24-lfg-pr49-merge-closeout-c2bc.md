@@ -20,12 +20,14 @@ All agent-implementable gates are satisfied. Squash-merge PR #49 to `master`, ve
 ## Flow
 
 ```mermaid
+
 flowchart TD
     M[Squash-merge PR #49] --> P[Pull master locally]
     P --> T[pytest -m unit on master]
     T --> D[Update residual + solutions docs]
     D --> R[Review push closeout]
 ```
+
 
 ---
 
@@ -55,5 +57,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 ```
+

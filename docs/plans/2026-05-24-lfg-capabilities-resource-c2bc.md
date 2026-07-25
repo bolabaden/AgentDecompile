@@ -15,11 +15,13 @@ origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 Add MCP resource `agentdecompile://capabilities` so agents discover tools, tiers, and surfaces without calling `tools/list` or reading slash-command docs. Closes the top future item from tiered RE KB and agent-native audit discovery gap.
 
 ```mermaid
+
 flowchart TD
   A[Agent MCP initialize] --> B[resources/read capabilities]
   B --> C[JSON: tiers + tools + surface profile]
   C --> D[Route Tier 0–2 before Ghidra deep tools]
 ```
+
 
 ## Requirements
 
@@ -61,6 +63,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_capabilities_resource.py -m unit -v
 uv run pytest -m unit -q --timeout=120
 ```
+

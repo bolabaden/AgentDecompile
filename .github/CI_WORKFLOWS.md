@@ -3,6 +3,7 @@
 This document summarizes the GitHub Actions workflows that currently ship with AgentDecompile.
 
 ```mermaid
+
 flowchart TD
     A[Push PR Tag or Manual Dispatch] --> B[test-ghidra.yml]
     A --> C[test-headless.yml]
@@ -19,6 +20,7 @@ flowchart TD
     F --> O[Build and publish container images]
     G --> P[Run Claude Code automation]
 ```
+
 
 ## Workflow Inventory
 
@@ -82,18 +84,22 @@ The workflow installs PyGhidra from the downloaded Ghidra tree and runs the non-
 ### Extension Build Matrix
 
 ```text
+
 OS:      ubuntu-latest
 Ghidra:  12.0, latest
 Jobs:    2
 ```
 
+
 ### Headless Test Matrix
 
 ```text
+
 OS:      ubuntu-latest, macos-latest
 Ghidra:  12.0, latest
 Jobs:    4
 ```
+
 
 Both test workflows disable fail-fast so the full matrix completes even when one configuration fails early.
 
@@ -104,17 +110,21 @@ Use the commands below when you want to approximate the CI steps locally.
 ### Reproduce the extension build
 
 ```bash
+
 gradle clean buildExtension
 ```
+
 
 ### Reproduce the headless test flow
 
 ```bash
+
 export GHIDRA_INSTALL_DIR=/path/to/ghidra
 uv sync
 uv pip install "$GHIDRA_INSTALL_DIR/Ghidra/Features/PyGhidra/pypkg"
 uv run pytest tests/ -v --timeout=120 --tb=short
 ```
+
 
 If you want to mirror `test-headless.yml` more closely, also build the extension and install the generated zip into the local Ghidra `Extensions` directory before running the tests.
 
@@ -197,9 +207,11 @@ If you want to mirror `test-headless.yml` more closely, also build the extension
 
 Add to README:
 ```markdown
+
 ![Test Ghidra Extension](https://github.com/bolabaden/agentdecompile/actions/workflows/test-ghidra.yml/badge.svg)
 ![Test Headless Mode](https://github.com/bolabaden/agentdecompile/actions/workflows/test-headless.yml/badge.svg)
 ```
+
 
 ### GitHub Notifications
 

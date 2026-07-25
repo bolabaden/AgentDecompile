@@ -24,6 +24,7 @@ Apply 37signals/DHH principles to the Python MCP codebase (no Rails in this repo
 ## Flow
 
 ```mermaid
+
 flowchart TD
     A[open / import / tool dispatch] --> B[program_analysis.py]
     B --> C[wait_for_program_analysis_idle]
@@ -31,6 +32,7 @@ flowchart TD
     D -->|idle| E[blocking_ensure / dispatch]
     D -->|timeout| F[ProgramAnalysisTimeout]
 ```
+
 
 ## Implementation units
 

@@ -34,7 +34,7 @@ isProject: false
 
 ## Enhancement Summary
 
-**Deepened on:** 2026-03-12  
+**Deepened on:** 2026-03-12 
 **Sections enhanced:** Root cause, Fixes, Verification, plus new sections (Canonical session handling, Security considerations, Agent-native / Action parity, MCP debugging, References).  
 **Research agents used:** best-practices-researcher, framework-docs-researcher, generalPurpose (agent-native audit).
 
@@ -106,15 +106,15 @@ Sessions should be handled in a single, spec-aligned way across CLI, proxy, and 
 ### References (session / transport)
 
 
-| Topic                            | Doc URL                                                                                                                                                                                                              | Note                                                                         |
+| Topic | Doc URL | Note |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| MCP Streamable HTTP + session    | [https://modelcontextprotocol.io/specification/2025-11-25/basic/transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)                                                               | Clients MUST include MCP-Session-Id on all subsequent requests.              |
-| MCP proxy session id             | [https://github.com/modelcontextprotocol/inspector/issues/492](https://github.com/modelcontextprotocol/inspector/issues/492)                                                                                         | Proxy must pass session id on subsequent requests (Proxy ↔ Server).          |
+| MCP Streamable HTTP + session | [https://modelcontextprotocol.io/specification/2025-11-25/basic/transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)                                                               | Clients MUST include MCP-Session-Id on all subsequent requests.              |
+| MCP proxy session id | [https://github.com/modelcontextprotocol/inspector/issues/492](https://github.com/modelcontextprotocol/inspector/issues/492)                                                                                         | Proxy must pass session id on subsequent requests (Proxy ↔ Server).          |
 | MCP Security – Session hijacking | [https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#session-hijacking](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#session-hijacking) | Don't use session IDs for auth; use secure random IDs.                       |
-| ASGI request/response headers    | [https://asgi.readthedocs.io/en/stable/specs/www.html](https://asgi.readthedocs.io/en/stable/specs/www.html)                                                                                                         | Header names lowercased for comparison; response headers must be lowercased. |
-| OWASP Session Management         | [https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)                                             | Secure/HttpOnly/SameSite, validation, entropy, no caching.                   |
-| FastAPI response cookies         | [https://fastapi.tiangolo.com/advanced/response-cookies/](https://fastapi.tiangolo.com/advanced/response-cookies/)                                                                                                   | Setting cookies via Response parameter or direct Response.                   |
-| Starlette Requests / Responses   | [https://starlette.dev/requests/](https://starlette.dev/requests/), [https://starlette.dev/responses/](https://starlette.dev/responses/)                                                                             | `request.cookies.get()`, `Response.set_cookie()` signature and options.      |
+| ASGI request/response headers | [https://asgi.readthedocs.io/en/stable/specs/www.html](https://asgi.readthedocs.io/en/stable/specs/www.html)                                                                                                         | Header names lowercased for comparison; response headers must be lowercased. |
+| OWASP Session Management | [https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)                                             | Secure/HttpOnly/SameSite, validation, entropy, no caching.                   |
+| FastAPI response cookies | [https://fastapi.tiangolo.com/advanced/response-cookies/](https://fastapi.tiangolo.com/advanced/response-cookies/)                                                                                                   | Setting cookies via Response parameter or direct Response.                   |
+| Starlette Requests / Responses | [https://starlette.dev/requests/](https://starlette.dev/requests/), [https://starlette.dev/responses/](https://starlette.dev/responses/)                                                                             | `request.cookies.get()`, `Response.set_cookie()` signature and options.      |
 
 
 ## Security considerations
@@ -203,11 +203,11 @@ so that future changes to session/auth behavior get appropriate review.
 ## Summary
 
 
-| Item                                                                             | Action                                                                                                                                  |
+| Item | Action |
 | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | [proxy_server.py](src/agentdecompile_cli/mcp_server/proxy_server.py)             | Add `mcp-session-id` to `allowed_headers` in `_forwardable_shared_headers`.                                                             |
 | [import_export.py](src/agentdecompile_cli/mcp_server/providers/import_export.py) | Reword checkout-program path-not-resolved error and nextSteps (no "new session" claim; explain missing shared project in this session). |
-| AGENTS.md                                                                        | Optional: add “Session and proxy behavior”; update “Session state caveat” to reflect persistence.                                       |
+| AGENTS.md | Optional: add “Session and proxy behavior”; update “Session state caveat” to reflect persistence.                                       |
 | CLI state / retry (optional)                                                     | Defer or do in a follow-up.                                                                                                             |
 | Logging (optional)                                                               | Consider redacting full session_id in tool_providers.py and project.py logs (security best practice).                                   |
 

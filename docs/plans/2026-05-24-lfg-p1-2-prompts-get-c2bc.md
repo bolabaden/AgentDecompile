@@ -71,6 +71,7 @@ The agent-native audit (PR #49) lists nine MCP prompts via `prompts/list`, but *
 > *Directional guidance for review, not implementation specification.*
 
 ```mermaid
+
 flowchart TD
     A[MCP prompts/get] --> B[get_prompt in prompt_providers]
     B --> C[build_prompt_render_args]
@@ -79,6 +80,7 @@ flowchart TD
     E --> F[GetPromptResult messages]
     G[Web UI /api/prompts/render] --> C
 ```
+
 
 ---
 

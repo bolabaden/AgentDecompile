@@ -16,6 +16,7 @@ merge_sha: ec53f4a
 Implement decompiler-backed variable rename and local variable type handlers on `manage-function`, closing agent-native audit gaps P2-5 and P2-6. Wire registry aliases (`rename-variable`, `set-local-variable-type`, `change-variable-datatypes`), extend MCP schema and dispatch, add unit tests mirroring enum/symbol alias patterns, and mark residual tracker items Done.
 
 ```mermaid
+
 flowchart TD
   A[Registry aliases + CLI actions exist] --> B[Extend manage-function schema + dispatch]
   B --> C[Decompile → LocalSymbolMap → persist]
@@ -23,6 +24,7 @@ flowchart TD
   D --> E[Alias HANDLERS + unit tests]
   E --> F[Close P2-5/P2-6 residual tracker]
 ```
+
 
 ---
 
@@ -46,7 +48,7 @@ Tiered RE workflows and TOOLS_LIST Deep Analysis loop document `rename-variable`
 - R10. Mark P2-5 and P2-6 Done in `docs/residual-review-findings/impl-agent-native-audit-c2bc.md`
 - R11. `uv run pytest -m unit -q --timeout=120` passes
 
-**Origin actors:** MCP agent, CLI user  
+**Origin actors:** MCP agent, CLI user 
 **Origin flows:** F1 Deep Analysis improve loop (decompile → rename vars → fix types → verify)
 
 ---
@@ -117,6 +119,7 @@ Tiered RE workflows and TOOLS_LIST Deep Analysis loop document `rename-variable`
 > *This illustrates the intended approach and is directional guidance for review, not implementation specification.*
 
 ```mermaid
+
 sequenceDiagram
   participant Client
   participant Provider as GetFunctionToolProvider
@@ -131,6 +134,7 @@ sequenceDiagram
   Provider->>DB: transaction + updateDBVariable / equivalent
   Provider-->>Client: success {action, function, variable, newName}
 ```
+
 
 ---
 
@@ -284,6 +288,8 @@ sequenceDiagram
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_manage_function_variables.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

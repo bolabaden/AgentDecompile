@@ -13,12 +13,14 @@ pr: https://github.com/bolabaden/AgentDecompile/pull/63
 PR [#63](https://github.com/bolabaden/AgentDecompile/pull/63) is doc-only post-merge closeout for tiered RE arc (PR #62). Finish LFG pipeline: verify, index discovery, review, push, mark ready.
 
 ```mermaid
+
 flowchart TD
   A[PR #63 closeout branch] --> B[Index compound learning doc]
   B --> C[pytest -m unit]
   C --> D[ce-code-review autofix]
   D --> E[Push + ready PR]
 ```
+
 
 ## Requirements
 
@@ -40,6 +42,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 python3 scripts/validate-frontmatter.py docs/solutions/architecture-patterns/tiered-re-analysis-routing.md
 uv run pytest -m unit -q --timeout=120
 ```
+

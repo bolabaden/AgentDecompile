@@ -1,5 +1,5 @@
 ---
-title: LFG — PR #49 final verification and .cursorrules drift
+title: LFG — PR #49 final verification and.cursorrules drift
 type: fix
 status: done
 date: 2026-05-24
@@ -9,7 +9,7 @@ origin: docs/residual-review-findings/impl-agent-native-audit-c2bc.md
 commit: 32bcb76
 ---
 
-# LFG — PR #49 final verification and .cursorrules drift
+# LFG — PR #49 final verification and.cursorrules drift
 
 ## Summary
 
@@ -20,11 +20,13 @@ PR #49 is merge-ready; all P1–P3 + P2-4 work is Done. Fix stale **49-tool** re
 ## Flow
 
 ```mermaid
+
 flowchart TD
     F[Fix .cursorrules tool count] --> T[Run unit tests]
     T --> C[Confirm PR #49 CI]
     C --> D[Update residual verification note]
 ```
+
 
 ---
 
@@ -53,6 +55,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 gh pr checks 49
 ```
+

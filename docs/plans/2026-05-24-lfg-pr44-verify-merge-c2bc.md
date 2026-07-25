@@ -15,11 +15,13 @@ Re-run `/lfg` on [#44](https://github.com/bolabaden/AgentDecompile/pull/44) at `
 ## Flow
 
 ```mermaid
+
 flowchart TD
     V[Local pytest + ruff] --> D[Sync residual doc HEAD]
     D --> R[ce-code-review autofix]
     R --> P[Push if changes]
 ```
+
 
 ## Requirements traceability
 
@@ -64,6 +66,8 @@ Confirm GitHub: `pytest -m unit`, `Test Headless Mode`, `Test Ghidra Extension` 
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 gh pr checks 44
 ```
+

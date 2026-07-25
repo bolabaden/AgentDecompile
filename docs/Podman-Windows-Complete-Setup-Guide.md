@@ -37,8 +37,10 @@ On Windows, many guides and scripts assume the Docker CLI and `docker compose`. 
 Enable WSL 2 if needed:
 
 ```powershell
+
 wsl --install --no-distribution
 ```
+
 
 Restart when prompted, then optionally install a distribution (e.g. Ubuntu) from the Microsoft Store.
 
@@ -200,6 +202,7 @@ In your Dockerfile or build script:
 Example pattern:
 
 ```dockerfile
+
 ENV GHIDRA_GITHUB_API=https://api.github.com/repos/NationalSecurityAgency/ghidra
 RUN API_URL="${GHIDRA_GITHUB_API}/releases/latest"; \
     BODY="$(curl -sSL -H 'Accept: application/vnd.github+json' "${API_URL}")"; \
@@ -208,18 +211,19 @@ RUN API_URL="${GHIDRA_GITHUB_API}/releases/latest"; \
     # ... unzip and install
 ```
 
+
 This works the same under both Docker and Podman.
 
 ---
 
 ## Quick reference
 
-| Goal                         | Action |
+| Goal | Action |
 |-----------------------------|--------|
-| Use `docker` as Podman      | Symlink `docker.exe` → `podman.exe` (Option A) or set `DOCKER_HOST` to Podman socket (Option B). |
+| Use `docker` as Podman | Symlink `docker.exe` → `podman.exe` (Option A) or set `DOCKER_HOST` to Podman socket (Option B). |
 | Use `docker compose`       | Option A or B, and complete Podman Desktop Compose setup (Step 3). |
-| IDE (VS/VS Code) + Podman  | Prefer Option B (real Docker CLI + `DOCKER_HOST`). <sup>5</sup> |
-| No Docker CLI at all       | Use `podman` and `podman compose` directly; optional batch wrappers (Option C) from Windows to WSL. |
+| IDE (VS/VS Code) + Podman | Prefer Option B (real Docker CLI + `DOCKER_HOST`). <sup>5</sup> |
+| No Docker CLI at all | Use `podman` and `podman compose` directly; optional batch wrappers (Option C) from Windows to WSL. |
 | Build cache mounts (apk/Gradle) | Set `DOCKER_BUILDKIT=1` (PowerShell: `$Env:DOCKER_BUILDKIT="1"`). See Step 4. |
 | Reliable GitHub release URL| Use `api.github.com/repos/.../releases/latest` and `Accept: application/vnd.github+json`. |
 

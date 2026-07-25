@@ -16,10 +16,12 @@ Merge commit **`2a93e06`** on `impl/simplify-test-lfg-e2e-c2bc`: clearer env/exi
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Polish dead fixture] --> V[pytest smoke + unit]
     V --> PR[Open PR + ready for review]
 ```
+
 
 ## Requirements
 
@@ -48,7 +50,9 @@ Push, `gh pr create`, `gh pr ready`, verify checks.
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_lfg_e2e.py -m "not lfg" -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 uv run ruff check tests/test_lfg_e2e.py
 ```
+

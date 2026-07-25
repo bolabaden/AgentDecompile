@@ -14,12 +14,14 @@ merge_sha: 7471598
 Research and codify a **tiered reverse-engineering workflow** so AgentDecompile agents and skills use Ghidra MCP only when lighter techniques cannot satisfy quality/performance requirements.
 
 ```mermaid
+
 flowchart LR
   KB[Knowledge base doc] --> SKILL[tiered-re-analysis skill]
   SKILL --> AGENTS[re-planner/worker/critic]
   SKILL --> PROTO[re-artifact-protocol]
   SKILL --> HELP[help + capabilities]
 ```
+
 
 ## Deliverables
 
@@ -46,9 +48,11 @@ flowchart LR
 ## Verification
 
 ```bash
+
 python3 scripts/validate-frontmatter.py docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 uv run pytest -m unit -q --timeout=120
 ```
+
 
 ## Follow-up (LFG 2026-05-29)
 

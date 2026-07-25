@@ -65,11 +65,11 @@ isProject: false
 ### Files to touch (exhaustive)
 
 
-| Role                            | Files                                                                                                                                                                                                                                                                                                                         |
+| Role | Files |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Defines / re-exports**        | registry.py, tools_schema.py, tool_registry.py, **init**.py                                                                                                                                                                                                                                                                   |
-| **CLI / bridge / server**       | cli.py, bridge.py, server.py, launcher.py, executor.py, utils.py                                                                                                                                                                                                                                                              |
-| **MCP server**                  | mcp_server/server.py, proxy_server.py, tool_providers.py, response_formatter.py, mcp_server/resources/debug_info.py                                                                                                                                                                                                           |
+| **Defines / re-exports**        | registry.py, tools_schema.py, tool_registry.py, **init**.py |
+| **CLI / bridge / server**       | cli.py, bridge.py, server.py, launcher.py, executor.py, utils.py |
+| **MCP server**                  | mcp_server/server.py, proxy_server.py, tool_providers.py, response_formatter.py, mcp_server/resources/debug_info.py |
 | **Providers (import ToolName)** | mcp_server/providers/*.py (bookmarks, callgraph, comments, constants, data, dataflow, datatypes, decompiler, dissect, functions, getfunction, import_export, memory, project, script, search_everything, strings, structures, symbols, vtable, xrefs)                                                                         |
 | **Tests**                       | `test_cli_helpers.py`, `test_sdk_imports.py`, provider tests (`test_provider_*.py`), E2E / exhaustive contracts (`test_e2e_*.py`) — dedicated normalization/advertisement-only modules were removed; extend remaining tests if enum behavior needs coverage |
 
@@ -83,18 +83,18 @@ isProject: false
 ### Line-level references (fourth pass)
 
 
-| File                                                                             | Line(s)                  | Pattern / migration                                                                                                                                                              |
+| File | Line(s)                  | Pattern / migration |
 | -------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [registry.py](src/agentdecompile_cli/registry.py)                                | 857–882, 885             | `_build_advertised_tools()`; `ADVERTISED_TOOLS = _build_advertised_tools()` — refactor to use `Tool.advertised()`                                                                |
-| [registry.py](src/agentdecompile_cli/registry.py)                                | 522, 533–540, 890–893    | `resolve_tool_name_enum`; `get_tool_params(ToolName | str)`; `is_tool_advertised` — thin wrappers delegating to `Tool.from_string` and `.params` / `.is_advertised`              |
-| [executor.py](src/agentdecompile_cli/executor.py)                                | 768                      | `_registry.get_tool_params(canonical_tool_name)` → `Tool.from_string(canonical_tool_name).params` when Tool available                                                            |
-| [executor.py](src/agentdecompile_cli/executor.py)                                | 951, 953, 956            | `normalize_identifier(canonical_tool_name)` in validation → `tool.normalized` where a Tool is available                                                                          |
-| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 91–99                    | `normalize_identifier(ToolName.XXX.value)` in _DISABLABLE_RECOMMENDATION_TOOLS → `Tool.XXX.normalized`                                                                           |
-| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 499, 1749                | `action == ToolName.OPEN.value` → `Tool.OPEN.value`                                                                                                              |
-| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 112                      | `is_tool_advertised(token)` — keep or use `Tool.from_string(token).is_advertised`                                                                                                |
+| [registry.py](src/agentdecompile_cli/registry.py)                                | 857–882, 885 | `_build_advertised_tools()`; `ADVERTISED_TOOLS = _build_advertised_tools()` — refactor to use `Tool.advertised()`                                                                |
+| [registry.py](src/agentdecompile_cli/registry.py)                                | 522, 533–540, 890–893 | `resolve_tool_name_enum`; `get_tool_params(ToolName | str)`; `is_tool_advertised` — thin wrappers delegating to `Tool.from_string` and `.params` / `.is_advertised`              |
+| [executor.py](src/agentdecompile_cli/executor.py)                                | 768 | `_registry.get_tool_params(canonical_tool_name)` → `Tool.from_string(canonical_tool_name).params` when Tool available |
+| [executor.py](src/agentdecompile_cli/executor.py)                                | 951, 953, 956 | `normalize_identifier(canonical_tool_name)` in validation → `tool.normalized` where a Tool is available |
+| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 91–99 | `normalize_identifier(ToolName.XXX.value)` in _DISABLABLE_RECOMMENDATION_TOOLS → `Tool.XXX.normalized`                                                                           |
+| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 499, 1749 | `action == ToolName.OPEN.value` → `Tool.OPEN.value`                                                                                                              |
+| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 112 | `is_tool_advertised(token)` — keep or use `Tool.from_string(token).is_advertised`                                                                                                |
 | [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py)         | 117, 119, 129, 1841–1846 | `is_tool_advertised(tool_name/fallback)`; `resolve_tool_name_enum(name)`; `tool_enum in DISABLED_GUI_ONLY_TOOLS` → `Tool.from_string`, `.is_advertised`, `.is_gui_only_disabled` |
-| [cli.py](src/agentdecompile_cli/cli.py)                                          | 823, 1059                | `tool_registry.get_tool_params(resolved_name)`; `get_tool_params(tool_name)` — thin wrapper or `tool.params`                                                                     |
-| [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py)              | 86                       | `get_tool_params(canonical_name)` — thin wrapper or `Tool.from_string(canonical_name).params`                                                                                    |
+| [cli.py](src/agentdecompile_cli/cli.py)                                          | 823, 1059 | `tool_registry.get_tool_params(resolved_name)`; `get_tool_params(tool_name)` — thin wrapper or `tool.params`                                                                     |
+| [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py)              | 86 | `get_tool_params(canonical_name)` — thin wrapper or `Tool.from_string(canonical_name).params`                                                                                    |
 
 
 **Top files by usage:** registry.py (~~100+), cli.py (~~77+), response_formatter.py (~~15), search_everything.py (~~12), tool_providers.py (~10).
@@ -126,16 +126,16 @@ Define in [registry.py](src/agentdecompile_cli/registry.py) (after `normalize_id
 ### 2.1 Instance properties (on each member, e.g. `Tool.OPEN`)
 
 
-| Property                | Type      | Meaning                                         | Replaces / abstracts                                                          |
+| Property | Type | Meaning | Replaces / abstracts |
 | ----------------------- | --------- | ----------------------------------------------- | ----------------------------------------------------------------------------- |
-| (keep) `.value`         | str       | Canonical kebab-case wire name                  | Already used everywhere as wire form.                                         |
-| `.wire_name`            | str       | Alias for `.value`                              | Optional; consider dropping (use `.value` only) to keep enum surface minimal. |
-| `.normalized`           | str       | `normalize_identifier(self.value)`              | Replaces `normalize_identifier(Tool.XXX.value)` (e.g. in response_formatter). |
-| `.snake_name`           | str       | `to_snake_case(self.value)`                     | Replaces `to_snake_case(resolved_name)` when the value is a known Tool.       |
-| `.params`               | list[str] | Parameter names (camelCase) for this tool       | Replaces `get_tool_params(self)` / `TOOL_PARAMS.get(self, [])`.               |
-| `.is_hidden`            | bool      | Member of default-hidden set (curated commands) | Replaces `self in _DEFAULT_HIDDEN_TOOLS`.                                     |
-| `.is_gui_only_disabled` | bool      | Member of GUI-only disabled set                 | Replaces `self in DISABLED_GUI_ONLY_TOOLS`.                                   |
-| `.is_advertised`        | bool      | Currently advertised (env-aware)                | Replaces `is_tool_advertised(self.value)` for enum call sites.                |
+| (keep) `.value`         | str | Canonical kebab-case wire name | Already used everywhere as wire form.                                         |
+| `.wire_name`            | str | Alias for `.value`                              | Optional; consider dropping (use `.value` only) to keep enum surface minimal. |
+| `.normalized`           | str | `normalize_identifier(self.value)`              | Replaces `normalize_identifier(Tool.XXX.value)` (e.g. in response_formatter). |
+| `.snake_name`           | str | `to_snake_case(self.value)`                     | Replaces `to_snake_case(resolved_name)` when the value is a known Tool.       |
+| `.params`               | list[str] | Parameter names (camelCase) for this tool | Replaces `get_tool_params(self)` / `TOOL_PARAMS.get(self, [])`.               |
+| `.is_hidden`            | bool | Member of default-hidden set (curated commands) | Replaces `self in _DEFAULT_HIDDEN_TOOLS`.                                     |
+| `.is_gui_only_disabled` | bool | Member of GUI-only disabled set | Replaces `self in DISABLED_GUI_ONLY_TOOLS`.                                   |
+| `.is_advertised`        | bool | Currently advertised (env-aware)                | Replaces `is_tool_advertised(self.value)` for enum call sites.                |
 
 
 Implementation notes:
@@ -150,11 +150,11 @@ Implementation notes:
 ### 2.2 Class methods (on `Tool`)
 
 
-| Method              | Signature                      | Meaning                                     | Replaces / abstracts                                                         |
+| Method | Signature | Meaning | Replaces / abstracts |
 | ------------------- | ------------------------------ | ------------------------------------------- | ---------------------------------------------------------------------------- |
 | `from_string`       | `(cls, s: str) -> Tool | None` | Resolve any alias/variant to canonical Tool | **Keep** — single entry from str→Tool. Replaces `resolve_tool_name_enum(s)`. |
-| `all`               | `(cls) -> list[Tool]`          | All enum members                            | Optional; use `list(Tool)` at call sites to avoid redundant API.             |
-| `canonical_visible` | `(cls) -> list[Tool]`          | All tools not in DISABLED_GUI_ONLY_TOOLS    | Add only if a second call site needs it; else fold into `Tool.advertised()`. |
+| `all`               | `(cls) -> list[Tool]`          | All enum members | Optional; use `list(Tool)` at call sites to avoid redundant API.             |
+| `canonical_visible` | `(cls) -> list[Tool]`          | All tools not in DISABLED_GUI_ONLY_TOOLS | Add only if a second call site needs it; else fold into `Tool.advertised()`. |
 | `advertised`        | `(cls) -> list[Tool]`          | Tools currently advertised (env-aware)      | **Keep.** Replaces iterating ADVERTISED_TOOLS strings; returns list[Tool].   |
 | `wire_names`        | `(cls) -> list[str]`           | All canonical wire names (kebab-case)       | Optional; prefer module-level `TOOLS = [t.value for t in Tool]` and skip.    |
 
@@ -239,14 +239,14 @@ Implementation notes:
 ## 7. Files to touch (summary)
 
 
-| Area                  | Files                                                                                                                                                                                                                                                                                                 |
+| Area | Files |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Enum and registry     | [registry.py](src/agentdecompile_cli/registry.py)                                                                                                                                                                                                                                                     |
-| Public API            | **[init**.py](src/agentdecompile_cli/__init__.py), [tools_schema.py](src/agentdecompile_cli/tools_schema.py), [tool_registry.py](src/agentdecompile_cli/tool_registry.py)                                                                                                                             |
+| Enum and registry | [registry.py](src/agentdecompile_cli/registry.py)                                                                                                                                                                                                                                                     |
+| Public API | **[init**.py](src/agentdecompile_cli/__init__.py), [tools_schema.py](src/agentdecompile_cli/tools_schema.py), [tool_registry.py](src/agentdecompile_cli/tool_registry.py)                                                                                                                             |
 | CLI / bridge / server | [cli.py](src/agentdecompile_cli/cli.py), [bridge.py](src/agentdecompile_cli/bridge.py), [server.py](src/agentdecompile_cli/server.py), [launcher.py](src/agentdecompile_cli/launcher.py)                                                                                                              |
-| MCP server            | [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py), [proxy_server.py](src/agentdecompile_cli/mcp_server/proxy_server.py), [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py), [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) |
-| Providers             | All [mcp_server/providers/*.py](src/agentdecompile_cli/mcp_server/providers/) that reference ToolName                                                                                                                                                                                                 |
-| Tests / docs          | tests/, docs                                                                                                                                                                                                                                                                                          |
+| MCP server | [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py), [proxy_server.py](src/agentdecompile_cli/mcp_server/proxy_server.py), [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py), [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) |
+| Providers | All [mcp_server/providers/*.py](src/agentdecompile_cli/mcp_server/providers/) that reference ToolName |
+| Tests / docs | tests/, docs |
 
 
 ### Research insights (section 7)
@@ -275,12 +275,12 @@ Implementation notes:
 ## References (best practices)
 
 
-| Topic                  | Reference                                                                                                            |
+| Topic | Reference |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Enum module            | [enum — Support for enumerations (Python 3.x)](https://docs.python.org/3/library/enum.html)                          |
-| Enum design            | [PEP 435 – Adding an Enum type](https://peps.python.org/pep-0435/)                                                   |
-| Mutable enum values    | Enum docs “Member values”; return copies from properties                                                             |
-| Properties on enums    | Use `@property` for attributes that read module-level dicts/sets (access time)                                       |
+| Enum module | [enum — Support for enumerations (Python 3.x)](https://docs.python.org/3/library/enum.html)                          |
+| Enum design | [PEP 435 – Adding an Enum type](https://peps.python.org/pep-0435/)                                                   |
+| Mutable enum values | Enum docs “Member values”; return copies from properties |
+| Properties on enums | Use `@property` for attributes that read module-level dicts/sets (access time)                                       |
 | Type alias deprecation | [PEP 613 – Explicit Type Aliases](https://peps.python.org/pep-0613/); `ToolName = Tool` for one release, then remove |
 
 

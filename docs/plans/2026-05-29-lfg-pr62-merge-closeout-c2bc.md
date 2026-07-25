@@ -17,12 +17,14 @@ PR [#62](https://github.com/bolabaden/AgentDecompile/pull/62) is **merge-ready**
 3. Mark tiered RE plans `completed`; verify unit tests on `master`
 
 ```mermaid
+
 flowchart TD
   A[PR #62 merge-ready] --> B[Squash merge to master]
   B --> C[Compound solution doc]
   C --> D[Residual tracker none]
   D --> E[pytest -m unit on master]
 ```
+
 
 ## Requirements
 
@@ -42,7 +44,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 git checkout master && git pull origin master
 uv run pytest -m unit -q --timeout=120
 python3 scripts/validate-frontmatter.py docs/solutions/architecture-patterns/tiered-re-analysis-routing.md
 ```
+

@@ -17,12 +17,14 @@ Close the tiered RE knowledge-base arc on branch `impl/tiered-re-knowledgebase-c
 - Add unit tests; mark PR ready for merge.
 
 ```mermaid
+
 flowchart TD
   A[PR #62 docs merged on branch] --> B[analysis_tier on ToolMetadata]
   B --> C[tool reference payload]
   C --> D[unit tests + review]
   D --> E[push PR #62 ready]
 ```
+
 
 ## Requirements
 
@@ -43,6 +45,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_tool_analysis_tier.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

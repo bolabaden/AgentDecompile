@@ -74,6 +74,7 @@ If ANY inconsistency → add to `issues` with details.
 ## Review Record Schema
 
 ```json
+
 {
   "function_address": "0x<hex>",
   "worker_artifact_reviewed": "<artifact identifier>",
@@ -114,6 +115,7 @@ If ANY inconsistency → add to `issues` with details.
   }
 }
 ```
+
 
 ## Confidence Adjustment Rules
 

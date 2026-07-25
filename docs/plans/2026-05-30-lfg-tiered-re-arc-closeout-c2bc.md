@@ -15,6 +15,7 @@ merge_sha: a5a9e22
 Tier 0–1 MCP tools, discovery sync (PR #86), and capabilities verification (PR #88) complete the tiered RE arc. This plan refreshes stale compound docs, closes residual trackers, adds a capabilities tier-routing regression test, and verifies `pytest -m unit` on master.
 
 ```mermaid
+
 flowchart TD
   A[Stale tier docs + residual trackers] --> B[Refresh tiered-re-analysis-routing]
   B --> C[Close tiered-re knowledgebase residual]
@@ -22,6 +23,7 @@ flowchart TD
   D --> E[Note rename-variable gap in audit tracker]
   E --> F[pytest -m unit green]
 ```
+
 
 ---
 
@@ -68,6 +70,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_capabilities_resource.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

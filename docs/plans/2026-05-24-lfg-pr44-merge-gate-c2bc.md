@@ -15,10 +15,12 @@ Confirm [#44](https://github.com/bolabaden/AgentDecompile/pull/44) at `869aed2` 
 ## Flow
 
 ```mermaid
+
 flowchart TD
     C[Confirm CI green] --> T[Complete path helper tests]
     T --> R[Review + push]
 ```
+
 
 ## Requirements
 
@@ -42,6 +44,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 gh pr checks 44
 ```
+

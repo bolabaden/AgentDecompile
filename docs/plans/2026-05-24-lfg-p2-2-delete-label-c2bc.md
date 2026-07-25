@@ -58,6 +58,8 @@ The agent-native audit scores CRUD completeness at 58%. Agents can create labels
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_manage_symbols_delete_label.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

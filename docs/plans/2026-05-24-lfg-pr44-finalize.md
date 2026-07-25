@@ -14,12 +14,14 @@ Last polish on [#44](https://github.com/bolabaden/AgentDecompile/pull/44) before
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Plan] --> L[_program_analysis_lock context manager]
     L --> D[CONTRIBUTING + AGENTS CI note]
     D --> V[pytest -m unit]
     V --> PUSH[commit push]
 ```
+
 
 ## Requirements traceability
 
@@ -39,6 +41,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

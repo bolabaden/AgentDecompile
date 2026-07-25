@@ -30,12 +30,14 @@ Registry aliases (`rename-variable`, `set-local-variable-type`, `change-variable
 ## Solution (PR #92)
 
 ```mermaid
+
 flowchart LR
   A[rename-variable alias] --> B[manage-function mode=rename_variable]
   B --> C[Decompile → LocalSymbolMap]
   C --> D[HighFunctionDBUtil.updateDBVariable]
   D --> E[Transaction + VC notify]
 ```
+
 
 | Mode | Alias tools | Key args |
 |------|-------------|----------|
@@ -61,10 +63,12 @@ flowchart LR
 Example mappings:
 
 ```
+
 rename-variable: variableName=local_8, newName=slotIndex
 set-local-variable-type: variableName=local_10, newType=uint32_t
 variableMappings: var_1:itemCount,local_8:slotIndex
 ```
+
 
 ## Prevention
 

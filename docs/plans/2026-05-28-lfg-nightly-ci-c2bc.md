@@ -20,12 +20,14 @@ Close the remaining **P3** downstream item: run canonical `/lfg` in CI or nightl
 ## Flow
 
 ```mermaid
+
 flowchart TD
     A[Schedule or workflow_dispatch] --> B[Setup Ghidra + PyGhidra]
     B --> C[LFG_RUN=1 pytest -m lfg]
     C --> D[Upload .lfg_run artifacts]
     D --> E[Update CI docs + residual tracker]
 ```
+
 
 ## Requirements
 
@@ -70,9 +72,11 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_lfg_e2e.py -m "not lfg" -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+
 
 Full LFG stack verified post-merge by first green nightly run (not gating PR merge on this cycle).
 

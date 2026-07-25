@@ -1,6 +1,6 @@
 ---
 name: Replace strings with enums
-overview: "Two-phase plan: (Phase A) Replace tool-name string literals with ToolName.*.value across agentdecompile_cli and document MCP security audit; (Phase B) Rename ToolName → Tool and add rich enum API (properties: .params, .normalized, .snake_name, .is_advertised, .is_gui_only_disabled; class method Tool.from_string). MCP/CLI wire format stays string at the boundary."
+overview: "Two-phase plan: (Phase A) Replace tool-name string literals with ToolName.*.value across agentdecompile_cli and document MCP security audit; (Phase B) Rename ToolName → Tool and add rich enum API (properties:.params,.normalized,.snake_name,.is_advertised,.is_gui_only_disabled; class method Tool.from_string). MCP/CLI wire format stays string at the boundary."
 todos: []
 isProject: false
 ---
@@ -38,10 +38,10 @@ isProject: false
 Per the mcp-security-audit skill, MCP configs were discovered under [.cursor/mcp.json](.cursor/mcp.json). **No secrets are reproduced below.**
 
 
-| Server      | Type              | Classification      | Risks                                                                                                       |
+| Server | Type | Classification | Risks |
 | ----------- | ----------------- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
-| agdec-http  | Remote (HTTP URL) | Shadow MCP (remote) | High: remote SSE/HTTP endpoint not Runlayer-managed; credentials in headers (ensure not logged or exposed). |
-| agdec-proxy | stdio             | Shadow MCP (stdio)  | Medium: local `uvx`/`agentdecompile-server`; not Runlayer CLI; env may contain credentials.                 |
+| agdec-http | Remote (HTTP URL) | Shadow MCP (remote) | High: remote SSE/HTTP endpoint not Runlayer-managed; credentials in headers (ensure not logged or exposed). |
+| agdec-proxy | stdio | Shadow MCP (stdio)  | Medium: local `uvx`/`agentdecompile-server`; not Runlayer CLI; env may contain credentials.                 |
 
 
 **Remediation:**
@@ -100,15 +100,17 @@ Audit does not change the enum-replacement implementation; it is recorded here f
 **Reference (current correct pattern):**
 
 ```python
+
 resolved_name: str = resolve_tool_name(name) or name
 tool_enum: ToolName | None = resolve_tool_name_enum(name)
 if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
     return create_error_response(...)
 ```
 
+
 ### 2. Replace tool name string literals with ToolName.*.value
 
-**CLI / bridge / server / launcher (wire boundary: keep .value for call_tool / MCP):**
+**CLI / bridge / server / launcher (wire boundary: keep.value for call_tool / MCP):**
 
 - [cli.py](src/agentdecompile_cli/cli.py): Replace `"open"` in `call_tool(...)` and any help/example strings with `ToolName.OPEN.value`. Same for any other hardcoded tool names in this file.
 - [bridge.py](src/agentdecompile_cli/bridge.py): Replace `"get-functions"` (and any other tool name literals) with `ToolName.GET_FUNCTIONS.value` (or appropriate enum).
@@ -180,17 +182,17 @@ if tool_enum is not None and tool_enum in DISABLED_GUI_ONLY_TOOLS:
 Define in [registry.py](src/agentdecompile_cli/registry.py). Use `@property` for any attribute that reads `TOOL_PARAMS`, `_DEFAULT_HIDDEN_TOOLS`, or `DISABLED_GUI_ONLY_TOOLS` (evaluated at access time to avoid init order issues).
 
 
-| Property / method                      | Type / signature | Replaces                                                                     |
+| Property / method | Type / signature | Replaces |
 | -------------------------------------- | ---------------- | ---------------------------------------------------------------------------- |
-| `.value`                               | str (keep)       | Wire kebab-case                                                              |
-| `.normalized`                          | str              | `normalize_identifier(self.value)`                                           |
-| `.snake_name`                          | str              | `to_snake_case(self.value)`                                                  |
+| `.value`                               | str (keep)       | Wire kebab-case |
+| `.normalized`                          | str | `normalize_identifier(self.value)`                                           |
+| `.snake_name`                          | str | `to_snake_case(self.value)`                                                  |
 | `.params`                              | list[str]        | `get_tool_params(self)` — **return copy:** `list(TOOL_PARAMS.get(self, []))` |
-| `.is_hidden`                           | bool             | `self in _DEFAULT_HIDDEN_TOOLS`                                              |
-| `.is_gui_only_disabled`                | bool             | `self in DISABLED_GUI_ONLY_TOOLS`                                            |
-| `.is_advertised`                       | bool             | `is_tool_advertised(self.value)`                                             |
-| `Tool.from_string(cls, s: str) -> Tool | None`            | class method                                                                 |
-| `Tool.advertised(cls) -> list[Tool]`   | class method     | Build ADVERTISED_TOOLS from Tool                                             |
+| `.is_hidden`                           | bool | `self in _DEFAULT_HIDDEN_TOOLS`                                              |
+| `.is_gui_only_disabled`                | bool | `self in DISABLED_GUI_ONLY_TOOLS`                                            |
+| `.is_advertised`                       | bool | `is_tool_advertised(self.value)`                                             |
+| `Tool.from_string(cls, s: str) -> Tool | None`            | class method |
+| `Tool.advertised(cls) -> list[Tool]`   | class method | Build ADVERTISED_TOOLS from Tool |
 
 
 - **Registry refactor:** `TOOLS = [t.value for t in Tool]`; `ADVERTISED_TOOLS = [t.value for t in Tool.advertised()]` (refactor `_build_advertised_tools()` at 857–882 to use `Tool.advertised()`). Thin wrappers: `get_tool_params(tool)` → `tool.params` if `Tool` else `Tool.from_string(tool).params if Tool.from_string(tool) else []`; `is_tool_advertised(name)` → `Tool.from_string(name).is_advertised if Tool.from_string(name) else False`; `resolve_tool_name_enum(s)` → `Tool.from_string(s)`.
@@ -219,32 +221,32 @@ Define in [registry.py](src/agentdecompile_cli/registry.py). Use `@property` for
 ## Files to touch (summary)
 
 
-| Area                  | Files                                                                                                                                                                                                                                                                                                                               |
+| Area | Files |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bug fix               | [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py) (DISABLED_GUI_ONLY_TOOLS already fixed; replace remaining string literals)                                                                                                                                                                                 |
+| Bug fix | [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py) (DISABLED_GUI_ONLY_TOOLS already fixed; replace remaining string literals)                                                                                                                                                                                 |
 | CLI / bridge / server | [cli.py](src/agentdecompile_cli/cli.py), [bridge.py](src/agentdecompile_cli/bridge.py), [mcp_server/server.py](src/agentdecompile_cli/mcp_server/server.py), [launcher.py](src/agentdecompile_cli/launcher.py), [server.py](src/agentdecompile_cli/server.py), [proxy_server.py](src/agentdecompile_cli/mcp_server/proxy_server.py) |
-| Formatter             | [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py)                                                                                                                                                                                                                                                    |
-| Providers             | All under [mcp_server/providers/](src/agentdecompile_cli/mcp_server/providers/) that use `name="..."` (see list above)                                                                                                                                                                                                              |
-| Tests / typing        | Tests under `tests/` (registry/advertisement/disabled tools), pyright                                                                                                                                                                                                                                                               |
-| **Phase B only**      | [executor.py](src/agentdecompile_cli/executor.py), [utils.py](src/agentdecompile_cli/utils.py); registry refactor (_build_advertised_tools, ADVERTISED_TOOLS); all Phase A files for rename ToolName→Tool and rich enum call sites                                                                                                  |
+| Formatter | [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py)                                                                                                                                                                                                                                                    |
+| Providers | All under [mcp_server/providers/](src/agentdecompile_cli/mcp_server/providers/) that use `name="..."` (see list above)                                                                                                                                                                                                              |
+| Tests / typing | Tests under `tests/` (registry/advertisement/disabled tools), pyright |
+| **Phase B only**      | [executor.py](src/agentdecompile_cli/executor.py), [utils.py](src/agentdecompile_cli/utils.py); registry refactor (_build_advertised_tools, ADVERTISED_TOOLS); all Phase A files for rename ToolName→Tool and rich enum call sites |
 
 
 ### Line-level references (from repo research)
 
 
-| File                                                                             | Line(s)                                  | Literal / replacement                                                                                                                                                             |
+| File | Line(s)                                  | Literal / replacement |
 | -------------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py)         | 455, 469, 486                            | `recommend_tool("manage-files", "list-project-files")` → `ToolName.MANAGE_FILES.value`, `ToolName.LIST_PROJECT_FILES.value`                                                       |
-| [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py)         | 790, 799                                 | `entries.append(("list-project-files", {}))` / `("manage-files", ...)` → use `ToolName.*.value`                                                                                   |
-| [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py)         | 1921, 1938, 2034                         | `call_tool("list-project-files", ...)`, `"tool": "list-project-files"`, `call_tool("match-function", ...)` → `ToolName.LIST_PROJECT_FILES.value`, `ToolName.MATCH_FUNCTION.value` |
-| [project.py](src/agentdecompile_cli/mcp_server/providers/project.py)             | 208, 335                                 | `name="connect-shared-project"`, `name="list-open-programs"` — no `ToolName` member; keep string or add enum                                                                      |
+| [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py)         | 455, 469, 486 | `recommend_tool("manage-files", "list-project-files")` → `ToolName.MANAGE_FILES.value`, `ToolName.LIST_PROJECT_FILES.value`                                                       |
+| [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py)         | 790, 799 | `entries.append(("list-project-files", {}))` / `("manage-files", ...)` → use `ToolName.*.value`                                                                                   |
+| [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py)         | 1921, 1938, 2034 | `call_tool("list-project-files", ...)`, `"tool": "list-project-files"`, `call_tool("match-function", ...)` → `ToolName.LIST_PROJECT_FILES.value`, `ToolName.MATCH_FUNCTION.value` |
+| [project.py](src/agentdecompile_cli/mcp_server/providers/project.py)             | 208, 335 | `name="connect-shared-project"`, `name="list-open-programs"` — no `ToolName` member; keep string or add enum |
 | [project.py](src/agentdecompile_cli/mcp_server/providers/project.py)             | 1215, 1310, 1731, 1755, 1974, 1976, 2039 | `recommend_tool("manage-files", "list-project-files")` → `ToolName.MANAGE_FILES.value`, `ToolName.LIST_PROJECT_FILES.value`                                                       |
-| [symbols.py](src/agentdecompile_cli/mcp_server/providers/symbols.py)             | 89                                       | `name="search-symbols-by-name"` — advertised alias; can stay string                                                                                                               |
-| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 1155, 1236                               | `_render_generic(data, "inspect-memory")`, `_render_generic(data, "get-call-graph")` → `ToolName.INSPECT_MEMORY.value`, `ToolName.GET_CALL_GRAPH.value`                           |
-| [server.py](src/agentdecompile_cli/mcp_server/server.py)                         | 638                                      | Example JSON in docstring: `"name":"open"`, `"name":"list-functions"` → `ToolName.OPEN.value`, `ToolName.LIST_FUNCTIONS.value`                                    |
-| [cli.py](src/agentdecompile_cli/cli.py)                                          | 1953, 2194, 3658                         | Help/command/example strings: `"list-functions"`, `"match-function"`, `"inspect-memory"` → `ToolName.LIST_FUNCTIONS.value` etc.                                                   |
-| [bridge.py](src/agentdecompile_cli/bridge.py)                                    | 862                                      | `call_tool("connect-shared-project", ...)` — no `ToolName` member; keep string or add enum                                                                                        |
-| [debug_info.py](src/agentdecompile_cli/mcp_server/resources/debug_info.py)       | 78                                       | `"name": "manage-files"` → `ToolName.MANAGE_FILES.value`                                                                                                                          |
+| [symbols.py](src/agentdecompile_cli/mcp_server/providers/symbols.py)             | 89 | `name="search-symbols-by-name"` — advertised alias; can stay string |
+| [response_formatter.py](src/agentdecompile_cli/mcp_server/response_formatter.py) | 1155, 1236 | `_render_generic(data, "inspect-memory")`, `_render_generic(data, "get-call-graph")` → `ToolName.INSPECT_MEMORY.value`, `ToolName.GET_CALL_GRAPH.value`                           |
+| [server.py](src/agentdecompile_cli/mcp_server/server.py)                         | 638 | Example JSON in docstring: `"name":"open"`, `"name":"list-functions"` → `ToolName.OPEN.value`, `ToolName.LIST_FUNCTIONS.value`                                    |
+| [cli.py](src/agentdecompile_cli/cli.py)                                          | 1953, 2194, 3658 | Help/command/example strings: `"list-functions"`, `"match-function"`, `"inspect-memory"` → `ToolName.LIST_FUNCTIONS.value` etc.                                                   |
+| [bridge.py](src/agentdecompile_cli/bridge.py)                                    | 862 | `call_tool("connect-shared-project", ...)` — no `ToolName` member; keep string or add enum |
+| [debug_info.py](src/agentdecompile_cli/mcp_server/resources/debug_info.py)       | 78 | `"name": "manage-files"` → `ToolName.MANAGE_FILES.value`                                                                                                                          |
 
 
 ---

@@ -15,12 +15,14 @@ pr: https://github.com/bolabaden/AgentDecompile/pull/96
 When agents call `get-current-program` or `list-project-files` on a fresh MCP session with no project or programs loaded, return **proactive bootstrap guidance** (`sessionEmpty`, `sessionHint`, `nextSteps`) in success JSON and markdown — not only reactive errors from other tools.
 
 ```mermaid
+
 flowchart TD
   A[Agent calls list-project-files or get-current-program] --> B{Session has project/programs?}
   B -->|Yes| C[Existing success payload + normal next steps]
   B -->|No| D[sessionEmpty + sessionHint + bootstrap nextSteps]
   D --> E[JSON agents + markdown Suggested Next Steps]
 ```
+
 
 ---
 
@@ -71,6 +73,8 @@ The agent-native audit Capability Discovery score is 5/7; **Empty state** is ⚠
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_empty_session_hints.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

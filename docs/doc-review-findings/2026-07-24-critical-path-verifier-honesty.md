@@ -1,33 +1,29 @@
-# Doc review finding: CRITICAL_PATH honesty vs verifier code
+# Verifier honesty vs CRITICAL_PATH claims
 
-**Date:** 2026-07-24  
-**Document reviewed:** `docs/CRITICAL_PATH.md`  
-**Reviewers:** coherence, feasibility, adversarial (ce-doc-review)
+**Date:** 2026-07-24 
+**Reviewed:** `docs/CRITICAL_PATH.md`
 
-## Finding report (code contradicts published claim)
+## Problem
 
-The runbook and README state that `verified/` is **objdiff 0 only** and that parallel workers can produce a false mismatch but **never a false proof**. The verifier does not enforce that.
+The runbook says `verified/` means objdiff zero and that parallel workers cannot create false proofs. The code does not fully enforce that today.
 
-| Path | Behavior | Effect on `verified/` |
-|------|----------|------------------------|
-| `parse_objdiff_report` | `elif not output.strip(): differences = 0` when exit code is 0 | Empty stdout scored as a match |
-| `run_objdiff` | On `status == "error"`, substitutes `compare_objdump_code_bytes` | Fallback rows carry `"fallback": "objdump-disassembly-byte-compare"` with `status: matched`, `differences: 0` |
-| `is_proven_zero` | Checks only `differences == 0` and status ∈ {matched, code-slice-*, source-shape-*} | **Ignores** `fallback` — fallback rows promote to `verified/` |
+| Code path | What happens | Risk |
+|-----------|--------------|------|
+| `parse_objdiff_report` | Empty stdout with exit 0 → `differences = 0` | Empty output counted as match |
+| `run_objdiff` | On error, falls back to `compare_objdump_code_bytes` | Fallback rows get `matched`, `differences: 0` |
+| `is_proven_zero` | Only checks `differences == 0` and status | Ignores `fallback` — fallback can land in `verified/` |
 
-Evidence anchors:
+Relevant files: `source_parity_synthesize.py` (`parse_objdiff_report`, `run_objdiff`), `match_cache.py` (`is_proven_zero`).
 
-- `src/agentdecompile_recovery/source_parity_synthesize.py` — `parse_objdiff_report`, `run_objdiff`, `compare_objdump_code_bytes`
-- `src/agentdecompile_recovery/match_cache.py` — `is_proven_zero`
+**Action:** Fix the gate in code (reject empty objdiff; exclude fallback from `is_proven_zero`). Do not change operator docs to bless the fallback as intended behavior. Re-audit dumps after the fix.
 
-**Do not** rewrite operator docs to treat the fallback as the intended product. Fix the gate (fail-closed empty output; never promote fallback into `verified/` / `is_proven_zero`) then re-audit existing dumps.
+## Other risks flagged in review
 
-## Secondary code risks (from adversarial review)
+1. Compile marked ok when an object file already exists (stale artifact after resume)
+2. Match cache key `(entry, sourceSha256)` omits analysis-image digest
+3. Byte-emitter filter misses `_asm`, MASM `db`/`dw`/`dd`, some const-blob patterns
+4. Proof ladder denominator can shrink via inventory fallbacks
 
-1. Compile `ok` when `object_path.exists()` without unlinking first — resume + Wine flake can gate against a prior artifact.
-2. Match cache key is `(entry, sourceSha256)` with no analysis-image / inventory digest — proofs can survive a changed unpack at the same entry.
-3. Byte-emitter denylist misses `_asm`, MASM `db`/`dw`/`dd`, const-blob+memcpy shapes.
-4. Ladder denominator falls back through inventory symbol counts and can shrink silently.
+## Doc updates from this review
 
-## Doc-side status
-
-Mechanical runbook fixes from this review were applied to `docs/CRITICAL_PATH.md` (diagram, `--source-synthesis msvc`, receipt wiring, dump verify checklist, `verified/` path disambiguation). Hard-rule overclaims are queued as gated/manual decisions for the operator — not silent-rewritten to match the bug.
+Runbook fixes applied: pipeline diagram, `--source-synthesis msvc`, receipt wiring, post-dump checklist, `verified/` path notes. Hard-rule wording stays accurate to intent; code fixes tracked in the living perf plan.

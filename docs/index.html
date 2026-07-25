@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentDecompile — Connect AI to Ghidra</title>
+  <meta name="description" content="MCP server and CLI for Ghidra. Decompile, rename, trace, and recover source you can rebuild.">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">AgentDecompile</p>
+        <h1>Connect AI to Ghidra</h1>
+        <p class="lede">
+          Run an MCP server that talks to your Ghidra project. Ask an agent to list functions,
+          decompile code, rename symbols, or walk a recovery pipeline that checks compile and objdiff
+          before it calls anything verified.
+        </p>
+        <div class="actions">
+          <a class="btn btn-primary" href="https://github.com/bolabaden/agentdecompile#quick-start">Quick start</a>
+          <a class="btn btn-secondary" href="https://github.com/bolabaden/agentdecompile/blob/master/USAGE.md">Usage guide</a>
+          <a class="btn btn-secondary" href="https://github.com/bolabaden/agentdecompile/blob/master/TOOLS_LIST.md">Tool list</a>
+        </div>
+      </div>
+      <aside class="card">
+        <h2>Start here</h2>
+        <ul>
+          <li><a href="https://github.com/bolabaden/agentdecompile/blob/master/README.md">README</a> — install, transports, env vars</li>
+          <li><a href="https://github.com/bolabaden/agentdecompile/blob/master/USAGE.md">USAGE</a> — CLI and HTTP examples</li>
+          <li><a href="CRITICAL_PATH.md">CRITICAL_PATH</a> — source recovery walkthrough</li>
+          <li><a href="INDEX.md">Doc index</a> — full map of guides</li>
+        </ul>
+      </aside>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <h3>Analyze with agents</h3>
+        <p>
+          Point Claude, Cursor, or any MCP client at AgentDecompile. Tools read live Ghidra state —
+          functions, xrefs, memory, decompilation — instead of guessing from file names.
+        </p>
+      </article>
+      <article class="card">
+        <h3>Recover rebuildable C</h3>
+        <p>
+          <code>agentdecompile-reconstruct</code> runs a staged pipeline. Only functions that compile
+          and match with zero objdiff differences land in <code>verified/</code>. Everything else stays
+          labeled advisory.
+        </p>
+      </article>
+      <article class="card">
+        <h3>Run your way</h3>
+        <p>
+          Stdio for desktop MCP clients. HTTP at <code>/mcp</code> for remote or scripted use.
+          Optional browser UI on port 8002 when you start the server locally.
+        </p>
+      </article>
+      <article class="card">
+        <h3>Shared Ghidra projects</h3>
+        <p>
+          Open team repositories with server credentials. Checkout, edit through MCP, check in, and
+          reload in CodeBrowser when you need the GUI view.
+        </p>
+      </article>
+    </section>
+
+    <section class="card" style="margin-top: 1rem;">
+      <h2>Docker stdio (MCP clients)</h2>
+      <pre><code>docker run --rm -i \
+  --add-host host.docker.internal:host-gateway \
+  --entrypoint /ghidra/venv/bin/agentdecompile-server \
+  docker.io/bolabaden/agentdecompile-mcp:latest \
+  -t stdio</code></pre>
+    </section>
+
+    <section class="card" style="margin-top: 1rem;">
+      <h2>Local HTTP server</h2>
+      <pre><code>uv run agentdecompile-server -t streamable-http /path/to/binary
+# MCP endpoint: http://127.0.0.1:8080/mcp
+# Web UI (optional): http://127.0.0.1:8002/</code></pre>
+    </section>
+
+    <footer>
+      <p>
+        Source and full docs live on
+        <a href="https://github.com/bolabaden/agentdecompile">GitHub</a>.
+        Licensed under AGPL-3.0.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

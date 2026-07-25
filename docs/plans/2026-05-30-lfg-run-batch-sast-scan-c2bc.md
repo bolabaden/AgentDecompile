@@ -14,6 +14,7 @@ origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 Tier 1 MCP wrapper for ghidrecomp **`--sast`**: Semgrep (and optional CodeQL placeholder) on decompiled C from a cold binary without an open MCP session program. Completes the ghidrecomp Tier 1 facade (decompile, gzf, bsim, sast).
 
 ```mermaid
+
 flowchart TD
   A[run-batch-sast-scan] --> B{semgrep on PATH?}
   B -->|no| C[graceful skip payload]
@@ -21,6 +22,7 @@ flowchart TD
   D --> E[collect bin_output/sast/*]
   E --> F[JSON sarifFiles + summary + counts]
 ```
+
 
 ## Requirements
 
@@ -65,7 +67,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_run_batch_sast_scan.py tests/test_tool_analysis_tier.py -m unit -v
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/batch_sast.py
 ```
+

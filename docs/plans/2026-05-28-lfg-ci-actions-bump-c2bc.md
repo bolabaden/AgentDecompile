@@ -18,10 +18,12 @@ Consolidate open Dependabot action bumps into one PR on `master`: `download-arti
 ## Flow
 
 ```mermaid
+
 flowchart TD
     B[Bump action pins in workflows] --> T[pytest unit]
     T --> P[Open PR; supersede dependabot PRs]
 ```
+
 
 ## Requirements
 
@@ -42,9 +44,11 @@ flowchart TD
 ## Verification
 
 ```bash
+
 rg 'download-artifact@|setup-buildx-action@|login-action@|sigstore/gh-action' .github/workflows/
 uv run pytest -m unit -q --timeout=120
 ```
+
 
 Verified on branch `impl/ci-actions-bump-c2bc` (2026-05-28): all action pins match R1–R4; `124 passed, 61 deselected` for R5.
 

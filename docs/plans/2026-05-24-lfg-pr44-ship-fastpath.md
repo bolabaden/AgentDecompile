@@ -14,12 +14,14 @@ Commit and push the remaining gate dispatch/ready-path optimization on `impl/blo
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Plan] --> W[ready-path mark complete inside lock]
     W --> T[Unit tests + tests/README]
     T --> R[Code review autofix if any]
     R --> PUSH[commit push PR #44]
 ```
+
 
 ## Requirements traceability
 
@@ -45,6 +47,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

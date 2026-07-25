@@ -18,11 +18,13 @@ PR #53 adds weekly `lfg-nightly.yml` and closes the last blocking-analysis-gate 
 ## Flow
 
 ```mermaid
+
 flowchart TD
     V[Verify unit + LFG smoke] --> C[Wait PR #53 CI green]
     C --> M[Squash merge PR #53]
     M --> D[Mark plans completed + residual HEAD]
 ```
+
 
 ## Requirements
 
@@ -40,8 +42,10 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_lfg_e2e.py -m "not lfg" -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 gh pr checks 53
 gh pr merge 53 --squash
 ```
+

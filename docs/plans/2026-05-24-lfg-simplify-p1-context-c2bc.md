@@ -17,10 +17,12 @@ Apply `ce-simplify-code` to the P1-1 diff on `impl/agent-native-audit-c2bc`: red
 ## Flow
 
 ```mermaid
+
 flowchart TD
     S[Simplify program_metadata + tool_providers + tests] --> V[pytest unit]
     V --> P[Push PR #49]
 ```
+
 
 ## Requirements
 
@@ -49,6 +51,8 @@ File: `tests/test_project_context.py`
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_project_context.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

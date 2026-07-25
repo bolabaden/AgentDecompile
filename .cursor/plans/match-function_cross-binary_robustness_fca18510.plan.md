@@ -86,6 +86,7 @@ So the **consistent workaround** for scenarios like the KOTOR example is: **do n
 ## Architecture sketch (cross-program with call-graph)
 
 ```mermaid
+
 flowchart LR
   subgraph source [Source program]
     S_func[Source function]
@@ -107,17 +108,18 @@ flowchart LR
 
 
 
+
 ---
 
 ## Files to touch (summary)
 
 
-| Change                                                                                 | File(s)                                                                                                                                                                                                  |
+| Change | File(s)                                                                                                                                                                                                  |
 | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Fix TOOLS_LIST description (no fingerprints/ChromaDB; add call-graph once implemented) | [TOOLS_LIST.md](TOOLS_LIST.md)                                                                                                                                                                           |
-| Add call-graph scoring and disambiguation in cross-program match                       | [src/agentdecompile_cli/mcp_server/providers/getfunction.py](src/agentdecompile_cli/mcp_server/providers/getfunction.py) (`_handle_match_cross_program`, possibly helper to get source call-graph names) |
-| Optional: BSim integration as tie-breaker or mode                                      | [getfunction.py](src/agentdecompile_cli/mcp_server/providers/getfunction.py), [ghidrecomp/bsim.py](src/agentdecompile_cli/ghidrecomp/bsim.py) (if needed)                                                |
-| Document that matching is signature + call graph (no bytes)                            | Bridge Builder / comparative prompt in [prompt_providers.py](src/agentdecompile_cli/mcp_server/prompt_providers.py); optional [AGENTS.md](AGENTS.md) or docs                                             |
+| Add call-graph scoring and disambiguation in cross-program match | [src/agentdecompile_cli/mcp_server/providers/getfunction.py](src/agentdecompile_cli/mcp_server/providers/getfunction.py) (`_handle_match_cross_program`, possibly helper to get source call-graph names) |
+| Optional: BSim integration as tie-breaker or mode | [getfunction.py](src/agentdecompile_cli/mcp_server/providers/getfunction.py), [ghidrecomp/bsim.py](src/agentdecompile_cli/ghidrecomp/bsim.py) (if needed)                                                |
+| Document that matching is signature + call graph (no bytes)                            | Bridge Builder / comparative prompt in [prompt_providers.py](src/agentdecompile_cli/mcp_server/prompt_providers.py); optional [AGENTS.md](AGENTS.md) or docs |
 
 
 No byte or instruction-level matching is required; the improvement is to **use the call graph that the index already has** in cross-program mode and to **correct the docs** so users and agents do not assume fingerprints/bytes are in use.

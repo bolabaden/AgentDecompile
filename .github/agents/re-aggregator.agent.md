@@ -49,6 +49,7 @@ For each field, apply these rules:
 ### Step 3: Compute Merged Confidence
 
 ```
+
 base = average(worker_confidences)
 if all_workers_agree: base += 0.1
 if critic_confirmed: base += 0.1
@@ -56,6 +57,7 @@ if critic_disputed: base = min(base, critic_adjusted_confidence)
 if unresolved_gaps > 2: base -= 0.1
 confidence = clamp(base, 0.0, 1.0)
 ```
+
 
 ### Step 4: Identify Remaining Gaps
 
@@ -81,6 +83,7 @@ Flag any inconsistencies as new gaps.
 ## Merged Artifact Schema
 
 ```json
+
 {
   "address": "0x<hex>",
   "name": "<best name>",
@@ -121,11 +124,13 @@ Flag any inconsistencies as new gaps.
 }
 ```
 
+
 ## Analysis Status Report Schema
 
 After merging a batch, produce:
 
 ```json
+
 {
   "batch_summary": {
     "functions_merged": 0,
@@ -168,6 +173,7 @@ After merging a batch, produce:
   ]
 }
 ```
+
 
 ## Gap Resolution Cycle
 

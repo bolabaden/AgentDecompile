@@ -1,6 +1,6 @@
-# `/help` — AgentDecompile capability discovery
+# `/help` — find AgentDecompile tools
 
-Quick reference for agents working with the AgentDecompile MCP server.
+Quick map for agents using the MCP server.
 
 ## Start here
 

@@ -10,6 +10,7 @@ applyTo: "**"
 All agents in the RE pipeline share a structured workspace under `/analysis/` (relative to the working directory). This is the single source of ground truth.
 
 ```
+
 /analysis/
   triage.json                    # Binary triage from Planner
   status.json                    # Current analysis status from Aggregator
@@ -30,6 +31,7 @@ All agents in the RE pipeline share a structured workspace under `/analysis/` (r
   /logs/
     runs.jsonl                   # Append-only log of agent runs
 ```
+
 
 ## Artifact Immutability
 

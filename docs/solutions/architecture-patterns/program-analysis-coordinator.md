@@ -43,6 +43,7 @@ One obvious place for behavior beats parallel service-style helpers. Fail-closed
 ## Examples
 
 ```python
+
 from agentdecompile_cli.mcp_utils.program_analysis import (
     blocking_ensure_analyzed,
     wait_for_program_analysis_idle,
@@ -51,6 +52,7 @@ from agentdecompile_cli.mcp_utils.program_analysis import (
 blocking_ensure_analyzed(program, program_info, program_path=path, force=False)
 wait_for_program_analysis_idle(program, max_wait_sec=90.0)
 ```
+
 
 ## Related
 

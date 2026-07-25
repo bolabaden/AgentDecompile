@@ -15,12 +15,14 @@ Close the LFG pipeline for [#44](https://github.com/bolabaden/AgentDecompile/pul
 ## Flow
 
 ```mermaid
+
 flowchart TD
     V[Verify CI + local unit tests] --> R[ce-code-review autofix]
     R --> D[Residual handoff to PR or docs]
     R --> DOC[Update residual findings doc]
     DOC --> PUSH[commit push PR]
 ```
+
 
 ## Requirements traceability
 
@@ -65,8 +67,10 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run ruff check --no-fix src/ tests/
 uv run pytest -m unit -q --timeout=120
 uv run pytest tests/ -m "not e2e" -q --timeout=120
 gh pr checks 44
 ```
+

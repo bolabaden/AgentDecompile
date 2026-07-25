@@ -14,12 +14,14 @@ origin: docs/residual-review-findings/impl-agent-native-audit-c2bc.md
 Add a PyGhidra integration test proving `manage-function` `rename_variable` persists decompiler variable names in the program database, closing optional residual work from the agent-native audit arc.
 
 ```mermaid
+
 flowchart TD
   A[Assemble x86 test_func] --> B[Auto-analyze program]
   B --> C[Decompile → local_4]
   C --> D[rename_variable → slotIndex]
   D --> E[Re-decompile asserts slotIndex]
 ```
+
 
 ---
 
@@ -69,6 +71,8 @@ PR #92 shipped variable rename handlers with unit tests (schema, aliases, mocked
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_variable_rename_integration.py -v --timeout=180
 uv run pytest -m unit -q --timeout=120
 ```
+

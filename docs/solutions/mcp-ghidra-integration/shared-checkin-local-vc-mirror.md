@@ -15,6 +15,7 @@ LFG step 5 (`05_assert_shared_after_mcp`): after three shared label+checkin cycl
 ## Root cause
 
 ```mermaid
+
 flowchart TD
   A[connect-shared-project] --> B[GhidraProject.createProject private]
   B --> C[RepositoryAdapter.checkout records server checkout]
@@ -25,6 +26,7 @@ flowchart TD
   G --> H[MCP restart checks out server tip]
   H --> I[search-symbols: 0 labels]
 ```
+
 
 Evidence from `linuxsmoke145337`:
 
@@ -48,6 +50,7 @@ Secondary: LocalTrack restored parent `AGENT_DECOMPILE_GHIDRA_SERVER_*` immediat
 7. **Follow-up (2026-07-18, step5reopen033102):** After stub delete, call **`ProjectData.refresh(True)`** before `getFile` / `DomainFile.checkout`. `RepositoryAdapter.checkout` alone only records a server grant (`checkout.dat`); it does not bind a versioned `DomainFile` (`isVersioned` stayed false while the server logged checkout granted).
 
 ```mermaid
+
 flowchart TD
   I[analyzeHeadless import] --> P[private idata stub]
   P --> C[checkout-program]
@@ -59,6 +62,7 @@ flowchart TD
   V --> K[checkin advances server tip]
   D -->|yes| K
 ```
+
 
 ## Verification
 

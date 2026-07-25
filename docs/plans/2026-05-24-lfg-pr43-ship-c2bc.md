@@ -21,12 +21,14 @@ Agent-native audit arc is complete on `master`. Initiative: merge open **PR #43*
 ## Flow
 
 ```mermaid
+
 flowchart TD
     R[Rebase PR #43 on master] --> T[pytest gate + unit]
     T --> C[Closeout: mark superseded on master]
     C --> M[Merge PR #43 closeout]
     M --> D[Update residual doc]
 ```
+
 
 ---
 
@@ -56,7 +58,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 # Result: 53 gate tests; 124 total unit tests passed on fa73c1f base
 ```
+

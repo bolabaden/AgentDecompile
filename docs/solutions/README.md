@@ -1,6 +1,6 @@
 # Documented solutions
 
-Searchable institutional learnings from solved problems in AgentDecompile. Each file uses YAML frontmatter (`module`, `problem_type`, `component`, `tags`) for filtering.
+Searchable notes from solved problems. Each file has YAML frontmatter (`module`, `problem_type`, `component`, `tags`) for filtering.
 
 ## Categories
 
@@ -18,5 +18,7 @@ Run `ce-compound` after solving a non-trivial problem to add a learning. Run `ce
 Validate new frontmatter:
 
 ```bash
+
 python3 scripts/validate-frontmatter.py docs/solutions/<category>/<file>.md
 ```
+

@@ -14,11 +14,13 @@ origin: docs/audits/2026-05-24-agent-native-audit.md
 Close the agent-native audit **data-type catalog create** gap by adding `create` and `delete` modes to `manage-data-types`, plus `info` for search-everything parity.
 
 ```mermaid
+
 flowchart TD
   A[manage-data-types mode] --> B{mutating?}
   B -->|create/delete/apply| C[DTM transaction]
   B -->|list/archives/by_string/info| D[read-only]
 ```
+
 
 ---
 

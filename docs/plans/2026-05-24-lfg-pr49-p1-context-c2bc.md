@@ -17,10 +17,12 @@ Merge **PR #49** (agent-native audit docs) after CI green, and implement audit *
 ## Flow
 
 ```mermaid
+
 flowchart TD
     C[P1-1 projectContext code + tests] --> V[pytest unit]
     V --> S[Ship PR #49 merge]
 ```
+
 
 ## Requirements
 
@@ -53,6 +55,8 @@ Files: `.cursor/commands/help.md`, `docs/residual-review-findings/impl-agent-nat
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_project_context.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

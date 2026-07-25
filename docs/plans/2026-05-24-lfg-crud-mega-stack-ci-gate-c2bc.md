@@ -15,6 +15,7 @@ origin: docs/plans/2026-05-24-lfg-crud-mega-stack-ship-verify-c2bc.md
 Complete the open ship-verify gates for PR **#111**: confirm remote CI (`pytest -m unit`), record result in residual docs, publish a durable merge-ready PR body artifact (since `gh pr edit` is token-blocked), and mark the ship-verify plan lineage complete when ship-verify R6 is satisfied or explicitly documented.
 
 ```mermaid
+
 flowchart TD
   A[Poll gh pr checks 111] --> B{pytest -m unit}
   B -->|pass| C[Stamp residual CI green]
@@ -23,6 +24,7 @@ flowchart TD
   D --> E
   E --> F[Complete ship-verify + CI gate plans]
 ```
+
 
 ---
 
@@ -90,6 +92,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 gh pr checks 111
 uv run pytest -m unit -q --timeout=120
 ```
+

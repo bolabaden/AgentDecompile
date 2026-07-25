@@ -14,12 +14,14 @@ origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 Second Tier 1 ghidrecomp MCP wrapper: **`run-batch-export-gzf`** runs headless analyze + packed `.gzf` export from a cold binary path (no open MCP session program). Distinct from Tier 3 session `export format=gzf`.
 
 ```mermaid
+
 flowchart TD
   A[run-batch-export-gzf] --> B[build ghidrecomp Namespace gzf=true]
   B --> C[ghidrecomp.decompile]
   C --> D[scan gzfPath for .gzf]
   D --> E[JSON: gzfFiles, counts, suggestedTierEscalation]
 ```
+
 
 ## Requirements
 
@@ -43,7 +45,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_run_batch_export_gzf.py tests/test_tool_analysis_tier.py -m unit -v
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/batch_gzf.py
 ```
+

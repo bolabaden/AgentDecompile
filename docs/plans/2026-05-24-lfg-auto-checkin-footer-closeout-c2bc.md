@@ -15,11 +15,13 @@ origin: docs/plans/2026-05-24-lfg-auto-checkin-footer-c2bc.md
 PR #97 surfaces silent auto-checkin outcomes in mutating tool responses. This closeout compounds the learning, cross-links agent-native pattern docs, and marks the feature plan completed.
 
 ```mermaid
+
 flowchart TD
   A[PR #97 feature] --> B[Compound doc auto-checkin-response-footer]
   B --> C[solutions index + agent-native patterns]
   C --> D[pytest -m unit green]
 ```
+
 
 ---
 
@@ -46,6 +48,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_auto_checkin_footer.py tests/test_ui_hints.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

@@ -25,7 +25,7 @@ isProject: false
 
 ## Enhancement Summary
 
-**Deepened on:** 2026-03-12  
+**Deepened on:** 2026-03-12 
 **Sections enhanced:** Implementation plan, MCP protocol details, list-project-files response shape, Error handling, Testing.
 
 **Updated on:** 2026-03-12 (post-implementation)  
@@ -77,13 +77,13 @@ A **bulk metadata migration** path that:
 ## Key decisions
 
 
-| Decision                             | Rationale                                                                                                                                                                                                                  |
+| Decision | Rationale |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bulk iteration inside match-function | Single MCP round-trip for “migrate all”; avoids payload size and session limits from scripting thousands of match-function calls.                                                                                          |
-| Target discovery from session        | match-function uses `SESSION_CONTEXTS.get_project_binaries(session_id)` (populated by open/import), filters by binary extension and excludes source path. Script/CLI do not call list-project-files for discovery. |
-| Script as launcher                   | Aligns with repo pattern: helper_scripts run CLI or external tools (e.g. mcp_cli_testing.py, run_live_agdec_http_test.py). No duplicate MCP HTTP client in migrate_k1_metadata.py.                                         |
-| Prefer CLI migrate-metadata          | Canonical entry point; script docstring and USAGE.md direct users to `agentdecompile-cli migrate-metadata --binary <path>`.                                                                                                |
-| includeExternals default             | CLI defaults to true; match-function bulk uses it when listing source identifiers.                                                                                                                                         |
+| Target discovery from session | match-function uses `SESSION_CONTEXTS.get_project_binaries(session_id)` (populated by open/import), filters by binary extension and excludes source path. Script/CLI do not call list-project-files for discovery. |
+| Script as launcher | Aligns with repo pattern: helper_scripts run CLI or external tools (e.g. mcp_cli_testing.py, run_live_agdec_http_test.py). No duplicate MCP HTTP client in migrate_k1_metadata.py.                                         |
+| Prefer CLI migrate-metadata | Canonical entry point; script docstring and USAGE.md direct users to `agentdecompile-cli migrate-metadata --binary <path>`.                                                                                                |
+| includeExternals default | CLI defaults to true; match-function bulk uses it when listing source identifiers.                                                                                                                                         |
 
 
 ---
@@ -174,13 +174,13 @@ A **bulk metadata migration** path that:
 ### Edge cases (handling)
 
 
-| Edge case                              | Handling                                                                                                                      |
+| Edge case | Handling |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Empty target list                      | match-function bulk: after discovery, if no targets, raise “No target programs…”. Script/CLI: session must have project open. |
+| Empty target list | match-function bulk: after discovery, if no targets, raise “No target programs…”. Script/CLI: session must have project open. |
 | Session expired (404)                  | Client: re-initialize once; if still 404, exit with “Session expired; re-open project and re-run.”                            |
-| list-functions returns empty           | N/A for bulk (tool uses FunctionManager). For other clients: loop runs 0 times; summary “0 processed” is correct.             |
+| list-functions returns empty | N/A for bulk (tool uses FunctionManager). For other clients: loop runs 0 times; summary “0 processed” is correct.             |
 | match-function “no match” for a target | Count as no-match for that (function, target); do not retry; continue (bulk does this).                                       |
-| Malformed JSON in tool result          | try/except around parse; log raw snippet; count as one error; continue if continue-on-error.                                  |
+| Malformed JSON in tool result | try/except around parse; log raw snippet; count as one error; continue if continue-on-error.                                  |
 | Function identifier (single-function)  | Prefer name from list-functions; if name empty or default (e.g. FUN_00401234), use address. Bulk does not pass identifier.    |
 | Very long run (hours)                  | Progress every N; optional checkpoint and resume (not in current design; single bulk call).                                   |
 
@@ -207,7 +207,7 @@ A **bulk metadata migration** path that:
 ## Files (current)
 
 
-| Path                                                                                                                     | Role                                                                                                              |
+| Path | Role |
 | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
 | [helper_scripts/migrate_k1_metadata.py](helper_scripts/migrate_k1_metadata.py)                                           | Thin launcher: env + argv → `agentdecompile_cli.cli migrate-metadata`.                                            |
 | [src/agentdecompile_cli/cli.py](src/agentdecompile_cli/cli.py)                                                           | `migrate_metadata` command: build match-function payload without functionIdentifier, call tool.                   |

@@ -50,12 +50,14 @@ The capabilities resource dynamically lists tools with `analysis_tier`, but test
 ## High-Level Technical Design
 
 ```mermaid
+
 flowchart TD
   A[capabilities payload tests] --> B[tier routing metadata tweak]
   B --> C[compound doc + INDEX]
   C --> D[skill + residual closeout]
   D --> E[pytest -m unit]
 ```
+
 
 ---
 

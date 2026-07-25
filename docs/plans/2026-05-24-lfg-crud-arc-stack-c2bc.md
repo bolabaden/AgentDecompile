@@ -14,6 +14,7 @@ origin: docs/audits/2026-05-24-agent-native-audit.md
 Stack open PRs #105 (strings CRUD) and #106 (data-type catalog create/delete) into one integration branch for a single squash merge to `master`.
 
 ```mermaid
+
 flowchart TD
   M[master] --> S[impl/crud-arc-stack-c2bc]
   S --> A[merge #105 strings CRUD]
@@ -21,6 +22,7 @@ flowchart TD
   B --> C[audit + compound doc sync]
   C --> D[pytest unit green → PR]
 ```
+
 
 ---
 
@@ -47,6 +49,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_manage_strings.py tests/test_manage_data_types.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

@@ -15,11 +15,13 @@ origin: docs/plans/2026-05-24-lfg-discovery-arc-stack-c2bc.md
 PR #102 stacks the full discovery arc (#96–#101). Closeout updates compound docs with PR #102, attempts squash merge to `master`, and verifies unit tests post-merge.
 
 ```mermaid
+
 flowchart TD
   A[PR #102 closeout docs] --> B[Squash merge to master]
   B --> C[pytest -m unit on master]
   C --> D[Residual tracker merged]
 ```
+
 
 ---
 
@@ -37,5 +39,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 ```
+

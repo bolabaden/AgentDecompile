@@ -29,12 +29,14 @@ tags:
 ## Solution (PR #100)
 
 ```mermaid
+
 flowchart TD
   A[create_test_program_with_stack_function] --> B[Auto-analyze x86 test_func]
   B --> C[Decompile → default local name]
   C --> D[_handle_manage rename_variable]
   D --> E[Re-decompile asserts slotIndex]
 ```
+
 
 | Piece | Purpose |
 |-------|---------|

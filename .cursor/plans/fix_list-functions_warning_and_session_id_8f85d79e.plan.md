@@ -35,7 +35,7 @@ This guarantees `session_id` is set for every code path (including early returns
 ## Summary of edits
 
 
-| File                                                                     | Change                                                                                                                                                                              |
+| File | Change |
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py) | In `list_tools()`, use `name=canonical_name` instead of `name=to_snake_case(canonical_name)` when building `types.Tool`.                                                            |
 | [tool_providers.py](src/agentdecompile_cli/mcp_server/tool_providers.py) | In `call_tool()`, assign `session_id = get_current_mcp_session_id()` at the start (after `program_info` check), and remove the duplicate assignment that is currently at line 1841. |

@@ -14,6 +14,7 @@ origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 One-call cold-binary triage: optional **`externalScanTools`** on `run-file-triage` embeds `run-external-re-scan` bundle results so RE Planner agents avoid a second MCP round-trip.
 
 ```mermaid
+
 flowchart TD
   A[run-file-triage] --> B[file + sha256 + strings]
   B --> C{externalScanTools?}
@@ -21,6 +22,7 @@ flowchart TD
   C -->|yes| E[external re scan bundle]
   E --> F[triage + externalScans]
 ```
+
 
 ## Requirements
 
@@ -43,7 +45,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_run_file_triage.py -m unit -v
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/static_triage.py
 ```
+

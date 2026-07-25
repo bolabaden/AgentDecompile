@@ -13,6 +13,7 @@ Run `ce-compound-refresh` on this repo. The knowledge store `docs/solutions/` di
 ## Flow
 
 ```mermaid
+
 flowchart TD
     A[Scan docs/solutions] --> B{Any learnings?}
     B -->|no| C[Bootstrap 3 learnings from branch work]
@@ -20,6 +21,7 @@ flowchart TD
     D --> E[AGENTS.md discoverability]
     B -->|yes| F[Autofix refresh each doc]
 ```
+
 
 ## Scope
 

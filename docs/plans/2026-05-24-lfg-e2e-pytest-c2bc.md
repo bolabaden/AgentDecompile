@@ -15,11 +15,13 @@ Close the P3 gap where `scripts/lfg_validation.py` documents `pytest tests/test_
 ## Flow
 
 ```mermaid
+
 flowchart TD
     A[Add tests/test_lfg_e2e.py] --> B[Fast smoke: run_lfg_cli env errors]
     B --> C[Opt-in @pytest.mark.lfg full stack]
     C --> D[Update residual doc + unit verify]
 ```
+
 
 ## Requirements
 
@@ -61,6 +63,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_lfg_e2e.py -m "not lfg" -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

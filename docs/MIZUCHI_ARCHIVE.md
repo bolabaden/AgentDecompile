@@ -3,6 +3,7 @@
 **Status:** archived donor checkout. Not an active recovery product.
 
 ```mermaid
+
 flowchart TD
     A[Recovery work] --> B{Which checkout?}
     B -->|AgentDecompile| C[Active: match, dump, one-shot]
@@ -10,6 +11,7 @@ flowchart TD
     D -.->|copy receipts/scripts| C
     D -.->|never run pipelines| X[No source-parity-one-shot / rematch]
 ```
+
 
 ## Hard rule
 
@@ -22,9 +24,11 @@ Do **not** run recovery pipelines from `~/Workspaces/Mizuchi` (or `/run/media/..
 All matching recovery, dumps, and one-shot paths live in **AgentDecompile**:
 
 ```bash
+
 cd ~/Workspaces/agentdecompile   # or /run/media/.../Workspaces/agentdecompile
 uv run agentdecompile-reconstruct ...
 ```
+
 
 ## What Mizuchi still is
 

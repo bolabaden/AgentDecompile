@@ -1,11 +1,13 @@
 # Quick Start: Import and Export
 
 ```mermaid
+
 flowchart TD
   A[import-binary] --> B[analyze in project]
   B --> C[export sarif or gzf or cpp]
   B --> D[resource static-analysis]
 ```
+
 
 This page is the shortest current path to importing a binary, exporting results, and reading the SARIF-style analysis resource.
 
@@ -23,21 +25,26 @@ This page is the shortest current path to importing a binary, exporting results,
 ## 1. Import a binary
 
 ```bash
+
 agentdecompile-cli tool import-binary '{
   "path": "/path/to/binary.exe",
   "analyzeAfterImport": true
 }'
 ```
 
+
 Minimal convenience form:
 
 ```bash
+
 agentdecompile-cli import-binary /path/to/binary.exe
 ```
+
 
 ## 2. Export SARIF
 
 ```bash
+
 agentdecompile-cli tool export '{
   "programPath": "/path/to/binary.exe",
   "outputPath": "./analysis.sarif",
@@ -45,9 +52,11 @@ agentdecompile-cli tool export '{
 }'
 ```
 
+
 ## 3. Export a GZF archive
 
 ```bash
+
 agentdecompile-cli tool export '{
   "programPath": "/path/to/binary.exe",
   "outputPath": "./analysis.gzf",
@@ -55,9 +64,11 @@ agentdecompile-cli tool export '{
 }'
 ```
 
+
 ## 4. Export decompiled source
 
 ```bash
+
 agentdecompile-cli tool export '{
   "programPath": "/path/to/binary.exe",
   "outputPath": "./decompiled.cpp",
@@ -68,11 +79,14 @@ agentdecompile-cli tool export '{
 }'
 ```
 
+
 ## 5. Read the static-analysis resource
 
 ```bash
+
 agentdecompile-cli resource static-analysis
 ```
+
 
 That reads `ghidra://static-analysis-results` without exporting a file first.
 

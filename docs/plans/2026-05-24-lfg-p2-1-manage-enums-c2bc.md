@@ -50,6 +50,8 @@ Agent-native audit scores enum CRUD at 0/4. Structures have `manage-structures`;
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_manage_enums.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

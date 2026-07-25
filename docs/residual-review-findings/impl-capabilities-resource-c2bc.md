@@ -31,6 +31,8 @@ plan: docs/plans/2026-05-24-lfg-capabilities-resource-c2bc.md
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_capabilities_resource.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

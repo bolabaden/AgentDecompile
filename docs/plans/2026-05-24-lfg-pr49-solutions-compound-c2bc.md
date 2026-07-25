@@ -20,10 +20,12 @@ PR #49 is merge-ready with no remaining code work. Capture agent-native audit le
 ## Flow
 
 ```mermaid
+
 flowchart TD
     S[Write solutions doc] --> L[Link AGENTS + residual]
     L --> V[Unit tests + CI]
 ```
+
 
 ---
 
@@ -51,6 +53,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 gh pr checks 49
 ```
+

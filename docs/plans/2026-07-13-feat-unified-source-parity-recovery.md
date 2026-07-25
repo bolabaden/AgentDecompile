@@ -47,6 +47,7 @@ Users need one tool that (1) accepts a binary plus optional context, (2) updates
 ### Architecture (post-merge)
 
 ```mermaid
+
 flowchart TB
   CTX[Context inputs: binary, notes, dumps, partial source, Ghidra]
   ACQ[Acquisition / fusion layer]
@@ -62,6 +63,7 @@ flowchart TB
   MATCH --> EXP
   EXP --> MCP
 ```
+
 
 ### Naming freeze
 

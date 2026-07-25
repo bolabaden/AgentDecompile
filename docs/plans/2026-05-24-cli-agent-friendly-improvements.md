@@ -23,6 +23,7 @@ Make `agentdecompile-cli` reliable for headless coding agents: copy-pasteable `-
 ## Flow
 
 ```mermaid
+
 flowchart TD
     A[Agent invokes CLI] --> B{Subcommand}
     B --> C[tool --list-tools -f json]
@@ -33,6 +34,7 @@ flowchart TD
     E --> H[resolve steps: inline / @file / stdin]
     H --> G
 ```
+
 
 ## Implementation units
 

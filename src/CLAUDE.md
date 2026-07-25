@@ -17,6 +17,7 @@ This file provides guidance for Claude Code when working with the AgentDecompile
 ## Directory Structure
 
 ```
+
 src/
 ├── agentdecompile_cli/              # Python CLI package (authoritative implementation)
 │   ├── __init__.py                  # Package initialization, version
@@ -39,6 +40,7 @@ src/
 └── CLAUDE.md                        # This file
 ```
 
+
 ## Python Entry Point and Connection Flow
 
 - **Entry point:** `mcp-agentdecompile` → `agentdecompile_cli.__main__:main` (see `pyproject.toml`)
@@ -59,6 +61,7 @@ src/
 ### Running Tests
 
 ```bash
+
 # Run all tests
 uv run pytest
 
@@ -77,6 +80,7 @@ uv run pytest tests/test_provider_symbols.py
 # Run with coverage
 uv run pytest --cov=src/agentdecompile_cli
 ```
+
 
 ### Test Structure
 
@@ -103,7 +107,7 @@ uv run pytest --cov=src/agentdecompile_cli
 
 21 tool provider implementations across functional domains:
 - **symbols.py** - Symbol management tools
-- **functions.py** - Function analysis tools  
+- **functions.py** - Function analysis tools 
 - **memory.py** - Memory inspection and data type tools
 - **callgraph.py** - Control flow and cross-reference analysis
 - **comments.py** - Comments and annotations
@@ -113,7 +117,7 @@ uv run pytest --cov=src/agentdecompile_cli
 
 ### `tools/wrappers.py`
 
-- **GhidraTools** - Wrapper class providing comprehensive Ghidra API access
+- **GhidraTools** - Wrapper class providing full Ghidra API access
 - Methods for function analysis, memory access, symbol manipulation, etc.
 
 ### `registry.py`
@@ -147,6 +151,7 @@ uv run pytest --cov=src/agentdecompile_cli
 ### Example Pattern
 
 ```python
+
 class MyToolProvider(ToolProvider):
     HANDLERS = {
         'mytool': 'handle_my_tool',
@@ -164,11 +169,13 @@ class MyToolProvider(ToolProvider):
         })
 ```
 
+
 ### Using Ghidra APIs
 
 Access Ghidra functionality through `GhidraTools`:
 
 ```python
+
 from agentdecompile_cli.tools.wrappers import GhidraTools
 
 tools = GhidraTools(program)
@@ -177,11 +184,13 @@ for func in functions:
     print(f"Function: {func.getName()}")
 ```
 
+
 ## Common Patterns
 
 ### Error Handling
 
 ```python
+
 try:
     program = self._get_program(args)
     if not program:
@@ -192,18 +201,22 @@ except Exception as e:
     return self.error(f"Operation failed: {str(e)}")
 ```
 
+
 ### Address Formatting
 
 Use consistent address formatting in responses:
 
 ```python
+
 address_str = f"0x{address.getOffset():x}"
 # Or use helper if available
 ```
 
+
 ## Command-Line Usage
 
 ```bash
+
 # Start MCP server (stdio mode)
 mcp-agentdecompile
 
@@ -216,6 +229,7 @@ uv run pytest
 # Build distribution
 uv build
 ```
+
 
 ## Troubleshooting
 

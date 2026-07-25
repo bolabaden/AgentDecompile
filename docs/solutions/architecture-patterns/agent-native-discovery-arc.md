@@ -32,6 +32,7 @@ After the PR #49 agent-native audit follow-up (~74% score), four discovery and U
 Supersedes individual PRs #96–#101 in one squash merge to `master`.
 
 ```mermaid
+
 flowchart LR
   subgraph discovery [Capability Discovery 7/7]
     A[PR #96 empty-session hints]
@@ -47,6 +48,7 @@ flowchart LR
   ui --> E
   test --> E
 ```
+
 
 | PR | Deliverable | Key files |
 |----|-------------|-----------|

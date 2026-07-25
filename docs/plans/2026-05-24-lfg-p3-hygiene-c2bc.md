@@ -49,12 +49,14 @@ P1 and P2 slices on `impl/agent-native-audit-c2bc` are shipped. Three low-effort
 ## Implementation Units
 
 ```mermaid
+
 flowchart TD
   A[U1 README dual-JVM section] --> D[Residual doc P3 done]
   B[U2 suggest not-implemented error] --> T[Unit tests]
   C[U3 import-binary fail-hard] --> T
   T --> D
 ```
+
 
 - U1. **README dual-JVM workflow** — new subsection under API/tools or connection options with checklist.
 - U2. **`suggest` stub fix** — `suggestions.py` raises clear error when `suggestionType` set; update tool description.
@@ -65,6 +67,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_suggest_stub.py tests/test_import_binary_project_gate.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

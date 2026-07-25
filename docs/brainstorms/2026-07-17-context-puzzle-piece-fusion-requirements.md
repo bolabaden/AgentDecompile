@@ -1,12 +1,12 @@
 ---
-title: "requirements: Intuitive context puzzle-piece fusion"
+title: "requirements: clear context puzzle-piece fusion"
 type: requirements
 status: active
 date: 2026-07-17
 origin: STRATEGY.md + docs/plans/2026-07-13-feat-unified-source-parity-recovery.md (Context IA)
 ---
 
-# requirements: Intuitive context puzzle-piece fusion
+# requirements: clear context puzzle-piece fusion
 
 ## Problem Frame
 

@@ -1,131 +1,112 @@
 # AgentDecompile Usage Guide
 
+Commands for the CLI and HTTP MCP server. Installation: [README.md](README.md). Tools: [TOOLS_LIST.md](TOOLS_LIST.md).
+
 ```mermaid
+
 flowchart TD
-  A[Start runtime] --> B[open or open]
+  A[Start runtime] --> B[open]
   B --> C[list project-files]
   C --> D[get-current-program]
-  D --> E[search-symbols and get-references]
-  E --> F[tool or tool-seq for exact MCP payloads]
+  D --> E[search-symbols / references]
+  E --> F[tool or tool-seq]
 ```
 
-This guide keeps only the current command surface. Historical output captures were removed so the examples stay aligned with the live CLI and server help.
 
-Note: If you want to run from a local clone of the repository instead of using `git+https://github.com/bolabaden/agentdecompile`, use:
+**Local checkout.** To run your working tree instead of the published package:
 
 ```bash
-uvx --from /path/to/agentdecompile/ --with-editable /path/to/agentdecompile/ agentdecompile-cli ...
-uvx --from /path/to/agentdecompile/ --with-editable /path/to/agentdecompile/ agentdecompile-server ...
-uvx --from /path/to/agentdecompile/ --with-editable /path/to/agentdecompile/ agentdecompile-proxy ...
+
+uv run agentdecompile-cli ...
+# or
+uvx --from /path/to/agentdecompile --with-editable /path/to/agentdecompile agentdecompile-cli ...
 ```
 
-## Shared constants
+
+## Defaults and transport
 
 ```text
-Base server URL: http://***:8080/
-Preferred MCP endpoint: http://***:8080/mcp
-Program path: /K1/k1_win_gog_swkotor.exe
+
+Example server:  http://127.0.0.1:8080/
+MCP endpoint:    http://127.0.0.1:8080/mcp
+Example program: /K1/k1_win_gog_swkotor.exe   # shared Ghidra server layout
 ```
 
-Notes:
 
-- The HTTP server exposes `/mcp` as the canonical streamable-HTTP endpoint and `/mcp/message` as the compatibility endpoint. `/` and `/api` return API index metadata, `/docs` serves Swagger UI, and `/api/mcp` is not supported.
-- When you do not pass an explicit backend target, the CLI treats unreachable default or env-provided MCP URLs as recoverable: it can reuse a cached local server, auto-start a local server, or fall back to in-process local execution.
-- Explicit backend targets passed on the CLI, such as `--server-url`, `--host`, or `--port`, remain authoritative and fail instead of being ignored.
-- The web UI starts automatically alongside `agentdecompile-mcp`, `mcp_agentdecompile`, `mcp-agentdecompile`, `agentdecompile-server`, and `agentdecompile-proxy`. It binds to `http://127.0.0.1:8002/` by default.
-- **Default session:** When no `mcp-session-id` (or session cookie) is sent, the server uses a single default session. Sequential CLI runs (e.g. `open` then `checkout-program` in two invocations) can reuse that session without persisting a session id in `.agentdecompile/cli_state.json`. For multi-session or multi-user use, send a distinct session id (or use the optional cookie/header flow).
-- Add `--verbose` to `agentdecompile-cli`, `agentdecompile-server`, `agentdecompile-proxy`, or `mcp-agentdecompile` when you need transport diagnostics.
-- Shared-server connection flags accept both `--ghidra-server-*` and `--server-*` spellings on the hand-written commands.
+- Canonical MCP path is `/mcp`; `/mcp/message` is the legacy alias. `/` and `/api` are metadata; `/docs` is Swagger. `/api/mcp` is not supported.
+- Without an explicit `--server-url`, the CLI may reuse a cached local server, auto-start one, or run in-process if the configured backend is down. `--server-url`, `--host`, and `--port` are strict.
+- The web UI starts with `agentdecompile-server`, `agentdecompile-proxy`, and the stdio launchers. Default: `http://127.0.0.1:8002/`.
+- If no `mcp-session-id` header is sent, the server uses one shared default session. Fine for single-user local use; use distinct session ids for multi-client setups.
+- Add `--verbose` for HTTP transport logs.
+- Shared-server flags accept both `--ghidra-server-*` and `--server-*` spellings.
 
 ## Web UI
 
-The browser UI is a sidecar, not a separate primary entrypoint. Start any supported runtime and the UI comes up against that runtime's backend automatically.
+Sidecar browser UI — not a separate server process. Start any supported runtime and open the URL it prints (default `http://127.0.0.1:8002/`).
 
-```powershell
-uv run agentdecompile-server -t streamable-http C:\path\to\binary.exe
+```bash
+
+uv run agentdecompile-server -t streamable-http /path/to/binary.exe
 ```
 
-For remote passthrough, start the proxy instead:
 
-```powershell
+Proxy mode:
+
+```bash
+
 uv run agentdecompile-proxy --backend-url http://127.0.0.1:8080/mcp -t streamable-http
 ```
 
-The web UI is intended to be exhaustive rather than minimal. It exposes tool invocation, prompt rendering, resource browsing, live tool-surface metadata, and a documentation hub with Ghidra API, docking, and Java Swing links for desktop integrations.
 
-Relevant environment variables:
+The UI covers tool calls (with JSON args), prompts, resources, tool-surface metadata, and links to Ghidra API docs.
 
-- `AGENT_DECOMPILE_WEBUI_HOST` / `AGENTDECOMPILE_WEBUI_HOST`
-- `AGENT_DECOMPILE_WEBUI_PORT` / `AGENTDECOMPILE_WEBUI_PORT`
-- `AGENT_DECOMPILE_WEBUI_ENABLED` / `AGENTDECOMPILE_WEBUI_ENABLED`
-- `AGENT_DECOMPILE_WEBUI` / `AGENTDECOMPILE_WEBUI`
-- `AGENT_DECOMPILE_WEBUI_BACKEND_URL` / `AGENTDECOMPILE_WEBUI_BACKEND_URL`
+Environment variables (either prefix works: `AGENT_DECOMPILE_*` or `AGENTDECOMPILE_*`):
 
-## Unique Patterns From Live Validation
+- `WEBUI_HOST`, `WEBUI_PORT`, `WEBUI_ENABLED`, `WEBUI_BACKEND_URL`
 
-These patterns were repeatedly observed in terminal and notebook validation and are useful for fast diagnosis.
+## Troubleshooting
 
-- Prefer `--mcp-server-url http://host:port/mcp` in examples, even though base URLs are normalized.
-- Treat each standalone CLI command as a fresh session unless using `tool-seq`.
-- If a command prints `No program loaded`, first check whether open/import happened in the same session.
-- Shared-server auth failures commonly include both `NotConnectedException` and `FailedLoginException` in one message; this usually indicates credential or repository access issues.
-- Some failures are delivered as normal MCP tool content, not transport errors; inspect payload text/JSON, not only process exit status.
-- **`tool-seq`** counts a step as failed (and exits **non-zero**) if any text part contains markdown **`## Error`** with a blockquote line (`> **…**`) or **`## Modification conflict`**, even when the MCP envelope has **`isError: false`** (same idea as nested JSON `success: false` + `error`).
-- Convenience command options and raw-tool JSON keys are not always 1:1; validate command flags with `-h` and use raw `tool` mode for exact contracts.
-- Local version-control probes may return explanatory markdown errors (`checkout-program`, `checkin-program`) while the outer call still reports success; treat payload semantics as authoritative.
-- Local import can be followed by shared-server connection attempts in subsequent steps if shared resolution paths are triggered; look for `127.0.0.1:13100` in error context.
+- Put `/mcp` in examples and client configs even though base URLs work.
+- One CLI invocation = one session unless you use `tool-seq` or the CLI reuses a stored session id.
+- `No program loaded` usually means open/import did not happen in this session.
+- Shared-server auth: look for `NotConnectedException` + `FailedLoginException` — fix credentials/repo first.
+- Failures can appear inside tool markdown with a successful MCP envelope; use `"format": "json"` in automation.
+- `tool-seq` exits non-zero if any step returns markdown `## Error` or `## Modification conflict`, even when `isError` is false.
+- Version-control tools (`checkout-program`, `checkin-program`) may embed errors in the body while the HTTP call succeeds.
 
-### Fast triage sequence
+**Quick checks**
 
-1. Run `agentdecompile-cli --mcp-server-url http://host:port/mcp tool --list-tools`.
-2. Run `list project-files`.
-3. Run `get-current-program --program_path <path>`.
-4. If state-dependent steps are needed, switch to `tool-seq`.
-5. If shared-server auth fails, verify `AGENT_DECOMPILE_GHIDRA_SERVER_*` and repository permissions before retry loops.
-6. If local import succeeded but later calls mention shared-server reachability, check explicit `programPath` and effective shared-server env vars.
-
-## Commands Exercised In This Session
-
-These are the command shapes actually used while validating the current docs and transport behavior in this conversation.
-
-```powershell
-# Published Docker image in stdio mode
-docker run --rm -i \
-  --add-host host.docker.internal:host-gateway \
-  --entrypoint /ghidra/venv/bin/agentdecompile-server \
-  docker.io/bolabaden/agentdecompile-mcp:latest \
-  -t stdio
-
-# Local-checkout CLI sequence used to verify shared-repository and project lifecycle behavior
-$env:PYTHONPATH='src'
-C:/GitHub/agentdecompile/.venv/Scripts/python.exe -m agentdecompile_cli.cli --mcp-server-url http://127.0.0.1:8097 tool-seq '[{"name":"open","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
-```
-
-Equivalent CLI entrypoint if you want the same behavior through the published command instead of `python -m`:
-
-```powershell
-uv run agentdecompile-cli --mcp-server-url http://127.0.0.1:8097 tool-seq '[{"name":"open","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
-```
+1. `agentdecompile-cli --server-url http://host:port/mcp tool --list-tools`
+2. `list project-files`
+3. `get-current-program --program_path <path>`
+4. Use `tool-seq` when steps must share session state
+5. For shared-server auth, verify `AGENT_DECOMPILE_GHIDRA_SERVER_*` env vars
 
 ## 1. Start the runtime
 
 ### Local stdio runtime
 
 ```bash
+
 uvx --from git+https://github.com/bolabaden/agentdecompile mcp-agentdecompile
 ```
+
 
 ### HTTP server
 
 ```bash
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server -t streamable-http --project-path ./agentdecompile_projects
 ```
+
 
 ### Proxy mode (forward to remote MCP; use agentdecompile-proxy only)
 
 ```bash
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-proxy --backend-url http://***:8080 -t streamable-http --host 127.0.0.1 --port 8081
 ```
+
 
 Or set `AGENT_DECOMPILE_MCP_SERVER_URL` or `AGENTDECOMPILE_MCP_SERVER_URL` and run `agentdecompile-proxy -t streamable-http`. **agentdecompile-server** is always local (PyGhidra) and does not accept proxy options.
 
@@ -134,6 +115,7 @@ Or set `AGENT_DECOMPILE_MCP_SERVER_URL` or `AGENTDECOMPILE_MCP_SERVER_URL` and r
 ### Linux
 
 ```bash
+
 export AGENT_DECOMPILE_GHIDRA_SERVER_HOST="<set-in-user-env>"
 export AGENT_DECOMPILE_GHIDRA_SERVER_PORT="13100"
 export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME="<set-in-user-env>"
@@ -141,15 +123,18 @@ export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD="<set-in-user-env>"
 export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY="<set-in-user-env>"
 ```
 
+
 ### PowerShell
 
 ```powershell
+
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST = "<set-in-user-env>"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT = "13100"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME = "<set-in-user-env>"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = "<set-in-user-env>"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "<set-in-user-env>"
 ```
+
 
 Shared-server note:
 
@@ -171,6 +156,7 @@ Set the local Ghidra project directory and project name via environment variable
 ### Linux
 
 ```bash
+
 # Use a specific project directory
 export AGENT_DECOMPILE_PROJECT_PATH="/home/user/ghidra-projects/my-analysis"
 export AGENT_DECOMPILE_PROJECT_NAME="my-analysis"
@@ -181,9 +167,11 @@ export AGENT_DECOMPILE_PROJECT_PATH="/home/user/ghidra-projects/my-analysis.gpr"
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server -t streamable-http
 ```
 
+
 ### PowerShell
 
 ```powershell
+
 # Use a specific project directory
 $Env:AGENT_DECOMPILE_PROJECT_PATH = "C:\GhidraProjects\my-analysis"
 $Env:AGENT_DECOMPILE_PROJECT_NAME = "my-analysis"
@@ -194,9 +182,11 @@ $Env:AGENT_DECOMPILE_PROJECT_PATH = "C:\GhidraProjects\my-analysis.gpr"
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-server -t streamable-http
 ```
 
+
 ### CLI args (inline)
 
 ```bash
+
 agentdecompile-server -t streamable-http \
   --project-path /home/user/ghidra-projects/my-analysis \
   --project-name my-analysis
@@ -206,72 +196,93 @@ agentdecompile-server -t streamable-http \
   --project-path /home/user/ghidra-projects/my-analysis.gpr
 ```
 
+
 ## 3. Current CLI workflows
 
 ### Open a program
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ open /K1/k1_win_gog_swkotor.exe
 ```
+
 
 Equivalent raw tool call:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool open '{"path":"/K1/k1_win_gog_swkotor.exe"}'
 ```
+
 
 ### List project files
 
 ```powershell
+
 agentdecompile-cli --server-url http://***:8080/ list project-files
 ```
+
 
 ### Verify the active program
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
 ```
+
 
 ### Search symbols
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query SaveGame
 ```
+
 
 If you specifically need the legacy alias for parity testing, use raw tool mode:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool search-symbols-by-name '{"programPath":"/K1/k1_win_gog_swkotor.exe","query":"SaveGame","limit":20}'
 ```
+
 
 ### References to and from a target
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0
 ```
 
+
 ### List imports and exports
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ list imports --binary /K1/k1_win_gog_swkotor.exe
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ list exports --binary /K1/k1_win_gog_swkotor.exe
 ```
 
+
 ### Read MCP resources
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ resource programs
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ resource static-analysis
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ resource debug-info
 ```
 
+
 ### Run a sequence of tool calls in one session
 
 ```powershell
+
 $steps = '[{"name":"open","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-references","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe","target":"WinMain","direction":"to","limit":10}}]'
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/ tool-seq $steps
 ```
+
 
 This is the supported way to keep state inside one CLI invocation.
 
@@ -279,7 +290,7 @@ This is the supported way to keep state inside one CLI invocation.
 
 The contracts below were re-validated against a real `agentdecompile-server -t streamable-http` process using `tests/fixtures/test_x86_64` before the strict E2E assertions were written.
 
-- Default live MCP advertisement is **63 tools** (67 canonical; 4 GUI-only hidden): all non-GUI canonical tools.
+- Default live MCP advertisement is **66 tools** (70 canonical; 4 GUI-only hidden): all non-GUI canonical tools.
 - Compatibility aliases remain callable through raw MCP and curated CLI commands, but they are not separately advertised in the default `tools/list` output.
 - `switch-project` remains accepted as a compatibility alias and currently routes to `open`, but it is intentionally not advertised.
 - Local JSON `list-functions` returns a `results` array, not `functions`.
@@ -299,6 +310,7 @@ The CLI accepts either a base server URL or an MCP endpoint URL. The examples be
 If you are validating a local code change, replace these `uvx --from ...` commands with `uv run ...` from the local repository, or use `uvx --from /path/to/agentdecompile --with-editable /path/to/agentdecompile ...`, so the terminal run actually exercises your modified code.
 
 ```mermaid
+
 flowchart TD
   A[Set shared-server env vars] --> B[open PATH]
   B --> C[list project-files]
@@ -307,9 +319,11 @@ flowchart TD
   E --> F[tool or tool-seq for advanced workflows]
 ```
 
+
 Set shared repository defaults first:
 
 ```powershell
+
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST = "<ghidra-server-host>"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT = "13100"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME = "<ghidra-username>"
@@ -317,90 +331,79 @@ $Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD = "<ghidra-password>"
 $Env:AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY = "<repository-name>"
 ```
 
+
 Open a program from the shared repository:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ open --server_host "$Env:AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --server_port "$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$Env:AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$Env:AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
 ```
+
 
 List available project files:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ list project-files
 ```
 
-Observed live result during this session included `/K1` and `/K1/k1_win_gog_swkotor.exe` from a fresh shared-session bootstrap.
 
 Verify the active program:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ get-current-program --program_path /K1/k1_win_gog_swkotor.exe
 ```
 
-Observed live result during this session:
 
-```text
-loaded: True
-name: swkotor.exe
-language: x86:LE:32:default
-compiler: windows
-functionCount: 24591
-```
-
-Inspect a concrete function after discovery:
+Inspect a function:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ get-functions --program_path /K1/k1_win_gog_swkotor.exe --identifier WinMain
 ```
 
-Observed live result during this session:
-
-```text
-identifier: WinMain
-address: 004041f0
-name: WinMain
-```
 
 Search symbols:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ search-symbols --program_path /K1/k1_win_gog_swkotor.exe --query main
 ```
 
-Observed live result during this session:
-
-```text
-query: main
-totalMatched: 58
-sampleHit: WinMain
-```
 
 Trace references:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ references to --binary /K1/k1_win_gog_swkotor.exe --target WinMain
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ references from --binary /K1/k1_win_gog_swkotor.exe --target 0x004b58a0
 ```
 
+
 Use raw tool mode when you need exact MCP payload control:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ tool list-imports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ tool list-exports '{"programPath":"/K1/k1_win_gog_swkotor.exe","limit":5}'
 ```
 
+
 Notes:
 
-- Fresh CLI invocations create fresh MCP sessions. `get-functions`, `search-symbols`, `references`, and `get-current-program` can reopen the requested program when `--program_path` is provided together with shared-server env vars.
-- `list project-files` on a fresh session requires a backend built from this revision or newer so it can bootstrap the shared repository index from shared-server env vars.
-- The live remote path re-verified in this session was `http://170.9.241.140:8080/mcp`; keep `/mcp` in docs and client configs even though the CLI can also normalize a base URL.
-- If shared-server authentication fails, the CLI now reports both the wrapper exception and the underlying Ghidra adapter error when the backend is running this revision or newer.
+- Fresh CLI invocations start new sessions. Commands like `get-functions` and `search-symbols` can reopen a program when you pass `--program_path` plus shared-server env vars.
+- `list project-files` on a fresh session needs a server built from this repo (or newer) to bootstrap the shared repo index from env vars.
+- Keep `/mcp` in client configs.
+- Shared-server auth errors should include the underlying Ghidra adapter message on current builds.
 
-Keep state inside one CLI invocation when you need a strict open-then-query flow:
+Chain open + query in one invocation when you need strict ordering:
 
 ```powershell
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --mcp-server-url http://***:8080/mcp/ tool-seq '[{"name":"open","arguments":{"path":"/K1/k1_win_gog_swkotor.exe"}},{"name":"get-current-program","arguments":{"programPath":"/K1/k1_win_gog_swkotor.exe"}}]'
 ```
+
 
 ## 4. Raw MCP HTTP example
 
@@ -409,6 +412,7 @@ The documented MCP request paths are `/mcp` and `/mcp/message` (with optional tr
 Example `tools/call` payload:
 
 ```json
+
 {
   "jsonrpc": "2.0",
   "id": 101,
@@ -424,6 +428,7 @@ Example `tools/call` payload:
   }
 }
 ```
+
 
 ### Response format
 
@@ -462,6 +467,7 @@ Header precedence:
 Exact shared-server example:
 
 ```http
+
 POST /mcp HTTP/1.1
 Host: 170.9.241.140:8080
 Content-Type: application/json
@@ -474,17 +480,20 @@ X-Ghidra-Repository: Odyssey
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"raw-http-client","version":"1.0"}}}
 ```
 
+
 ## 5. Validate agdec-http (tool sweep + debug log)
 
 To test the agdec-http MCP server and confirm all tools are callable, use the unified CLI testing script. It runs `tools/list` and a tool-seq (open, list-project-files, get-current-program, list-functions, search-symbols, get-references, list-imports, list-exports, decompile-function) and writes NDJSON to a debug log (e.g. `debug-cd359b.log`).
 
 ```powershell
+
 # Use URL from .cursor/mcp.json (agdec-http)
 uv run python helper_scripts/mcp_cli_testing.py agdec-http --mcp-config .cursor/mcp.json
 
 # Or pass server URL and (for shared server) credentials
 uv run python helper_scripts/mcp_cli_testing.py agdec-http --server-url http://127.0.0.1:8080/mcp --program-path /K1/k1_win_gog_swkotor.exe
 ```
+
 
 For full workflow success with a shared server, the Ghidra repository must be reachable and `AGENT_DECOMPILE_GHIDRA_SERVER_*` (or `--ghidra-host`, `--username`, `--password`) must be set so `open` can connect. For a **local server with 9/9 pass**, either:
 
@@ -508,6 +517,7 @@ Typical tool errors include a `nextSteps` array. Follow those steps before broad
 When a tool cannot resolve the requested program path, the error is returned as raw JSON even in the default Markdown mode:
 
 ```json
+
 {
   "success": false,
   "error": "Program path '...' was provided but could not be resolved/opened ...",
@@ -523,9 +533,11 @@ When a tool cannot resolve the requested program path, the error is returned as 
 }
 ```
 
+
 Authentication and server errors follow the same shape:
 
 ```json
+
 {
   "success": false,
   "error": "Authentication failed for user@host:13100: ...",
@@ -539,6 +551,7 @@ Authentication and server errors follow the same shape:
   ]
 }
 ```
+
 
 ## 8. Related docs
 

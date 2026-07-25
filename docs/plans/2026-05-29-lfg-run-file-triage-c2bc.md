@@ -14,6 +14,7 @@ origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 First Tier 0 MCP wrapper: `run-file-triage` runs `file`, `sha256sum`, and `strings` (plus optional `yara`/`capa`/`binwalk` when on PATH) without Ghidra. Unified JSON for RE artifact protocol.
 
 ```mermaid
+
 flowchart TD
   A[run-file-triage] --> B[file + sha256]
   B --> C[strings sample]
@@ -22,6 +23,7 @@ flowchart TD
   D --> F[JSON triage payload]
   E --> F
 ```
+
 
 ## Requirements
 
@@ -44,7 +46,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_run_file_triage.py tests/test_tool_analysis_tier.py -m unit -v
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/static_triage.py src/agentdecompile_cli/mcp_server/providers/static_analysis.py
 ```
+

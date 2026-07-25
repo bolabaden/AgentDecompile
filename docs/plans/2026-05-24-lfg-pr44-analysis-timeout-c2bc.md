@@ -15,10 +15,12 @@ When `open` / `import-binary` (or any tool) raises `ProgramAnalysisTimeout` insi
 ## Flow
 
 ```mermaid
+
 flowchart TD
     G[Gate wait] -->|timeout| E[analysis-timeout response]
     P[provider.call_tool] -->|timeout| E
 ```
+
 
 ## Requirements traceability
 
@@ -47,6 +49,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_tool_providers_analysis_gate.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

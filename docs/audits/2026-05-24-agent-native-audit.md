@@ -11,6 +11,7 @@ prior_review: docs/agent-native-architecture-review-2026-05-24.md
 AgentDecompile is a **Ghidra-backed MCP server**, not a web SPA. This audit maps the eight agent-native principles to **MCP tools**, **CLI**, **Ghidra GUI parity**, and the **`/lfg` proof harness**.
 
 ```mermaid
+
 flowchart TD
   subgraph surfaces [Human surfaces]
     GUI[Ghidra CodeBrowser]
@@ -26,6 +27,7 @@ flowchart TD
   MCP --> Store
   LFG --> MCP
 ```
+
 
 ## Overall Score Summary
 
@@ -310,6 +312,8 @@ P1–P3 implementation gaps and the audit ship gate (plan R4) are tracked in [do
 This audit is documentation-only. Related automated checks:
 
 ```bash
+
 uv run pytest tests/test_lfg_e2e.py -m "not lfg" -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

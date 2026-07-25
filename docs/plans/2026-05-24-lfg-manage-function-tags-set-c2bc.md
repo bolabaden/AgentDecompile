@@ -14,12 +14,14 @@ origin: docs/audits/2026-05-24-agent-native-audit.md
 Close the **function tags 3/4 → 4/4** CRUD gap by implementing a real `set` mode that replaces a function's tag list (not alias of `add`). Audit lists function-tag **update partial**; `_AUTO_MATCH_TRIGGER_MODES` already lists `set` as mutating but handler treated `set` like `add`.
 
 ```mermaid
+
 flowchart TD
   A[Parse tags list] --> B[Resolve function]
   B --> C[Remove existing tags]
   C --> D[Add new tags in transaction]
   D --> E[Return action set + tags]
 ```
+
 
 ---
 
@@ -54,6 +56,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_manage_function_tags.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

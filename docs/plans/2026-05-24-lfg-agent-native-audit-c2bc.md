@@ -15,11 +15,13 @@ Run **ce-agent-native-audit** against AgentDecompile (Python MCP + CLI + Ghidra 
 ## Flow
 
 ```mermaid
+
 flowchart TD
     A[8 parallel principle audits] --> B[Compile scored report]
     B --> C[Top recommendations + residual doc pointer]
     C --> D[Review push PR]
 ```
+
 
 ## Requirements
 

@@ -16,10 +16,12 @@ After [#44](https://github.com/bolabaden/AgentDecompile/pull/44) squash-merge to
 ## Flow
 
 ```mermaid
+
 flowchart TD
     M[Verify master unit tests] --> D[Update residual + solutions doc]
     D --> R[Review push]
 ```
+
 
 ## Requirements
 
@@ -48,5 +50,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 ```
+

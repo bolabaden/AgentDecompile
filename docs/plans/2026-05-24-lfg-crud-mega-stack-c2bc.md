@@ -14,6 +14,7 @@ origin: docs/audits/2026-05-24-agent-native-audit.md
 Stack open PRs **#110** (strings + catalog 4/4) and **#109** (function-tags set) into one integration branch for a single squash merge to `master`.
 
 ```mermaid
+
 flowchart TD
   M[master] --> A[impl/manage-data-types-catalog-update-c2bc #110]
   B[impl/manage-function-tags-set-c2bc #109] --> S[impl/crud-mega-stack-c2bc]
@@ -21,6 +22,7 @@ flowchart TD
   S --> D[audit + residual sync]
   D --> PR[Open mega-stack PR]
 ```
+
 
 ---
 
@@ -48,6 +50,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_manage_strings.py tests/test_manage_data_types.py tests/test_manage_function_tags.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

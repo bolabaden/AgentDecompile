@@ -21,6 +21,7 @@ Close the context → Ghidra loop for **placed** puzzle pieces only: emit an exp
 - Document operator/agent flow in `docs/CONTEXT_FUSION.md`.
 
 ```mermaid
+
 flowchart TD
   P[placement.json + context-seeds] --> Q[propose receipt]
   Q --> A{Agent chooses apply?}
@@ -31,6 +32,7 @@ flowchart TD
   R --> D
   A -->|no| S[skip — seeds stay advisory]
 ```
+
 
 ## Problem Frame
 

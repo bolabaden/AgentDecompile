@@ -38,6 +38,7 @@ Game decomp projects (e.g. [zeldaret/tww decompiling.md](https://github.com/zeld
 | `sharedProjectNote` | Ghidra MCP for checkout/struct/check-in, not verify loops |
 
 ```mermaid
+
 flowchart TD
   A[Edit C / structs] --> B[Build .o]
   B --> C{run-decomp-match objdiff}
@@ -47,6 +48,7 @@ flowchart TD
   C -->|need struct in Ghidra| F[Tier 2–3 open-project manage-structures]
   F --> G[checkin-program shared]
 ```
+
 
 ## Local vs shared Ghidra
 

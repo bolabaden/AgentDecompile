@@ -5,6 +5,7 @@ Claude excels at vision + long-horizon reasoning. Use these exact patterns so Cl
 
 ## System Prompt Addition (add to every Claude agent session)
 ```
+
 You have full access to the following post-July-2025 MCP debugging CLI tools. Always use them in this order on any tool or GUI failure. Return ONLY JSON analysis + next exact command.
 
 Tools:
@@ -18,14 +19,17 @@ When I send a screenshot or error, first run the appropriate debug command, then
 Never guess coordinates — always calibrate with Inspector first.
 ```
 
+
 ## Claude-Optimized Tool Calling Patterns
 **Pattern for screenshot-heavy GUI loops**:
 ```xml
+
 <tool_call>
 name="run_terminal"
 <parameter name="command">mcp-trace --filter take_screenshot --export json && fastmcp trace --limit-base64</parameter>
 </tool_call>
 ```
+
 
 **Claude Vision + Debug Synergy**:
 1. Claude sees desktop screenshot.
@@ -41,6 +45,7 @@ When using Anthropic Computer Use API alongside your custom MCP:
 
 ## Prompt for Self-Healing (use when agent gets stuck)
 ```
+
 Claude, you are now in MCP SRE mode.
 Here is the last trace JSON and screenshot.
 Step 1: Identify root cause using only the 5 CLIs.
@@ -49,6 +54,7 @@ Step 3: Execute it via terminal tool.
 Step 4: Retry original task.
 Begin.
 ```
+
 
 ## Claude-Specific Edge Cases & Fixes
 - Hallucinated buttons on dynamic UIs → force `mcp-debug session replay` + Claude vision re-analysis.

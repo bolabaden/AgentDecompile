@@ -15,11 +15,13 @@ Final `/lfg` on [#44](https://github.com/bolabaden/AgentDecompile/pull/44) at `6
 ## Flow
 
 ```mermaid
+
 flowchart TD
     V[Verify tests + CI] --> D[Dedupe resolve_domain_program_path]
     D --> R[Review autofix]
     R --> P[Push]
 ```
+
 
 ## Requirements
 
@@ -44,6 +46,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_tool_providers_analysis_gate.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

@@ -14,6 +14,7 @@ merge_sha: 4b8110d
 Squash-merge PR [#66](https://github.com/bolabaden/AgentDecompile/pull/66) (runtime `tools/list` filter by max `analysis_tier`), then post-merge closeout: compound learning doc, `AGENTS.md` env/header docs, plan `merge_sha` updates.
 
 ```mermaid
+
 flowchart TD
   A[PR #66 CI green] --> B[Squash merge to master]
   B --> C[Compound learning doc]
@@ -21,6 +22,7 @@ flowchart TD
   D --> E[INDEX + residual none]
   E --> F[Closeout PR]
 ```
+
 
 ## Requirements
 
@@ -42,7 +44,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 python3 scripts/validate-frontmatter.py docs/solutions/architecture-patterns/max-analysis-tier-filter.md
 gh pr checks 66
 ```
+

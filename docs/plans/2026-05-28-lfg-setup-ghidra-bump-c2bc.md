@@ -18,11 +18,13 @@ Apply Dependabot [#38](https://github.com/bolabaden/AgentDecompile/pull/38) (`se
 ## Flow
 
 ```mermaid
+
 flowchart TD
     B[Bump setup-ghidra@v2.1.2 in 4 workflows] --> T[pytest unit]
     T --> D[Mark CLI + DHH plans completed]
     D --> P[Open PR]
 ```
+
 
 ## Requirements
 
@@ -42,7 +44,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 rg 'setup-ghidra@v' .github/workflows/
 uv run pytest tests/test_cli_agent_help.py tests/test_program_analysis_gate.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 ```
+

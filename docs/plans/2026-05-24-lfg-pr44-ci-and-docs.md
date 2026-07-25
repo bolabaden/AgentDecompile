@@ -14,6 +14,7 @@ Give [#44](https://github.com/bolabaden/AgentDecompile/pull/44) merge confidence
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Plan] --> CI[test-unit.yml workflow]
     CI --> WF[Add master to headless triggers]
@@ -21,6 +22,7 @@ flowchart TD
     DOC --> V[pytest -m unit]
     V --> PUSH[commit push]
 ```
+
 
 ## Requirements traceability
 
@@ -39,5 +41,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 ```
+

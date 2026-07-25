@@ -21,17 +21,17 @@ isProject: false
 ## Scope: modifying tools (from [TOOLS_LIST.md](TOOLS_LIST.md) / [registry.py](src/agentdecompile_cli/registry.py))
 
 
-| Category    | Tool                                                                               | Conflicting cases                                                                |
+| Category | Tool | Conflicting cases |
 | ----------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Symbol/name | `manage-symbols`, `create-label`                                                   | Label already at address; renaming a symbol that already has a custom name       |
-| Function    | `manage-function` (rename, set_prototype, set_return_type, set_calling_convention) | Current name/signature is already user-defined or non-default                    |
-| Comments    | `manage-comments` (set)                                                            | Comment already exists at (address, type) with different text                    |
-| Structures  | `manage-structures` (create, apply, modify)                                        | Structure with same name exists; data already at address                         |
-| Data types  | `manage-data-types`, `apply-data-type`                                             | Data already at address (different type)                                         |
-| Bookmarks   | `manage-bookmarks` (set)                                                           | Bookmark already at (address, type/category)                                     |
-| Tags        | `manage-function-tags` (add/set)                                                   | Optional: report no-op if tag already present                                    |
-| Versioning  | `checkout-program`, `checkin-program`                                              | Already checked out / merge conflicts (optional two-step)                        |
-| Project     | `manage-files` (rename, etc.)                                                      | Target name exists; optional two-step                                            |
+| Symbol/name | `manage-symbols`, `create-label`                                                   | Label already at address; renaming a symbol that already has a custom name |
+| Function | `manage-function` (rename, set_prototype, set_return_type, set_calling_convention) | Current name/signature is already user-defined or non-default |
+| Comments | `manage-comments` (set)                                                            | Comment already exists at (address, type) with different text |
+| Structures | `manage-structures` (create, apply, modify)                                        | Structure with same name exists; data already at address |
+| Data types | `manage-data-types`, `apply-data-type`                                             | Data already at address (different type)                                         |
+| Bookmarks | `manage-bookmarks` (set)                                                           | Bookmark already at (address, type/category)                                     |
+| Tags | `manage-function-tags` (add/set)                                                   | Optional: report no-op if tag already present |
+| Versioning | `checkout-program`, `checkin-program`                                              | Already checked out / merge conflicts (optional two-step)                        |
+| Project | `manage-files` (rename, etc.)                                                      | Target name exists; optional two-step |
 | Propagation | `match-function`                                                                   | Target already has custom name/comment/bookmark/signature (per-target, per-kind) |
 
 
@@ -40,6 +40,7 @@ Exclude from two-step (or treat as already having their own “preview”): `syn
 ## Architecture
 
 ```mermaid
+
 flowchart LR
   Client[Client] --> ModTool[Modifying tool]
   ModTool --> Check{Conflict?}
@@ -54,6 +55,7 @@ flowchart LR
   Overwrite --> Success
   Skip --> Success
 ```
+
 
 
 

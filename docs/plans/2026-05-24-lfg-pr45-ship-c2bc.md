@@ -16,10 +16,12 @@ Complete `/lfg` for [#45](https://github.com/bolabaden/AgentDecompile/pull/45): 
 ## Flow
 
 ```mermaid
+
 flowchart TD
     C[CI green] --> T[Strengthen export contract test]
     T --> M[Merge PR #45]
 ```
+
 
 ## Requirements
 
@@ -41,5 +43,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py -m unit -q
 ```
+

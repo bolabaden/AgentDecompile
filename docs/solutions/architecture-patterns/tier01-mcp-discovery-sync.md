@@ -29,12 +29,14 @@ Tiered RE routing (PR #62) defined Tier 0–1 conceptually, but agents still lac
 ## Solution arc
 
 ```mermaid
+
 flowchart LR
   T0[run-file-triage] --> T0b[run-external-re-scan]
   T0b --> T1[run-batch-* x4]
   T1 --> D[Discovery sync PR #86]
   D --> V[Capabilities verify tests]
 ```
+
 
 | Tier | MCP tools | PR |
 |------|-----------|-----|

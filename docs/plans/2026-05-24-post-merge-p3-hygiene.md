@@ -14,6 +14,7 @@ After [#42](https://github.com/bolabaden/AgentDecompile/pull/42) merged `STRATEG
 ## Flow
 
 ```mermaid
+
 flowchart TD
     I[Infer intent: residual P3 + STRATEGY tracks] --> P[this plan]
     P --> D[IMPORT_EXPORT_GUIDE semantics]
@@ -23,6 +24,7 @@ flowchart TD
     G --> V
     V --> PR[commit push PR]
 ```
+
 
 ## Requirements traceability
 
@@ -48,5 +50,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
 ```
+

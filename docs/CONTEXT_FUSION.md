@@ -5,8 +5,10 @@ AgentDecompile treats extra inputs as **puzzle pieces** for a target binary: sni
 ## One mental model
 
 ```bash
+
 agentdecompile-reconstruct game.exe ./ugly-decomp/ notes.md symbols.jsonl archive.gzf
 ```
+
 
 Equivalent forms:
 
@@ -53,8 +55,10 @@ Propose ≠ apply. Nothing silently renames Ghidra.
 ## Mid-run add another piece
 
 ```bash
+
 agentdecompile-reconstruct game.exe --work-dir <same> --resume ./more-notes.md
 ```
+
 
 Creates a new acquisition snapshot and merges into the target fingerprint without deleting `verified/`.
 

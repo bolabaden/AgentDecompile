@@ -15,6 +15,7 @@ Finish the `/lfg` pipeline for [#44](https://github.com/bolabaden/AgentDecompile
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Plan gate] --> W[ce-work: docs + verify]
     W --> R[ce-code-review autofix]
@@ -22,6 +23,7 @@ flowchart TD
     C --> B[ce-test-browser skip if N/A]
     B --> PR[Push + PR metadata]
 ```
+
 
 ## Requirements traceability
 
@@ -66,8 +68,10 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run ruff check --no-fix src/ tests/
 uv run pytest -m unit -q --timeout=120
 uv run pytest tests/ -m "not e2e" -q --timeout=120
 gh pr checks 44
 ```
+

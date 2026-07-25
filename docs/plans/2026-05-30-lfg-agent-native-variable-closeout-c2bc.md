@@ -16,12 +16,14 @@ origin: docs/plans/2026-05-30-lfg-rename-variable-handlers-c2bc.md
 PR #92 shipped `rename-variable` and `set-local-variable-type` handlers. This plan compounds the learning, syncs the stale audit CRUD gap, closes the residual tracker arc, and verifies `pytest -m unit` on master.
 
 ```mermaid
+
 flowchart TD
   A[PR #92 merged] --> B[Compound doc decompiler-variable-mutations]
   B --> C[Update audit CRUD gap row]
   C --> D[Close residual tracker arc]
   D --> E[pytest -m unit green]
 ```
+
 
 ---
 
@@ -59,5 +61,7 @@ The rename-variable plan deferred compound documentation and audit/residual sync
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 ```
+

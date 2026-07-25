@@ -24,6 +24,7 @@ Also fix a cross-platform MCP outage: WebUI sidecar import of renamed `build_too
 - Keep MCP server alive after ready (WebUI sidecar must not take down the process).
 
 ```mermaid
+
 flowchart TD
   A[Detect OS] --> B{Windows?}
   B -->|yes| W[cmd.exe + ghidraSvr.bat + PE addrs]
@@ -32,6 +33,7 @@ flowchart TD
   L --> P
   P --> E[.lfg_run logs + lfg_run projects]
 ```
+
 
 ## Problem Frame
 

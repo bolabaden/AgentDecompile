@@ -15,6 +15,7 @@ origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 Let agents constrain `tools/list` to Tier 2 (read-only) or lower before escalating to Tier 3 mutate tools. Closes KB future item "Optional runtime filter on tools/list by max tier".
 
 ```mermaid
+
 flowchart TD
   A[tools/list request] --> B{max_analysis_tier set?}
   B -->|no| C[Full ADVERTISED_TOOLS]
@@ -22,6 +23,7 @@ flowchart TD
   B -->|3| C
   E[tools/call] --> F[All handlers unchanged]
 ```
+
 
 ## Requirements
 
@@ -61,7 +63,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_max_analysis_tier_filter.py -m unit -v
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/registry.py src/agentdecompile_cli/mcp_server/tool_providers.py
 ```
+

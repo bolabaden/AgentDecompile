@@ -33,6 +33,7 @@ This runbook matches the intended behavior: **three checkout → edit → checki
 From repo root:
 
 ```powershell
+
 # 1) Shared: open + import + 3 cycles + sync (single tool-seq / one MCP session)
 .\scripts\e2e_checkout_sync_plan_runner.ps1 -Phase shared_plus_sync `
   -ServerUrl http://127.0.0.1:8080 `
@@ -52,13 +53,16 @@ From repo root:
   -GhidraUser ghidra -GhidraPassword admin -ProgramPath /sort.exe
 ```
 
+
 **Local `.gpr`:**
 
 ```powershell
+
 .\scripts\e2e_checkout_sync_plan_runner.ps1 -Phase local_full -LocalProjectDir C:\temp\e2e_local_gpr
 # restart MCP
 .\scripts\e2e_checkout_sync_plan_runner.ps1 -Phase restart_local_assert -LocalProjectDir C:\temp\e2e_local_gpr
 ```
+
 
 Adjust **`-ProgramPath`**, **`-FunCycle1`**, **`-FunCycle3`**, **`-LabelAddress`** using **`list-project-files`** and **`list-functions`** if `sort.exe` or addresses differ on your OS/binary.
 

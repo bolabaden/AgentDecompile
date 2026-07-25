@@ -14,6 +14,7 @@ origin: docs/solutions/architecture-patterns/agent-native-discovery-arc.md
 Five open PRs (#96–#101) implement the discovery arc but remain unmerged. Create one integration branch stacking all feature code plus consolidated audit/docs so a single squash merge lands the arc on `master`.
 
 ```mermaid
+
 flowchart TD
   M[master] --> S[impl/discovery-arc-stack-c2bc]
   S --> A[merge #96 empty-session]
@@ -23,6 +24,7 @@ flowchart TD
   D --> E[audit + compound docs from #101]
   E --> F[pytest -m unit green → PR]
 ```
+
 
 ---
 
@@ -55,6 +57,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_empty_session_hints.py tests/test_auto_checkin_footer.py tests/test_initialize_instructions.py tests/test_variable_rename_integration.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

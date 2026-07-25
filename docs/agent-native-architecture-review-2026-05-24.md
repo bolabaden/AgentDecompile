@@ -2,11 +2,12 @@
 
 > **Superseded:** This early review (branch `impl/blocking-analysis-gate-c2bc`) is retained for history. Use the authoritative [2026-05-24 agent-native audit](audits/2026-05-24-agent-native-audit.md) and [residual tracker](residual-review-findings/impl-agent-native-audit-c2bc.md) for current scores and follow-up status (PR #49).
 
-**Date:** 2026-05-24  
+**Date:** 2026-05-24 
 **Branch reviewed:** `impl/blocking-analysis-gate-c2bc`  
 **Scope:** MCP server (`src/agentdecompile_cli/`), `TOOLS_LIST.md`, session/project model
 
 ```mermaid
+
 flowchart TD
   Agent[LLM agent / CLI] --> MCP[MCP tools/list + tools/call]
   MCP --> PyGhidra[Headless PyGhidra JVM]
@@ -14,6 +15,7 @@ flowchart TD
   GUI[Ghidra GUI] --> Store
   Prompts[MCP prompts + TOOLS_LIST skills] -.->|orchestrate| Agent
 ```
+
 
 ## Overall Score Summary
 

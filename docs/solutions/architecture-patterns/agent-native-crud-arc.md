@@ -33,6 +33,7 @@ The 2026-05-24 audit listed **strings CRUD**, **data-type catalog create**, **ca
 **Merged** squash `b72a932` (PR [#111](https://github.com/bolabaden/AgentDecompile/pull/111), 2026-05-29) on `master`. Supersedes #105–#110.
 
 ```mermaid
+
 flowchart LR
   subgraph strings [Strings 4/4]
     A[create update delete]
@@ -47,6 +48,7 @@ flowchart LR
   dtypes --> M
   tags --> M
 ```
+
 
 | Slice | Deliverable |
 |-------|-------------|
@@ -73,6 +75,8 @@ flowchart LR
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_manage_strings.py tests/test_manage_data_types.py tests/test_manage_function_tags.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

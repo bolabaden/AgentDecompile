@@ -14,12 +14,14 @@ Restore green **Unit tests (no Ghidra)** CI on [#44](https://github.com/bolabade
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Plan] --> D[Add ruff to dependency-groups.dev]
     D --> L[uv lock if needed]
     L --> V[Local ruff + pytest -m unit]
     V --> PUSH[commit push]
 ```
+
 
 ## Requirements traceability
 
@@ -33,7 +35,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv sync --all-extras --dev
 uv run ruff check --no-fix src/ tests/
 uv run pytest -m unit -q --timeout=120
 ```
+

@@ -15,11 +15,13 @@ base: impl/crud-arc-stack-c2bc
 Close the **data-type catalog 3/4 → 4/4** CRUD gap by adding `update` mode to `manage-data-types`. Builds on CRUD stack branch (`impl/crud-arc-stack-c2bc`, PR #107).
 
 ```mermaid
+
 flowchart TD
   B[impl/crud-arc-stack-c2bc] --> U[add update mode]
   U --> T[unit tests]
   T --> PR[PR targets master via stack lineage]
 ```
+
 
 ---
 
@@ -54,6 +56,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_manage_data_types.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

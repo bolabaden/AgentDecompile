@@ -47,6 +47,7 @@ After `projectContext.analysisComplete` is true, use these MCP tools to build th
 Produce a **triage artifact** (JSON) containing:
 
 ```json
+
 {
   "binary": "<program name>",
   "architecture": "<processor/language>",
@@ -62,6 +63,7 @@ Produce a **triage artifact** (JSON) containing:
   ]
 }
 ```
+
 
 ## Phase 2: Task Decomposition
 

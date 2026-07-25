@@ -88,6 +88,7 @@ Directional guidance only — not implementation specification.
 ### Ladder data flow
 
 ```mermaid
+
 flowchart LR
   FC[function-candidates / inventory]
   VR[verified receipts objdiff-zero]
@@ -101,9 +102,11 @@ flowchart LR
   PL --> ST
 ```
 
+
 ### PE critical path (stop-after checkpoints)
 
 ```mermaid
+
 sequenceDiagram
   participant Op as Operator/Agent
   participant R as reconstruct
@@ -121,15 +124,18 @@ sequenceDiagram
   C-->>Op: verified receipts + proof-ladder rungs
 ```
 
+
 ### Output structure (work dir additions)
 
 ```text
+
 <workDir>/
   proof-ladder.json          # agentdecompile.proof-ladder.v1
   claim-report.json          # gains proofLadder field
   report.json                # gains proofLadder summary
   ... existing stages ...
 ```
+
 
 ---
 

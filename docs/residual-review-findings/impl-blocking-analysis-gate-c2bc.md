@@ -29,10 +29,12 @@
 Squash merge: **`7359c6a`** on `master` (2026-05-27). **68+** unit tests on `master` after PR #45 (`program_analysis.__all__` export test). Feature branch `impl/blocking-analysis-gate-c2bc` superseded.
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/program_analysis.py src/agentdecompile_cli/mcp_server/tool_providers.py
 ```
+
 
 After merge: `tests/test_lfg_e2e.py` provides fast smoke (no `lfg` marker) and opt-in full stack when `LFG_RUN=1` (see `tests/README.md` and `.cursor/commands/lfg.md`).
 

@@ -15,11 +15,13 @@ origin: docs/plans/2026-05-24-lfg-mcp-initialize-preamble-c2bc.md
 PR #99 adds `build_initialize_instructions()` wired into MCP `Server(instructions=...)`. This closeout compounds the learning, cross-links agent-native pattern docs, and marks the feature plan completed.
 
 ```mermaid
+
 flowchart TD
   A[PR #99 feature] --> B[Compound doc mcp-initialize-instructions-preamble]
   B --> C[solutions index + agent-native patterns]
   C --> D[pytest -m unit green]
 ```
+
 
 ---
 
@@ -46,6 +48,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_initialize_instructions.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

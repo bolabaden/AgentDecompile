@@ -15,11 +15,13 @@ origin: docs/plans/2026-05-24-lfg-variable-rename-integration-c2bc.md
 PR #100 adds a PyGhidra integration test proving `rename_variable` persists in decompiled output. This closeout compounds the test pattern, cross-links solutions docs, and marks the feature plan completed.
 
 ```mermaid
+
 flowchart TD
   A[PR #100 integration test] --> B[Compound doc variable-rename-integration-test]
   B --> C[Link decompiler-variable-mutations + solutions index]
   C --> D[pytest -m unit green]
 ```
+
 
 ---
 
@@ -46,6 +48,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_variable_rename_integration.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

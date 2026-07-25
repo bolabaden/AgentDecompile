@@ -14,6 +14,7 @@ origin: docs/residual-review-findings/impl-agent-native-audit-c2bc.md
 Four open impl PRs close agent-native discovery and UI-integration gaps. Sync `docs/audits/2026-05-24-agent-native-audit.md` and residual tracker to the post-merge target state, and compound the arc in solutions docs.
 
 ```mermaid
+
 flowchart TD
   A[PR #96 empty-session] --> E[Audit 7/7 Capability Discovery]
   B[PR #97 auto-checkin footer] --> F[UI Integration rec #2 Done]
@@ -21,6 +22,7 @@ flowchart TD
   D[PR #100 variable rename test] --> G[Residual optional work Done]
   E --> H[Compound agent-native-discovery-arc.md]
 ```
+
 
 ---
 
@@ -56,5 +58,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 ```
+

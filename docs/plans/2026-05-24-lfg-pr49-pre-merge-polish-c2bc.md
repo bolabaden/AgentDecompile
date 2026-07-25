@@ -18,12 +18,14 @@ PR #49 is merge-ready; all P1–P3 + P2-4 items are Done. Fix remaining **canoni
 ## Flow
 
 ```mermaid
+
 flowchart TD
     R1[README 59→60 canonical count] --> V[uv run pytest -m unit]
     R2[Superseded banner on prior review] --> V
     R3[Residual PR #49 merge summary] --> V
     V --> H[Human squash-merge PR #49]
 ```
+
 
 ---
 
@@ -52,6 +54,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 gh pr checks 49
 ```
+

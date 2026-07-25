@@ -68,6 +68,7 @@ Agents and slash commands (`/capabilities`, `/help`) are the primary discovery s
 ## High-Level Technical Design
 
 ```mermaid
+
 flowchart TD
   A[Registry 66/62] --> B[Update .cursorrules + commands]
   B --> C[Update RE agents + artifact protocol]
@@ -75,6 +76,7 @@ flowchart TD
   D --> E[Parity test for 6 run-* tools]
   E --> F[pytest -m unit]
 ```
+
 
 ---
 

@@ -14,12 +14,14 @@ origin: docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md
 First Tier 1 MCP wrapper: `run-batch-decompile` invokes the existing `ghidrecomp.decompile` batch pipeline without an open MCP session program. Returns unified JSON artifact paths for offline ripgrep/semgrep workflows.
 
 ```mermaid
+
 flowchart TD
   A[run-batch-decompile] --> B[build ghidrecomp Namespace]
   B --> C[ghidrecomp.decompile]
   C --> D[scan outputPath]
   D --> E[JSON: paths, counts, suggestedTierEscalation]
 ```
+
 
 ## Requirements
 
@@ -42,7 +44,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_run_batch_decompile.py tests/test_tool_analysis_tier.py -m unit -v
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/agentdecompile_cli/mcp_utils/batch_decompile.py src/agentdecompile_cli/mcp_server/providers/batch_analysis.py
 ```
+

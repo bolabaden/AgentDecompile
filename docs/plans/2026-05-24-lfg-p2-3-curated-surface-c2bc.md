@@ -42,10 +42,12 @@ Agent-native audit scores Tools as Primitives at 4/8. On curated surface, agents
 ## Implementation Units
 
 ```mermaid
+
 flowchart TD
   A[Adjust _DEFAULT_HIDDEN_TOOLS] --> B[Add curated surface unit tests]
   B --> C[Update residual doc P2-3 done]
 ```
+
 
 - U1. Remove list primitives from `_DEFAULT_HIDDEN_TOOLS`; add `GET_FUNCTION`, `SEARCH_EVERYTHING`.
 - U2. `tests/test_tool_surface_curated.py` — env-gated advertisement assertions.
@@ -54,6 +56,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_tool_surface_curated.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

@@ -16,6 +16,7 @@ Run `/lfg` with `ce-strategy`, `ce-doc-review`, and `ce-code-review`. PR [#39](h
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[ce-plan: this file] --> S[ce-strategy: STRATEGY.md]
     S --> W[ce-work: doc + code artifacts]
@@ -23,6 +24,7 @@ flowchart TD
     R --> T[unit tests]
     T --> C[commit push PR]
 ```
+
 
 ## Scope
 
@@ -54,6 +56,8 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py tests/test_cli_agent_help.py -m unit -q
 python3 scripts/validate-frontmatter.py docs/solutions/integration-issues/mcp-program-analysis-gate.md
 ```
+

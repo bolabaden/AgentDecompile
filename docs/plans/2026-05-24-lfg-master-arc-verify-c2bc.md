@@ -19,10 +19,12 @@ Agent-native audit arc is merged to `master` (PR #49–#51). Verify unit tests o
 ## Flow
 
 ```mermaid
+
 flowchart TD
     V[pytest -m unit on master] --> D[Sync residual merge SHAs]
     D --> R[Review push]
 ```
+
 
 ---
 
@@ -49,5 +51,7 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest -m unit -q --timeout=120
 ```
+

@@ -55,10 +55,12 @@ Map MCP response fields into triage artifact:
 **Shell fallback** when MCP unavailable:
 
 ```bash
+
 file "$BINARY"
 sha256sum "$BINARY"
 strings -a "$BINARY" | rg -i 'error|http|password|debug|\.dll' | head -50
 ```
+
 
 Record results in `analysis/triage.json` (hash, format, notable strings, suggested Tier escalation).
 

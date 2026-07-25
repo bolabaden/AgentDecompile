@@ -36,6 +36,8 @@ All P1–P3 audit slices are implemented. CI headless jobs fail on a **stale adv
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_canonical_tool_parity.py tests/test_tool_surface_curated.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

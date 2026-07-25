@@ -1,132 +1,116 @@
-# AgentDecompile - Your AI Companion for Ghidra
+# AgentDecompile
 
-> AI-powered code analysis and reverse engineering, directly inside Ghidra.
+**Connect AI to Ghidra.** Run an MCP server that talks to your Ghidra project. List functions, decompile code, rename symbols, and run the full [tool set](TOOLS_LIST.md). Use the bundled web UI in a browser, or wire any MCP client.
 
-**AgentDecompile** bridges the gap between Ghidra and modern Artificial Intelligence. It allows you to chat with your binaries, automating the tedious parts of reverse engineering so you can focus on the logic that matters.
+Built on the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). Python in `src/agentdecompile_cli/` is the supported runtime. The old Java extension is removed.
 
-Built on the open standard [Model Context Protocol (MCP)](https://modelcontextprotocol.io), AgentDecompile turns Ghidra into an intelligent agent that can read, understand, and explain code for you.
+> Hero copy and the GitHub Pages landing page: [docs/HERO.md](docs/HERO.md) · [docs/index.html](docs/index.html)
 
 ```mermaid
+
 flowchart TD
   A[MCP client] --> B[mcp-agentdecompile or agentdecompile-mcp]
   A --> C[agentdecompile-server streamable-http]
   B --> D[AgentDecompile runtime]
   C --> D
   D --> E[PyGhidra and Ghidra projects]
-  D --> F[67 canonical tools and 3 resources]
+  D --> F[70 canonical tools and 3 resources]
 ```
 
-## Session-Validated Commands
 
-The commands below were exercised during the current documentation and validation session. They are intentionally listed separately from the generic examples so readers can see the exact command shapes that were actually used.
+## Quick start
 
-```powershell
-# Published Docker image, stdio transport, explicit server entrypoint
+See [Installation](#installation) below. For a hosted doc landing page, open [docs/index.html](docs/index.html) (GitHub Pages: enable **Settings → Pages → Build from branch → `/docs`**).
+
+## Quick examples
+
+Docker stdio (for MCP clients that spawn a process):
+
+```bash
+
 docker run --rm -i \
   --add-host host.docker.internal:host-gateway \
   --entrypoint /ghidra/venv/bin/agentdecompile-server \
   docker.io/bolabaden/agentdecompile-mcp:latest \
   -t stdio
-
-# Local-checkout CLI validation through the module entrypoint used in this session
-$env:PYTHONPATH='src'
-C:/GitHub/agentdecompile/.venv/Scripts/python.exe -m agentdecompile_cli.cli --server-url http://127.0.0.1:8097 tool-seq '[{"name":"open","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
 ```
 
-Equivalent user-facing local-checkout form:
 
-```powershell
-uv run agentdecompile-cli --server-url http://127.0.0.1:8097 tool-seq '[{"name":"open","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<redacted>","serverPassword":"<redacted>","format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"import-binary","arguments":{"path":"C:/GitHub/agentdecompile/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}},{"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},{"name":"list-project-files","arguments":{"format":"json"}}]'
+Shared Ghidra server: open a repo, import a fixture, remove it — all in one session via `tool-seq`:
+
+```bash
+
+uv run agentdecompile-cli --server-url http://127.0.0.1:8097 tool-seq \
+  '[{"name":"open","arguments":{"path":"LocalRepo","serverHost":"127.0.0.1","serverPort":13100,"serverUsername":"<user>","serverPassword":"<pass>","format":"json"}},
+    {"name":"list-project-files","arguments":{"format":"json"}},
+    {"name":"import-binary","arguments":{"path":"/path/to/tests/fixtures/test_x86_64","enableVersionControl":true,"format":"json"}},
+    {"name":"list-project-files","arguments":{"format":"json"}},
+    {"name":"remove-program-binary","arguments":{"programPath":"test_x86_64","confirm":true,"format":"json"}},
+    {"name":"list-project-files","arguments":{"format":"json"}}]'
 ```
 
-Validated behaviors from these commands:
 
-- The published Docker image responds correctly in stdio mode.
-- `tool-seq` preserves state inside one CLI invocation.
-- Shared-repository open, project listing, import, and removal flows were exercised from a local checkout.
-- When no explicit backend target is requested, the CLI will treat unreachable default or env-provided MCP URLs as recoverable: it reuses a cached local server when possible, auto-starts a local server when needed, then falls back to in-process local execution.
-- Explicit CLI backend targets such as `--server-url`, `--host`, or `--port` remain strict and still fail fast if the requested backend is unavailable.
+More command shapes: [USAGE.md](USAGE.md).
 
-## Field-Proven Operational Patterns
+## CLI and MCP tips
 
-The validation logs and notebook runs show stable patterns that are useful when diagnosing issues quickly.
+**URLs.** Use `http://host:port/mcp` in configs. The CLI also accepts a base URL like `http://host:port/` and normalizes it. `/mcp/message` works for older clients. `/api/mcp` is not supported.
 
-### 1) MCP URL normalization is intentional
+**Sessions.** Each standalone `agentdecompile-cli` call starts a new MCP session unless the CLI reuses a cached session id for that backend. Chain steps with `tool-seq`, or pass `programPath` / `--program_path` so the server can reopen the binary. If you do not pass `--server-url` and the default backend is down, the CLI may start a local server or fall back to in-process mode; explicit `--server-url`, `--host`, or `--port` fail fast when unreachable.
 
-- Prefer `http://host:port/mcp` in docs and tooling.
-- The CLI accepts base URLs and normalizes to MCP endpoints, but `/mcp` keeps intent explicit.
-- `/mcp/message` remains a compatibility path; `/api/mcp` is not supported.
+**Shared-server login errors** often show `NotConnectedException` wrapping `FailedLoginException`. Check credentials and repository name before debugging transport.
 
-### 2) CLI invocations are stateless unless you use `tool-seq`
+**Tool errors vs transport errors.** Some tools return markdown guidance (e.g. "No program loaded") with `isError: false`. For scripts, pass `"format": "json"` in tool arguments and read the payload fields.
 
-- Fresh `agentdecompile-cli` commands start fresh MCP sessions.
-- If a command needs loaded-program state, either:
-  - include `program_path`/`programPath` so the backend can reopen the target, or
-  - use `tool-seq` to preserve open-then-query state in one invocation.
-- If no explicit backend target is provided and the default backend is down, both single-tool calls and `tool-seq` will attempt local recovery automatically.
+**Convenience commands vs raw tools.** Subcommands do not always expose every MCP argument. Run `agentdecompile-cli <command> -h` for that command, or `agentdecompile-cli tool <name> '{...}'` for the exact schema.
 
-### 3) Shared-server auth failures have a recognizable signature
+## Source recovery
 
-- Typical failure text includes both wrapper and adapter exceptions.
-- Most common fingerprint: `NotConnectedException` plus nested `FailedLoginException`.
-- Treat this as credentials/repository access mismatch first, not an MCP transport failure.
+Recovery and reconstruction live under `src/agentdecompile_recovery/` and `scripts/`. Entry points:
 
-### 4) Tool-level failures can still arrive as successful MCP envelopes
+| Command | Role |
+|---------|------|
+| `agentdecompile-recover` | Staged recovery orchestrator |
+| `agentdecompile-reconstruct` | One-shot reconstruction front door |
+| `agentdecompile-cli recover` / `reconstruct` | Same pipelines through the main CLI |
+| `scripts/decomp-cli.sh` | Shell helpers for match, vacuum, and source-parity work |
 
-- Some tools return guidance markdown (for example `No program loaded`) with `isError: False`.
-- For automation, prefer tool `format: json` where supported and inspect payload fields directly.
-- Local version-control probes (`checkout-status`, `checkout-program`, `checkin-program`) may report domain errors in content while the outer call itself succeeds.
+Consolidation is ongoing; not every legacy workflow is behind one UX yet.
 
-### 5) Local workflows can be pulled into shared-server resolution
+### Source dumps
 
-- Terminal validation showed local import succeeded, then follow-up resolution attempted shared-server connect (`127.0.0.1:13100`) for later steps.
-- If this appears, inspect effective shared-server env vars and explicit tool arguments before assuming import/open failed.
+`agentdecompile-reconstruct --dump-source DIR` writes a tree you can read and rebuild from. Verified and advisory material stay separate:
 
-### 6) Option shape can differ between convenience commands and raw tool mode
+| Directory | Contents |
+|-----------|----------|
+| `verified/` | Functions that passed compile + objdiff with zero differences. Code-slice proofs live under `verified/code-slice/`. |
+| `advisory/ghidra/` | Ghidra decompilation for reading only — not verified. |
+| `Port/CODE/` | Same functions grouped into modules (Borealis-style layout). |
 
-- Convenience commands may not expose every raw argument (for example dashed variants such as `--max-results` on some commands).
-- Use `agentdecompile-cli <command> -h` for that command surface.
-- Use `agentdecompile-cli tool <name> '{...}'` when you need exact MCP payload control.
+The dump root includes `README.md`, `CLAIMS.md`, and `MANIFEST.json` listing what landed where. Inline asm, `_emit`, and `.incbin` sources are rejected from `verified/`.
 
-## Why AgentDecompile?
+Common flags:
 
-Reverse engineering is hard. There are thousands of functions, cryptic variable names, and complex logic flows. AgentDecompile helps you make sense of it all by letting you ask plain English questions about your target code.
+| Flag | Purpose |
+|------|---------|
+| `--dump-source DIR` | Write the dump after the run |
+| `--dump-source-only` | Build a dump from existing receipts (requires `--dump-source`) |
+| `--ghidra-facts FILE` | JSONL of decompiled text for the advisory layer |
+| `--workers N` | Parallel compile/objdiff workers (`0` = up to 8, based on CPU count) |
+| `--force-rematch` | Re-run objdiff on functions already cached at zero differences |
 
-- **Ask Questions**: "Where is the main loop?", "Find all encryption functions", "What does this variable do?"
-- **Automate Analysis**: Let the AI rename variables, comment functions, and map out code structures for you.
-- **Smart Context**: Unlike generic chat bots, AgentDecompile actually sees your code. It reads the decompiled output, checks cross-references, and understands the program structure just like a human analyst would.
+Operator walkthrough: [docs/CRITICAL_PATH.md](docs/CRITICAL_PATH.md). Known verifier gaps: [docs/doc-review-findings/2026-07-24-critical-path-verifier-honesty.md](docs/doc-review-findings/2026-07-24-critical-path-verifier-honesty.md).
 
-It's designed to be your pair programmer for assembly and decompiled code.
+## What you can do
 
-## Recovery Recovery Pipelines
+Ask an agent to summarize a binary, find where a string is used, rename locals, sketch a call graph, or draft a script from decompiled code. Tools read Ghidra state directly — functions, xrefs, memory, decompilation — instead of guessing from file names.
 
-This checkout now also carries a generalized recovery and reconstruction pipeline stack inside the AgentDecompile repo.
+## Runtime entry points
 
-- `agentdecompile-cli recover ...` forwards into the integrated staged recovery CLI
-- `agentdecompile-cli reconstruct ...` forwards into the integrated one-shot front door
-- `agentdecompile-recover` runs the generic staged recovery orchestrator from `src/agentdecompile_recovery/cli.py`
-- `agentdecompile-reconstruct` runs the installable reconstruction front door from `src/agentdecompile_recovery/frontdoor.py`
-- `scripts/decomp-cli.sh` exposes the imported recovery helpers, queue/vacuum loop, reconstruction packaging, and source-parity synthesis utilities
-
-This is an in-repo integration step, not a claim that AgentDecompile has already absorbed every recovery workflow behind a single unified UX. The authoritative recovery code currently lives under `src/agentdecompile_recovery/` and `scripts/` in this repo while that consolidation continues.
-
-## What Can It Do?
-
-You can ask AgentDecompile to perform complex tasks:
-
-- **"Analyze this entire binary and summarize what it does."**
-- **"Find where the user password is checked."**
-- **"Rename all these variables to something meaningful."**
-- **"Draw a diagram of this class structure."**
-- **"Write a Python script to solve this CTF challenge."**
-
-It works by giving the AI specific "tools" to interact with Ghidra—reading memory, listing functions, checking references—so it gets real, ground-truth data from your project.
-
-## Runtime Surfaces
-
-AgentDecompile ships several entrypoints so you can run it as a local stdio MCP server, an HTTP MCP server, a proxy, or a CLI client against an already-running backend.
+Several binaries wrap the same MCP server:
 
 ```mermaid
+
 flowchart TD
   subgraph ConsoleScripts[Console scripts]
     A1[agentdecompile / agentdecompile-cli]
@@ -148,11 +132,13 @@ flowchart TD
   C3 --> D[PyGhidra and Ghidra APIs]
 ```
 
+
 ### Exhaustive architecture (src/agentdecompile_cli)
 
 The following diagram maps the full structure of `src/agentdecompile_cli/`: entry points, bridge/executor, registry, launcher, MCP server core, all tool and resource providers, Ghidra integration, utilities, and external integrations. Arrows indicate dependency and data flow.
 
 ```mermaid
+
 flowchart TB
   subgraph Entry["Entry points"]
     E1["cli.py — Click CLI (HTTP client)"]
@@ -373,6 +359,7 @@ flowchart TB
   T13 --> X5
 ```
 
+
 **Request path (tools/call):** HTTP → auth/session middleware → MCP Server `call_tool` → ToolProviderManager.call_tool → normalize name via registry → provider.call_tool → HANDLERS dispatch → GhidraTools / ProgramInfo / mcp_utils → response_formatter → TextContent.
 
 **Request path (resources/read):** HTTP → read_resource(uri) → ResourceProviderManager → provider.read_resource (e.g. DebugInfoResource, ProgramListResource).
@@ -404,31 +391,37 @@ For standard local usage, AgentDecompile runs as a Python MCP server, so you do 
 ### Option 1: Use the published CLI against a running server (no local install)
 
 ```bash
+
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
 ```
+
 
 Requires [uv](https://docs.astral.sh/uv/) (`pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`).
 
 ### Option 2: Install from source
 
 ```bash
+
 git clone https://github.com/bolabaden/agentdecompile.git
 cd agentdecompile
 pip install -e .
 agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
 ```
 
+
 ### Option 3: Docker (run the server)
 
 **Published image (no build required):**
 
 ```bash
+
 # HTTP server mode (matches docker-compose agentdecompile-mcp service)
 docker run --rm \
   --add-host host.docker.internal:host-gateway \
   -p 8080:8080 \
   docker.io/bolabaden/agentdecompile-mcp:latest
 ```
+
 
 The MCP server starts on port 8080 with the canonical streamable-HTTP endpoint at `http://localhost:8080/mcp`, the compatibility endpoint at `http://localhost:8080/mcp/message`, the API index at `http://localhost:8080/`, and Swagger UI at `http://localhost:8080/docs`. Connect with any MCP client or the CLI using `--server-url http://localhost:8080/`.
 
@@ -437,16 +430,20 @@ The MCP server starts on port 8080 with the canonical streamable-HTTP endpoint a
 AgentDecompile also ships a browser UI for direct human interaction outside MCP clients and the CLI. It is launched automatically alongside the existing MCP/server entrypoints: `agentdecompile-mcp`, `mcp_agentdecompile`, `mcp-agentdecompile`, `agentdecompile-server`, and `agentdecompile-proxy`.
 
 ```bash
+
 uv run agentdecompile-server -t streamable-http /path/to/binary
 ```
+
 
 By default the web UI binds to `http://127.0.0.1:8002/` and targets the backend created by the command you launched. For proxy mode, it points at the proxied MCP endpoint automatically:
 
 ```bash
+
 uv run agentdecompile-proxy --backend-url http://127.0.0.1:8080/mcp -t streamable-http
 ```
 
-The web UI includes live tool execution with JSON argument editing, canonical tool-surface reference data, prompt browsing and rendering, resource browsing, and a documentation hub with Ghidra docking and Java Swing API links.
+
+The web UI lets you run tools with JSON arguments, browse prompts and resources, see the advertised tool surface, and open doc links for Ghidra docking and Java Swing APIs.
 
 Environment variables:
 
@@ -458,9 +455,11 @@ Environment variables:
 Prefer pointing MCP clients and examples at `http://localhost:8080/mcp`. The CLI also accepts the base server URL and normalizes it for you. `http://localhost:8080/` and `http://localhost:8080/api` are metadata/index routes, not alternate MCP transport paths, and `/api/mcp` is not supported.
 
 ```bash
+
 # Build from source and run with docker-compose
 docker compose up -d
 ```
+
 
 ## Usage
 
@@ -471,21 +470,25 @@ AgentDecompile runs as an MCP server so you can connect an AI client (Claude Des
 **Run with default (stdio, local project):**
 
 ```bash
+
 uv run mcp-agentdecompile
 # or: uvx --from git+https://github.com/bolabaden/agentdecompile mcp-agentdecompile
 ```
+
 
 With no arguments, the launcher starts a local MCP server over stdio and uses a default project directory. Your MCP client (e.g. Claude Desktop) talks to it via stdio.
 
 **Docker stdio (for MCP clients that spawn a process, e.g. VS Code, Claude Desktop):**
 
 ```bash
+
 docker run --rm -i \
   --add-host host.docker.internal:host-gateway \
   --entrypoint /ghidra/venv/bin/agentdecompile-server \
   docker.io/bolabaden/agentdecompile-mcp:latest \
   -t stdio
 ```
+
 
 Use `-p 8080:8080` and omit `--entrypoint`/`-t stdio` for HTTP server mode (`streamable-http` is the default).
 
@@ -514,9 +517,11 @@ The Python CLI either runs the MCP server directly (default) or connects to an e
 Proxy mode (forward to a remote MCP backend; no local Ghidra/JVM). Use the **agentdecompile-proxy** command only:
 
 ```bash
+
 agentdecompile-proxy --backend-url http://***:8080 --transport streamable-http --host 127.0.0.1 --port 8081
 # or set AGENT_DECOMPILE_MCP_SERVER_URL and run: agentdecompile-proxy -t streamable-http
 ```
+
 
 This exposes a local MCP endpoint at `http://127.0.0.1:8081/mcp` with compatibility at `http://127.0.0.1:8081/mcp/message`, and forwards all tools/resources/prompts to the remote backend. **agentdecompile-server** is always a local instance (PyGhidra/JVM); it does not accept proxy options.
 
@@ -543,7 +548,7 @@ For a command-line interface to a **running** server (no new Ghidra process per 
   agentdecompile-cli tool open '{"path":"/path/to/binary"}'
    ```
 
-Install the CLI with the same package (`uv sync` or `pip install -e .`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
+Install the CLI with the same package (`uv sync` or `pip install -e.`); entry points: `agentdecompile-cli`, `agentdecompile`. Use `--host`, `--port`, or `--server-url` if the server is not on `127.0.0.1:8080`. To call a tool by name: `agentdecompile-cli tool <name> '<json-args>'`; list valid names: `agentdecompile-cli tool --list-tools`. See [TOOLS_LIST.md](TOOLS_LIST.md) for the full tool reference.
 
 HTTP request diagnostics are disabled by default in CLI/server output. Use `--verbose` (or `-v`) to enable transport-level request logs during troubleshooting.
 
@@ -554,6 +559,7 @@ Shared Ghidra connection flags are accepted with or without the `ghidra-` prefix
 The examples below use the published Git source install form and redact sensitive values. They prefer the explicit `/mcp` endpoint even though the CLI also accepts a base URL such as `http://***:8080/`.
 
 ```powershell
+
 # 1) Open a program from a Ghidra shared repository
 uvx --from git+https://github.com/bolabaden/agentdecompile agentdecompile-cli --server-url http://***:8080/mcp open --server_host "$AGENT_DECOMPILE_GHIDRA_SERVER_HOST" --server_port "$AGENT_DECOMPILE_GHIDRA_SERVER_PORT" --server_username "$AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME" --server_password "$AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD" /K1/k1_win_gog_swkotor.exe
 
@@ -624,19 +630,22 @@ count: 1
 totalExports: 1
 ```
 
-Those commands were re-verified against a live remote deployment during shared-server debugging. The important behavioral points were that `/mcp` is the stable transport path, `list project-files` can bootstrap a fresh shared session from the shared-server env vars, `search-symbols --query main` returns `WinMain` in this sample, and `get-current-program --program_path ...` can reopen the requested shared program in a fresh CLI session.
+
+Those examples were tested against a live shared-server deployment. `/mcp` is the stable transport path; `list project-files` can bootstrap a fresh session from env vars; `search-symbols --query main` finds `WinMain` on the sample binary; `get-current-program --program_path` reopens the program in a new CLI session.
 
 Tip: use `agentdecompile-cli tool --list-tools` to see server-advertised tool names. Use `agentdecompile-cli --help` and `agentdecompile-cli tool -h` to discover command/options.
 
 For shared Ghidra server workflows (`open --ghidra-server-host ... --ghidra-server-port ...`), you can set defaults once with environment variables:
 
 ```bash
+
 export AGENT_DECOMPILE_GHIDRA_SERVER_HOST='<set-in-user-env>'
 export AGENT_DECOMPILE_GHIDRA_SERVER_PORT='<set-in-user-env>'
 export AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME='<set-in-user-env>'
 export AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD='<set-in-user-env>'
 export AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY='<set-in-user-env>'
 ```
+
 
 Then `agentdecompile-cli --server-url http://***:8080/mcp open /K1/k1_win_gog_swkotor.exe` will automatically use those shared-server values.
 
@@ -645,6 +654,7 @@ Then `agentdecompile-cli --server-url http://***:8080/mcp open /K1/k1_win_gog_sw
 Map a directory of binaries into the container so the server can import and analyze them:
 
 ```bash
+
 mkdir -p ./binaries
 cp /path/to/your/binaries/* ./binaries/
 
@@ -664,11 +674,13 @@ docker run --rm -i \
   -t stdio
 ```
 
+
 ### VS Code / Cursor
 
 Create a workspace-local `.vscode/mcp.json` if you want reusable launch targets. A minimal starting point looks like this:
 
 ```json
+
 {
   "servers": {
     "agentdecompile-docker": {
@@ -700,6 +712,7 @@ Create a workspace-local `.vscode/mcp.json` if you want reusable launch targets.
 }
 ```
 
+
 Typical entries:
 
 | Entry | When to use |
@@ -714,12 +727,14 @@ If you add an `inputs` block for `agentdecompile-shared`, VS Code or Cursor can 
 To start the HTTP server for `agentdecompile-http`:
 
 ```bash
+
 # Local project
 agentdecompile-server -t streamable-http
 
 # Proxy to a remote MCP backend (use agentdecompile-proxy, not agentdecompile-server)
 agentdecompile-proxy --backend-url http://***:8080 --transport streamable-http
 ```
+
 
 ### Claude Desktop
 
@@ -728,6 +743,7 @@ Add AgentDecompile to `claude_desktop_config.json` so Claude uses the MCP server
 **Using stdio (spawns server on each chat):**
 
 ```json
+
 {
   "mcpServers": {
     "AgentDecompile": {
@@ -742,9 +758,11 @@ Add AgentDecompile to `claude_desktop_config.json` so Claude uses the MCP server
 }
 ```
 
+
 **Using an already-running server (connect mode):**
 
 ```json
+
 {
   "mcpServers": {
     "AgentDecompile": {
@@ -758,20 +776,21 @@ Add AgentDecompile to `claude_desktop_config.json` so Claude uses the MCP server
 }
 ```
 
+
 On Windows use forward slashes or escaped backslashes in paths.
 
 ### API and tools (overview)
 
-AgentDecompile exposes 67 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
+AgentDecompile exposes 70 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
 
-- **63 tools** are advertised by default: every non-GUI canonical tool.
+- **66 tools** are advertised by default: every non-GUI canonical tool.
 - Compatibility aliases remain callable but are hidden by default. Use `AGENT_DECOMPILE_TOOL_SURFACE=curated` for the smaller curated surface.
 - Canonical MCP tool names use **kebab-case** (for example `open`, `get-current-program`, `search-symbols`). JSON argument keys use camelCase (for example `programPath`, `serverHost`). Many CLI-generated subcommands expose `--snake_case` options and some hand-written commands also accept hyphenated aliases.
 
 - Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
 - Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols`, `inspect-memory`, `manage-function-tags`, `get-call-graph`, `remove-program-binary`, `resolve-modification-conflict` (when a modifying tool reports a conflict)
 
-Live local server contract note: the default advertised surface is currently 63 tools. Compatibility aliases remain callable through raw MCP/CLI routes, and the `switch-project` alias still resolves to `open` even though it is not advertised.
+Live local server contract note: the default advertised surface is currently 66 tools. Compatibility aliases remain callable through raw MCP/CLI routes, and the `switch-project` alias still resolves to `open` even though it is not advertised.
 
 Use `agentdecompile-cli tool --list-tools` to view the live advertised set from your running server, `agentdecompile-cli alias <tool-name>` to inspect compatibility mappings, and [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained reference.
 
@@ -784,11 +803,13 @@ Tools that modify project data (e.g. `manage-symbols` rename, `manage-function` 
 AgentDecompile runs a **headless PyGhidra/JVM** for MCP tools. Ghidra **CodeBrowser** is a **separate JVM process**. Both can read and write the same Ghidra project files, but they do **not** share live in-memory state.
 
 ```mermaid
+
 flowchart LR
   MCP[Headless MCP JVM] -->|mutations| DB[(Project / DomainFile)]
   GUI[CodeBrowser JVM] -->|reads after reload| DB
   MCP -->|checkin-program or save| DB
 ```
+
 
 **After MCP mutations, before expecting GUI updates:**
 
@@ -917,6 +938,7 @@ Repository precedence is:
 Example direct HTTP request:
 
 ```bash
+
 curl -X POST http://127.0.0.1:8080/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -926,6 +948,7 @@ curl -X POST http://127.0.0.1:8080/mcp \
   -H "X-Ghidra-Repository: Odyssey" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 ```
+
 
 ### Tools List
 

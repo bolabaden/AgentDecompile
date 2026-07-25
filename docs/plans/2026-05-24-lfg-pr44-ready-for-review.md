@@ -14,12 +14,14 @@ Finalize [#44](https://github.com/bolabaden/AgentDecompile/pull/44) on `impl/blo
 ## Flow
 
 ```mermaid
+
 flowchart TD
     P[Plan] --> T[Session-flag wait_for_ready unit test]
     T --> CI[Ruff in test-unit workflow]
     CI --> DOC[CONTRIBUTING + residual HEAD]
     DOC --> R[Mark PR ready + push]
 ```
+
 
 ## Requirements traceability
 
@@ -39,7 +41,9 @@ flowchart TD
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_program_analysis_gate.py -m unit -q
 uv run pytest -m unit -q --timeout=120
 uv run ruff check --no-fix src/ tests/
 ```
+

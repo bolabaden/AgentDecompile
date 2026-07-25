@@ -14,6 +14,7 @@ origin: docs/audits/2026-05-24-agent-native-audit.md
 When `AGENTDECOMPILE_AUTO_CHECKIN` is enabled, the server silently runs `checkin-program` after mutating tools but discards the result. Agents only see `guiHint` saying auto-checkin is enabled — not whether persistence succeeded. Attach an **`autoCheckin`** summary to the mutating tool's JSON response and markdown footer.
 
 ```mermaid
+
 flowchart TD
   A[Mutating tool succeeds] --> B{AGENTDECOMPILE_AUTO_CHECKIN?}
   B -->|No| C[Existing uiVisibility/guiHint]
@@ -21,6 +22,7 @@ flowchart TD
   D --> E[Merge autoCheckin summary into parent response]
   E --> F[Markdown Auto Check-in footer]
 ```
+
 
 ---
 
@@ -63,6 +65,8 @@ UI Integration audit lists **Auto-checkin (silent persist)** as ⚠️ and recom
 ## Verification
 
 ```bash
+
 uv run pytest tests/test_auto_checkin_footer.py tests/test_ui_hints.py -m unit -q --timeout=60
 uv run pytest -m unit -q --timeout=120
 ```
+

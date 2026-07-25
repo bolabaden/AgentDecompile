@@ -51,10 +51,12 @@ Nine RE workflow prompts in `prompt_providers.py` are fetchable via `prompts/get
 Do not hardcode tool counts. Assert:
 
 ```python
+
 len(advertised) == len(Tool) - len(DISABLED_GUI_ONLY_TOOLS)
 ```
 
-Registry: **67 canonical**, **4 GUI-only hidden**, **63 advertised** by default.
+
+Registry: **70 canonical**, **4 GUI-only hidden**, **66 advertised** by default.
 
 **Files:** `tests/test_canonical_tool_parity.py`, `registry.py`
 
