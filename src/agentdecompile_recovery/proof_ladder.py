@@ -30,11 +30,11 @@ def build_proof_ladder(work_dir: Path) -> dict[str, Any]:
     """Compute proof-ladder coverage for a reconstruct work directory."""
 
     work_dir = work_dir.resolve()
-    denominator = _count_inventoried_functions(work_dir)
+    denominator, denominator_source = _count_inventoried_functions(work_dir)
     numerator = int(claim_report_mod._count_objdiff_verified(work_dir))
     if denominator <= 0:
         coverage = 0.0
-        status = "no-inventory" if not (work_dir / "function-candidates.json").is_file() else "empty"
+        status = "no-inventory" if denominator_source is None else "empty"
         rung = "below-1"
         next_rung: str | None = "1%"
     else:
@@ -49,6 +49,7 @@ def build_proof_ladder(work_dir: Path) -> dict[str, Any]:
         "writtenAt": now(),
         "workDir": str(work_dir),
         "denominator": denominator,
+        "denominatorSource": denominator_source,
         "numerator": numerator,
         "coverage": coverage,
         "coveragePercent": round(coverage * 100.0, 4),
@@ -66,45 +67,28 @@ def write_proof_ladder(work_dir: Path) -> dict[str, Any]:
     return ladder
 
 
-def _count_inventoried_functions(work_dir: Path) -> int:
+def _count_inventoried_functions(work_dir: Path) -> tuple[int, str | None]:
+    """Count only function-candidates.json — never shrink via binary-inventory."""
+
     path = work_dir / "function-candidates.json"
     if not path.is_file():
-        summary = work_dir / "binary-inventory.json"
-        if summary.is_file():
-            try:
-                data = json.loads(summary.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                return 0
-            if not isinstance(data, dict):
-                return 0
-            symbols = data.get("symbols")
-            if isinstance(symbols, list):
-                fn_syms = [s for s in symbols if isinstance(s, dict) and s.get("type") in {2, "func", "function"}]
-                if fn_syms:
-                    return len(fn_syms)
-            summary_block = data.get("summary")
-            if isinstance(summary_block, dict):
-                for key in ("functions", "functionSymbols", "symbols"):
-                    value = summary_block.get(key)
-                    if isinstance(value, int) and value >= 0:
-                        return value
-        return 0
+        return 0, None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return 0
+        return 0, "function-candidates.json"
     if not isinstance(data, dict):
-        return 0
+        return 0, "function-candidates.json"
     candidates = data.get("candidates")
     if isinstance(candidates, list):
-        return len([row for row in candidates if isinstance(row, dict)])
+        return len([row for row in candidates if isinstance(row, dict)]), "function-candidates.json"
     summary = data.get("summary")
     if isinstance(summary, dict):
         for key in ("count", "candidates", "functions"):
             value = summary.get(key)
             if isinstance(value, int) and value >= 0:
-                return value
-    return 0
+                return value, "function-candidates.json"
+    return 0, "function-candidates.json"
 
 
 def _rung_for_coverage(coverage: float) -> str:

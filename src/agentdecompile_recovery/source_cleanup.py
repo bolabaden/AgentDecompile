@@ -7,8 +7,16 @@ import json
 import re
 import shutil
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+
+@lru_cache(maxsize=1)
+def clang_format_tool() -> str | None:
+    """Resolve clang-format once per process (PATH lookup is relatively expensive)."""
+
+    return shutil.which("clang-format")
 
 
 def portable_path(path: Path) -> str:
@@ -224,7 +232,7 @@ def format_source_text(source: str, suffix: str) -> tuple[str, dict[str, Any]]:
             "reason": "unsupported-source-suffix",
             "tool": "clang-format",
         }
-    tool = shutil.which("clang-format")
+    tool = clang_format_tool()
     if not tool:
         return source, {
             "schema": "agentdecompile.source-formatting.v1",
@@ -300,7 +308,7 @@ def lint_source_text(source: str, suffix: str, formatting: dict[str, Any]) -> di
 def clang_format_idempotence(source: str, suffix: str) -> dict[str, Any]:
     if suffix.lower() not in {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"}:
         return {"status": "not-run", "reason": "unsupported-source-suffix"}
-    tool = shutil.which("clang-format")
+    tool = clang_format_tool()
     if not tool:
         return {"status": "not-run", "reason": "clang-format unavailable"}
     style = "{BasedOnStyle: LLVM, ColumnLimit: 100}"

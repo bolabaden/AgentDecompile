@@ -120,12 +120,23 @@ def generate_source_candidates(
                 source = str(fact["decompiled"]).rstrip() + "\n"
                 source_path = case_dir / "candidate.c"
                 source_path.write_text(source, encoding="utf-8")
+                source_quality = "high-level-c"
+                source_recovery_scope = "whole-function"
+                generated_by_language["c"] = generated_by_language.get("c", 0) + 1
+                generated_by_source_quality[source_quality] = generated_by_source_quality.get(source_quality, 0) + 1
+                generated_by_recovery_scope[source_recovery_scope] = (
+                    generated_by_recovery_scope.get(source_recovery_scope, 0) + 1
+                )
                 task.update(
                     {
                         "status": "generated-unverified",
                         "source": str(source_path),
                         "sourceSha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+                        "sourceLanguage": "c",
+                        "sourceQuality": source_quality,
+                        "sourceRecoveryScope": source_recovery_scope,
                         "sourceOrigin": "external decompiler output; automatically exported, not manually authored",
+                        "semanticSource": True,
                         "verificationTier": verification_tier_for_task(task, has_source=True),
                         "acceptanceGate": "compile with selected compiler profile and objdiff-zero against target object; target-slice checks remain pre-acceptance evidence",
                     }
@@ -1225,16 +1236,42 @@ def class_confidence(rows: list[dict[str, Any]]) -> str:
     return "low"
 
 
+def _coerce_address_int(value: Any) -> int | None:
+    """Parse VA/RVA facts that may be int, decimal string, or hex string."""
+
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    try:
+        if text.startswith("0x"):
+            return int(text, 16)
+        # Bare hex VA/RVA (e.g. Ghidra entry "005e50c0") — prefer hex when
+        # decimal parse would lose leading-zero hex identity or fail.
+        if any(ch in text for ch in "abcdef"):
+            return int(text, 16)
+        return int(text, 10)
+    except ValueError:
+        try:
+            return int(text, 16)
+        except ValueError:
+            return None
+
+
 def fact_keys(row: dict[str, Any]) -> list[str]:
     keys: list[str] = []
-    if row.get("entryOffset") is not None:
-        keys.append(f"address:{int(row['entryOffset'])}")
-        keys.append(f"rva:{int(row['entryOffset'])}")
-    if row.get("entry"):
-        try:
-            keys.append(f"address:{int(str(row['entry']), 16)}")
-        except ValueError:
-            keys.append(f"entry:{row['entry']}")
+    entry_offset = _coerce_address_int(row.get("entryOffset"))
+    if entry_offset is not None:
+        keys.append(f"address:{entry_offset}")
+        keys.append(f"rva:{entry_offset}")
+    entry = _coerce_address_int(row.get("entry"))
+    if entry is not None:
+        keys.append(f"address:{entry}")
+    elif row.get("entry"):
+        keys.append(f"entry:{row['entry']}")
     if row.get("name"):
         keys.append(f"name:{row['name']}")
     return keys
@@ -17541,9 +17578,11 @@ def rel32_call_target(address: int | None, *, call_offset: int, rel32: int) -> i
 def coerce_int(value: Any) -> int | None:
     if value is None:
         return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return _coerce_address_int(value)
     try:
-        if isinstance(value, str):
-            return int(value, 0)
         return int(value)
     except (TypeError, ValueError):
         return None

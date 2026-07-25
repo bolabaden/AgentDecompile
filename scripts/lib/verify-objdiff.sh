@@ -19,6 +19,8 @@ verify_objdiff_parse() {
   differences=-1
 
   if [[ "$objdiff_exit" -eq 0 ]]; then
+    # Fail-closed: only parsed match_percent sections may score a match. Empty
+    # stdout, unparseable JSON, or prose heuristics must never count as 0.
     match_percents="$(
       jq -c '
         [
@@ -33,14 +35,6 @@ verify_objdiff_parse() {
       differences=0
     elif jq -e 'length > 0 and any(.[]; . != 100)' <<<"$match_percents" >/dev/null 2>&1; then
       differences=1
-    elif grep -qiE '(^|[^0-9])(0[[:space:]]*(diff|differences)|no diff|identical|perfect match)' <<<"$body"; then
-      differences=0
-    elif grep -qiE '[1-9][0-9]*[[:space:]]*(diff|difference|differences)' <<<"$body"; then
-      differences="$(grep -oiE '[1-9][0-9]*[[:space:]]*(diff|difference|differences)' <<<"$body" | head -1 | grep -oE '^[0-9]+')"
-      [[ -n "$differences" ]] || differences=1
-    elif [[ -z "${body//[[:space:]]/}" ]]; then
-      # Some objdiff versions/plugins emit no stdout on a clean match.
-      differences=0
     fi
   fi
 

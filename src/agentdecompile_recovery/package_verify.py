@@ -461,6 +461,9 @@ def compile_with_msvc(
     ml_exe = root / "bin" / "ml.exe"
     stdout_path = out_dir / f"{stem}.object.stdout.txt"
     stderr_path = out_dir / f"{stem}.object.stderr.txt"
+    # Never treat a leftover object as compile success (resume / Wine flake).
+    if object_path.exists():
+        object_path.unlink()
     artifact_work_dir = out_dir / f"{stem}.msvc-work"
     if artifact_work_dir.exists():
         shutil.rmtree(artifact_work_dir)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Iterable
@@ -34,6 +35,31 @@ def source_path_for(row: dict[str, Any]) -> Path:
         if candidate.is_file():
             return candidate
     raise FileNotFoundError(f"candidate source missing for {row.get('name')}: no source path in row")
+
+
+def resolve_match_source_text(row: dict[str, Any]) -> str:
+    """Return embedded match source when available, with receipt integrity checking."""
+
+    embedded = row.get("sourceText")
+    if embedded is None:
+        source_path = source_path_for(row)
+        if not source_path.is_file():
+            raise FileNotFoundError(
+                f"candidate source missing for {row.get('name')}: {source_path}"
+            )
+        source_text = source_path.read_text(encoding="utf-8")
+    else:
+        source_text = str(embedded)
+
+    expected_sha = row.get("sourceSha256")
+    if expected_sha:
+        actual_sha = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+        if actual_sha != str(expected_sha):
+            raise ValueError(
+                f"candidate source hash mismatch for {row.get('name')}: "
+                f"expected {expected_sha}, got {actual_sha}"
+            )
+    return source_text
 
 
 def export_suffix_for(candidate_path: Path) -> str:
@@ -151,9 +177,7 @@ def export_recovered_source(
     for row in matched:
         name = str(row["name"])
         candidate_path = source_path_for(row)
-        if not candidate_path.is_file():
-            raise FileNotFoundError(f"candidate source missing for {name}: {candidate_path}")
-        source = candidate_path.read_text(encoding="utf-8").strip()
+        source = resolve_match_source_text(row).strip()
         split_suffix = export_suffix_for(candidate_path)
         split_name = f"{row.get('entry', 'unknown')}_{name}{split_suffix}"
         split_path = functions_dir / split_name
@@ -342,6 +366,7 @@ def vacuum_row_from_verify(prompt_name: str, verify: dict[str, Any]) -> dict[str
     source_path = Path(str(source))
     if not source_path.is_file():
         return None
+    source_text = source_path.read_text(encoding="utf-8")
     entry = entry_for_function_name(function_name)
     return {
         "schema": "agentdecompile.vacuum-prompt-match.v1",
@@ -350,6 +375,8 @@ def vacuum_row_from_verify(prompt_name: str, verify: dict[str, Any]) -> dict[str
         "name": canonical_export_name(function_name),
         "entry": entry,
         "source": str(source_path),
+        "sourceText": source_text,
+        "sourceSha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
         "kind": "vacuum-object-match",
         "prompt": prompt_name,
         "sourceQuality": "high-level-c",
@@ -376,6 +403,7 @@ def collect_vacuum_prompt_matches(
         if row is None:
             candidate = prompts_dir / prompt_name / "candidate.c"
             if candidate.is_file():
+                source_text = candidate.read_text(encoding="utf-8")
                 function_name = str(verify.get("function_name") or prompt_name.split("_", 1)[-1])
                 entry = entry_for_function_name(function_name)
                 row = {
@@ -385,6 +413,8 @@ def collect_vacuum_prompt_matches(
                     "name": canonical_export_name(function_name),
                     "entry": entry,
                     "source": str(candidate),
+                    "sourceText": source_text,
+                    "sourceSha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
                     "kind": "vacuum-object-match",
                     "prompt": prompt_name,
                     "sourceQuality": "high-level-c",

@@ -213,7 +213,13 @@ def ecx_tail_candidate(row: dict, target_row: dict) -> RelocCandidate | None:
     ]
     kind = ""
 
-    if len(data) == 8 and data[:2] == b"\x8b\x49" and data[3] == 0xE9:
+    if len(data) == 7 and data[:2] == b"\x8b\x09" and data[2] == 0xE9:
+        # mov ecx, [ecx] ; jmp target
+        body = [f"    {target_name}(*(void **)self);"]
+        asm_lines.extend(["    mov ecx, dword ptr [ecx]", f"    jmp {target_sym}", ""])
+        kind = "reloc-fastcall-deref-tail-jmp"
+
+    elif len(data) == 8 and data[:2] == b"\x8b\x49" and data[3] == 0xE9:
         offset = data[2]
         body = [f"    {target_name}(*(void **)((char *)self + 0x{offset:x}));"]
         asm_lines.extend([f"    mov ecx, dword ptr [ecx + 0x{offset:x}]", f"    jmp {target_sym}", ""])
@@ -305,6 +311,13 @@ def candidate_for(row: dict, by_entry: dict[int, dict], *, text_section: str = "
     return None
 
 
+def _with_target_sha(record: dict, args: object) -> dict:
+    target_sha = str(getattr(args, "target_sha", "") or "")
+    if target_sha:
+        record["targetSha256"] = target_sha
+    return record
+
+
 def _attempt_reloc_job(job: dict) -> dict:
     import hashlib
 
@@ -323,21 +336,24 @@ def _attempt_reloc_job(job: dict) -> dict:
 
     target_proc = run(["clang", "-target", "i686-pc-windows-msvc", "-c", str(target_s), "-o", str(target_obj)])
     if target_proc.returncode != 0:
-        return {
-            "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
-            "name": candidate.name,
-            "entry": row.get("entry"),
-            "kind": candidate.kind,
-            "targetName": candidate.target_name,
-            "targetSymbol": candidate.target_symbol,
-            "status": "target-compile-failed",
-            "differences": -1,
-            "sourceSha256": source_sha,
-            "compilerProfileName": "O2_GS-_Oy",
-            "stderr": target_proc.stderr[-2000:],
-            "outDir": str(out_dir),
-            "source": str(candidate_c),
-        }
+        return _with_target_sha(
+            {
+                "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+                "name": candidate.name,
+                "entry": row.get("entry"),
+                "kind": candidate.kind,
+                "targetName": candidate.target_name,
+                "targetSymbol": candidate.target_symbol,
+                "status": "target-compile-failed",
+                "differences": -1,
+                "sourceSha256": source_sha,
+                "compilerProfileName": "O2_GS-_Oy",
+                "stderr": target_proc.stderr[-2000:],
+                "outDir": str(out_dir),
+                "source": str(candidate_c),
+            },
+            args,
+        )
 
     env = os.environ.copy()
     env.update({"VC_ROOT": str(args.vc_root), "WINEPREFIX": str(args.wineprefix), "CL_OPT": "/O2"})
@@ -355,19 +371,22 @@ def _attempt_reloc_job(job: dict) -> dict:
     (out_dir / "compile.stdout").write_text(compile_proc.stdout, encoding="utf-8")
     (out_dir / "compile.stderr").write_text(compile_proc.stderr, encoding="utf-8")
     if compile_proc.returncode != 0:
-        return {
-            "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
-            "name": candidate.name,
-            "entry": row.get("entry"),
-            "kind": candidate.kind,
-            "status": "compile-failed",
-            "differences": -1,
-            "sourceSha256": source_sha,
-            "compilerProfileName": "O2_GS-_Oy",
-            "stderr": compile_proc.stderr[-2000:],
-            "outDir": str(out_dir),
-            "source": str(candidate_c),
-        }
+        return _with_target_sha(
+            {
+                "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+                "name": candidate.name,
+                "entry": row.get("entry"),
+                "kind": candidate.kind,
+                "status": "compile-failed",
+                "differences": -1,
+                "sourceSha256": source_sha,
+                "compilerProfileName": "O2_GS-_Oy",
+                "stderr": compile_proc.stderr[-2000:],
+                "outDir": str(out_dir),
+                "source": str(candidate_c),
+            },
+            args,
+        )
 
     verify_proc = run(
         [
@@ -389,24 +408,28 @@ def _attempt_reloc_job(job: dict) -> dict:
         report = json.loads((out_dir / "verify.json").read_text(encoding="utf-8"))
         status = str(report.get("status"))
         differences = int(report.get("differences", -1))
-    return {
-        "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
-        "name": candidate.name,
-        "entry": row.get("entry"),
-        "section": row.get("section"),
-        "bodyBytes": row.get("bodyBytes"),
-        "instructionCount": row.get("instructionCount"),
-        "kind": candidate.kind,
-        "symbol": candidate.symbol,
-        "targetName": candidate.target_name,
-        "targetSymbol": candidate.target_symbol,
-        "status": status,
-        "differences": differences,
-        "sourceSha256": source_sha,
-        "compilerProfileName": "O2_GS-_Oy",
-        "outDir": str(out_dir),
-        "source": str(candidate_c),
-    }
+    return _with_target_sha(
+        {
+            "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+            "name": candidate.name,
+            "entry": row.get("entry"),
+            "section": row.get("section"),
+            "bodyBytes": row.get("bodyBytes"),
+            "instructionCount": row.get("instructionCount"),
+            "kind": candidate.kind,
+            "symbol": candidate.symbol,
+            "targetName": candidate.target_name,
+            "targetSymbol": candidate.target_symbol,
+            "status": status,
+            "differences": differences,
+            "sourceSha256": source_sha,
+            "compilerProfileName": "O2_GS-_Oy",
+            "outDir": str(out_dir),
+            "source": str(candidate_c),
+            "sourceText": candidate.source,
+        },
+        args,
+    )
 
 
 def main() -> int:
@@ -429,6 +452,11 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=0, help="Parallel Wine/MSVC workers (0 = auto).")
     parser.add_argument("--force-rematch", action="store_true", help="Ignore match cache and rematch proven functions.")
     parser.add_argument("--match-cache", type=Path, help="Optional match-cache.json path.")
+    parser.add_argument(
+        "--target-sha",
+        default="",
+        help="Analysis-image SHA-256 required for match-cache skip keys.",
+    )
     args = parser.parse_args()
 
     started = time.monotonic()
@@ -453,11 +481,22 @@ def main() -> int:
         if not args.force_rematch:
             # Skip only on an exact (entry, sourceSha256[, profile]) hit. Never skip
             # on entry-only match: a changed candidate source must be re-verified.
-            hit = cache.lookup(entry=entry, source_sha=sha, compiler_profile="O2_GS-_Oy")
+            hit = cache.lookup(
+                entry=entry,
+                source_sha=sha,
+                compiler_profile="O2_GS-_Oy",
+                target_sha=str(args.target_sha or ""),
+            )
             if hit is not None:
-                cached_rows.append({**hit, "cacheHit": True})
-                skipped_cached += 1
-                continue
+                from agentdecompile_recovery.source_parity_synthesize import record_with_source_text
+
+                try:
+                    cached_rows.append(record_with_source_text({**hit, "cacheHit": True}))
+                except FileNotFoundError:
+                    pass
+                else:
+                    skipped_cached += 1
+                    continue
         jobs.append(
             {
                 "row": row,

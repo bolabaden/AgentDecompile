@@ -15,6 +15,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -220,6 +221,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--dump-source-only",
         action="store_true",
         help="Skip recovery stages; only build --dump-source from existing receipts/summaries.",
+    )
+    parser.add_argument(
+        "--dump-layers",
+        default="verified,port",
+        help="Comma-separated dump layers: verified,port,advisory (default: verified,port).",
+    )
+    parser.add_argument(
+        "--dump-allow-leftovers",
+        action="store_true",
+        help="Allow undeclared sibling match JSONL / merged facts auto-load (operator resume only).",
     )
     parser.add_argument(
         "--workers",
@@ -536,30 +547,106 @@ def run_one_shot(args: argparse.Namespace) -> int:
     return rc
 
 
+def _analysis_digest_for_work_dir(work_dir: Path) -> str:
+    """Best-effort analysis-image digest for fresh-dump gating."""
+    for rel in ("state.json", "analysis-target.json", "ghidra-analysis.json"):
+        path = work_dir / rel
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        stages = data.get("stages") if isinstance(data.get("stages"), dict) else {}
+        for stage_name in ("prepare", "inventory", "batch-decompile"):
+            stage = stages.get(stage_name) if isinstance(stages.get(stage_name), dict) else {}
+            for key in ("analysisBinarySha256", "targetSha256", "binarySha256"):
+                value = str(stage.get(key) or "").strip()
+                if value:
+                    return value
+        for key in ("analysisBinarySha256", "targetSha256", "binarySha256"):
+            value = str(data.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _jsonl_compatible_with_analysis(path: Path, expected_sha: str) -> bool:
+    """Return True when *path* is safe to auto-load for the current analysis image.
+
+    Fresh mode rejects unmarked leftovers when an analysis digest is known: every
+    auto-discovered JSONL must carry at least one matching
+    ``targetSha256`` / ``analysisBinarySha256`` / ``binarySha256``. Explicit
+    operator paths (``export-summaries.txt``, ``--ghidra-facts``) bypass this.
+    """
+    if not expected_sha:
+        return True
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines[:200]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        for key in ("targetSha256", "analysisBinarySha256", "binarySha256"):
+            value = str(row.get(key) or "").strip()
+            if value and value == expected_sha:
+                return True
+    # Known analysis digest + unmarked/mismatched rows = treat as stale leftover.
+    return False
+
+
 def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
     """Export Borealis-shaped dump from existing proofs + optional Ghidra advisory."""
 
     from .source_dump import dump_source_tree
+    from .stage_timings import load_stage_timings, record_stage, write_stage_timings
 
+    dump_started = time.monotonic()
     out_dir = Path(args.dump_source)
+    # Fresh mode (default): only this work_dir's declared receipts + explicit flags.
+    # Leftover sibling JSONL / repo-root merged facts are operator-resume only.
+    allow_leftovers = bool(
+        getattr(args, "dump_allow_leftovers", False) or getattr(args, "dump_source_only", False)
+    )
+    expected_sha = "" if allow_leftovers else _analysis_digest_for_work_dir(work_dir)
     summaries: list[Path] = []
-    # Proof receipts written by this run's synthesis stage (JSONL only — the
-    # dump reader consumes matched/code-slice JSONL rows).
+    # Proof receipts written by this run's synthesis / match stages.
     for rel in (
         "source-synthesis/accepted.jsonl",
         "source-synthesis/code-slice-matches.jsonl",
         "source-synthesis/source-shape-matches.jsonl",
+        "swkotor-trivial-matches/summary.jsonl",
+        "swkotor-reloc-wrapper-matches/summary.jsonl",
     ):
         path = work_dir / rel
-        if path.exists():
+        if path.exists() and (allow_leftovers or _jsonl_compatible_with_analysis(path, expected_sha)):
             summaries.append(path)
-    # Sibling match receipts under this run's target tree (not blind cwd probes).
-    for sibling in (
-        work_dir.parent / "swkotor-trivial-matches" / "summary.jsonl",
-        work_dir.parent / "swkotor-reloc-wrapper-matches" / "summary.jsonl",
-    ):
-        if sibling.exists():
-            summaries.append(sibling)
+
+    if allow_leftovers:
+        # Sibling match receipts under target/ (operator resume).
+        target_root = (
+            work_dir.parent.parent
+            if work_dir.parent.name == "agentdecompile-reconstruct"
+            else work_dir.parent
+        )
+        for sibling in (
+            target_root / "swkotor-trivial-matches" / "summary.jsonl",
+            target_root / "swkotor-reloc-wrapper-matches" / "summary.jsonl",
+            work_dir.parent / "swkotor-trivial-matches" / "summary.jsonl",
+            work_dir.parent / "swkotor-reloc-wrapper-matches" / "summary.jsonl",
+        ):
+            if sibling.exists():
+                summaries.append(sibling)
 
     # Operator-authored explicit summary list (paths under the operator's control).
     list_file = work_dir / "export-summaries.txt"
@@ -581,24 +668,35 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
 
     ghidra_facts = getattr(args, "ghidra_facts", None)
     if ghidra_facts is None:
-        for candidate in (
+        fresh_facts_candidates = (
             work_dir / "source-generation" / "function-facts.jsonl",
             work_dir / "acquisition" / "function-facts.jsonl",
-            Path("target/swkotor-ghidra-merged-decomp.jsonl"),
-        ):
-            if candidate.exists():
+            work_dir / "facts" / "function-facts.jsonl",
+            work_dir / "unpack" / "facts" / "function-facts.jsonl",
+            work_dir / "batch-decompile" / "function-facts.jsonl",
+        )
+        leftover_facts_candidates = (Path("target/swkotor-ghidra-merged-decomp.jsonl"),)
+        for candidate in fresh_facts_candidates + (leftover_facts_candidates if allow_leftovers else ()):
+            if not candidate.exists():
+                continue
+            if allow_leftovers or _jsonl_compatible_with_analysis(candidate, expected_sha):
                 ghidra_facts = candidate
                 break
 
-    # Optional pre-materialized advisory dir (e.g. from ghidra_advisory batch CLI).
+    # Prefer facts JSONL. Only seed from a pre-materialized advisory dir when
+    # no facts file was provided (avoids double banners / double filenames).
     advisory_seed = work_dir / "advisory" / "ghidra"
+    use_advisory_seed = advisory_seed.is_dir() and ghidra_facts is None and allow_leftovers
 
+    dump_layers = getattr(args, "dump_layers", None) or "verified,port"
     manifest = dump_source_tree(
         out_dir=out_dir,
         summaries=unique,
         ghidra_facts=Path(ghidra_facts) if ghidra_facts else None,
-        advisory_dir=advisory_seed if advisory_seed.is_dir() else None,
+        advisory_dir=advisory_seed if use_advisory_seed else None,
         target_name=args.input.name if hasattr(args.input, "name") else "binary",
+        clean=True,
+        layers=dump_layers,
     )
     receipt = {
         "schema": "agentdecompile.dump-source.v1",
@@ -607,12 +705,25 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         "workDir": str(work_dir),
         "summaries": [str(p) for p in unique],
         "ghidraFacts": str(ghidra_facts) if ghidra_facts else None,
+        "dumpLayers": manifest.get("layers"),
+        "freshMode": not allow_leftovers,
+        "analysisBinarySha256": expected_sha or None,
         "matchedCount": manifest.get("matchedCount"),
         "codeSliceMatchedCount": manifest.get("codeSliceMatchedCount"),
         "ghidraCount": manifest.get("ghidraCount"),
         "claimBoundary": manifest.get("claimBoundary"),
     }
     (work_dir / "dump-source.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    timings = load_stage_timings(work_dir)
+    record_stage(
+        timings,
+        "dump-source",
+        started=dump_started,
+        status=str(manifest.get("status") or "complete"),
+        outDir=str(out_dir),
+        freshMode=not allow_leftovers,
+    )
+    write_stage_timings(work_dir, timings)
     if not args.json:
         print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0 if manifest.get("status") == "complete" else 1

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +20,13 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_OUTPUT_PATH = "ghidrecomps"
 _DEFAULT_PROJECT_PATH = "ghidra_projects"
+
+
+def default_thread_count() -> int:
+    """Bounded parallelism for ghidrecomp; above the historical hard-coded 2."""
+
+    cpus = os.cpu_count() or 2
+    return max(2, min(int(cpus), 16))
 
 
 def _collect_artifact_files(directory: Path, *, suffix: str) -> list[str]:
@@ -50,9 +58,11 @@ def build_ghidrecomp_namespace(
     skip_cache: bool = False,
     force_analysis: bool = False,
     callgraphs: bool = False,
+    thread_count: int | None = None,
 ) -> SimpleNamespace:
     """Build argparse.Namespace-compatible args for ghidrecomp.decompile."""
     filters: list[str] = [function_filter] if function_filter else []
+    threads = default_thread_count() if thread_count is None else max(1, int(thread_count))
     return SimpleNamespace(
         bin=str(binary_path.resolve()),
         cppexport=False,
@@ -66,7 +76,7 @@ def build_ghidrecomp_namespace(
         sym_file_path=None,
         symbols_path="symbols",
         skip_symbols=True,
-        thread_count=2,
+        thread_count=threads,
         va=False,
         fa=force_analysis,
         max_ram_percent=50.0,
@@ -99,6 +109,7 @@ def build_batch_decompile_payload(
     skip_cache: bool = False,
     force_analysis: bool = False,
     callgraphs: bool = False,
+    thread_count: int | None = None,
     decompile_runner: Any | None = None,
 ) -> dict[str, Any]:
     """Run ghidrecomp batch decompile and return unified JSON artifact metadata."""
@@ -115,6 +126,7 @@ def build_batch_decompile_payload(
         skip_cache=skip_cache,
         force_analysis=force_analysis,
         callgraphs=callgraphs,
+        thread_count=thread_count,
     )
 
     runner = decompile_runner
@@ -142,6 +154,8 @@ def build_batch_decompile_payload(
         "outputPath": str(output_root),
         "projectPath": str(Path(project_path).expanduser().resolve()),
         "binOutputPath": str(bin_output),
+        "threadCount": int(args.thread_count),
+        "forceAnalysis": bool(args.fa),
         "decompiledFiles": decompiled_files,
         "callgraphFiles": callgraph_files,
         "counts": {

@@ -36,6 +36,14 @@ def test_build_ghidrecomp_namespace_defaults(sample_binary: Path) -> None:
     assert ns.output_path == "ghidrecomps"
     assert ns.skip_symbols is True
     assert ns.callgraphs is False
+    assert ns.thread_count >= 2
+    assert ns.thread_count <= 16
+
+
+def test_build_ghidrecomp_namespace_thread_count_override(sample_binary: Path) -> None:
+    ns = build_ghidrecomp_namespace(sample_binary, thread_count=8, force_analysis=False)
+    assert ns.thread_count == 8
+    assert ns.fa is False
 
 
 def test_build_batch_decompile_payload_collects_artifacts(
@@ -64,11 +72,15 @@ def test_build_batch_decompile_payload_collects_artifacts(
         sample_binary,
         output_path=output_root,
         decompile_runner=fake_decompile,
+        thread_count=12,
+        force_analysis=False,
     )
     assert payload["action"] == "run-batch-decompile"
     assert payload["counts"]["decompiledFiles"] == 1
     assert payload["decompiledFiles"][0].endswith("main-0x1000.c")
     assert payload["suggestedTierEscalation"]["recommendedTier"] == 2
+    assert payload["threadCount"] == 12
+    assert payload["forceAnalysis"] is False
 
 
 def test_build_batch_decompile_missing_file_raises(tmp_path: Path) -> None:

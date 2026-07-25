@@ -1,7 +1,8 @@
 """Proven-match cache: skip Wine/MSVC rematch when objdiff already reported 0.
 
-Cache key: (entry, sourceSha256, compilerProfile). A hit with differences==0 is
-authoritative unless --force-rematch is set.
+Cache key: (targetSha256, entry, sourceSha256, compilerProfile). A hit with
+differences==0 and no fallback is authoritative unless --force-rematch is set.
+targetSha256 is the analysis-image digest; without it, rows cannot authorize skip.
 """
 
 from __future__ import annotations
@@ -26,11 +27,16 @@ def cache_key(
     entry: str,
     source_sha: str,
     compiler_profile: str = "default",
+    target_sha: str = "",
 ) -> str:
-    return f"{entry}|{source_sha}|{compiler_profile}"
+    return f"{target_sha}|{entry}|{source_sha}|{compiler_profile}"
 
 
 def is_proven_zero(row: dict[str, Any]) -> bool:
+    """True only for real objdiff-0 receipts — never objdump fallbacks."""
+
+    if row.get("fallback"):
+        return False
     status = str(row.get("status") or "")
     try:
         differences = int(row.get("differences", -1))
@@ -41,6 +47,14 @@ def is_proven_zero(row: dict[str, Any]) -> bool:
         "code-slice-matched",
         "source-shape-code-slice-matched",
     }
+
+
+def _row_target_sha(row: dict[str, Any]) -> str:
+    for key in ("targetSha256", "analysisBinarySha256", "binarySha256"):
+        value = row.get(key)
+        if value:
+            return str(value)
+    return ""
 
 
 def iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -57,9 +71,6 @@ class MatchCache:
 
     def __init__(self) -> None:
         self.by_key: dict[str, dict[str, Any]] = {}
-        # Profile-agnostic index keyed on (entry, source_sha). Safe to skip on a
-        # hit because the candidate source bytes are identical to a proven row.
-        self.by_entry_sha: dict[tuple[str, str], dict[str, Any]] = {}
         self.by_entry: dict[str, dict[str, Any]] = {}
         self.by_name_entry: set[tuple[str, str]] = set()
 
@@ -99,12 +110,19 @@ class MatchCache:
             or row.get("compilerProfile")
             or "default"
         )
-        if not (entry and source_sha):
-            # Without both entry and a source hash we cannot form a safe skip key.
-            # Do not index such rows for skip decisions (would risk a false skip).
+        target_sha = _row_target_sha(row)
+        if not (entry and source_sha and target_sha):
+            # Without entry, source hash, and analysis-image identity we cannot
+            # form a safe skip key across binaries / unpacks.
             return False
-        self.by_key[cache_key(entry=entry, source_sha=source_sha, compiler_profile=profile)] = row
-        self.by_entry_sha[(entry, source_sha)] = row
+        self.by_key[
+            cache_key(
+                entry=entry,
+                source_sha=source_sha,
+                compiler_profile=profile,
+                target_sha=target_sha,
+            )
+        ] = row
         prior = self.by_entry.get(entry)
         if prior is None or is_proven_zero(row):
             self.by_entry[entry] = row
@@ -118,15 +136,19 @@ class MatchCache:
         entry: str,
         source_sha: str,
         compiler_profile: str = "default",
+        target_sha: str = "",
     ) -> dict[str, Any] | None:
-        hit = self.by_key.get(
-            cache_key(entry=entry, source_sha=source_sha, compiler_profile=compiler_profile)
+        if not target_sha:
+            return None
+        # Exact key only: a different compiler profile is not evidence for skip.
+        return self.by_key.get(
+            cache_key(
+                entry=entry,
+                source_sha=source_sha,
+                compiler_profile=compiler_profile,
+                target_sha=target_sha,
+            )
         )
-        if hit is not None:
-            return hit
-        # Profile-agnostic fallback: identical source bytes at the same entry are
-        # a safe skip regardless of which compiler profile proved them.
-        return self.by_entry_sha.get((entry, source_sha))
 
     def has_entry(self, entry: str) -> bool:
         return entry in self.by_entry
@@ -139,7 +161,7 @@ class MatchCache:
         seen: set[str] = set()
         out: list[dict[str, Any]] = []
         for row in self.by_key.values():
-            key = f"{row.get('entry')}|{row.get('sourceSha256')}|{row.get('name')}"
+            key = f"{row.get('entry')}|{row.get('sourceSha256')}|{row.get('name')}|{_row_target_sha(row)}"
             if key in seen:
                 continue
             seen.add(key)
@@ -154,8 +176,9 @@ class MatchCache:
             "keyCount": len(self.by_key),
             "entries": self.proven_rows(),
             "claimBoundary": (
-                "Cache entries are prior objdiff differences==0 receipts. "
-                "They authorize skip-rematch only; they are not whole-program parity."
+                "Cache entries are prior objdiff differences==0 receipts keyed by "
+                "analysis-image digest. They authorize skip-rematch only; they are "
+                "not whole-program parity. Fallback/objdump rows are never cached."
             ),
         }
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

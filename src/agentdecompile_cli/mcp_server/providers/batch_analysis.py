@@ -68,6 +68,10 @@ class BatchAnalysisToolProvider(ToolProvider):
                             "type": "boolean",
                             "description": "Force re-analysis even if the program was analyzed before (default false).",
                         },
+                        "threadCount": {
+                            "type": "integer",
+                            "description": "ghidrecomp decompile worker threads (default min(cpu, 16), at least 2).",
+                        },
                         "callgraphs": {
                             "type": "boolean",
                             "description": "When true, also emit callgraph markdown artifacts (default false).",
@@ -229,6 +233,7 @@ class BatchAnalysisToolProvider(ToolProvider):
             skip_cache = self._get_bool(args, "skipCache", "skip_cache", default=False)
             force_analysis = self._get_bool(args, "forceAnalysis", "force_analysis", "fa", default=False)
             callgraphs = self._get_bool(args, "callgraphs", default=False)
+            thread_count = self._get_int(args, "threadCount", "thread_count", default=None)
 
             payload = build_batch_decompile_payload(
                 Path(binary_path),
@@ -238,6 +243,7 @@ class BatchAnalysisToolProvider(ToolProvider):
                 skip_cache=skip_cache,
                 force_analysis=force_analysis,
                 callgraphs=callgraphs,
+                thread_count=thread_count,
             )
             return create_success_response(payload)
         except FileNotFoundError as exc:

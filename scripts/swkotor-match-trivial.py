@@ -678,6 +678,38 @@ def candidate_for(row: dict) -> Candidate | None:
             "fastcall-self",
         )
 
+    # mov dl,[ecx]; xor eax,eax; test dl,dl; setne al; ret
+    if data == b"\x8a\x11\x33\xc0\x84\xd2\x0f\x95\xc0\xc3":
+        return Candidate(
+            fastcall_symbol(name, 4),
+            "\n".join(
+                [
+                    f"unsigned char __fastcall {name}(void *self) {{",
+                    "    return *(unsigned char *)self != 0;",
+                    "}",
+                    "",
+                ]
+            ),
+            "fastcall-bool-byte0",
+        )
+
+    # xor eax,eax; mov al,[ecx+disp8]; and eax,imm8; ret
+    if len(data) == 9 and data[:2] == b"\x33\xc0" and data[2:4] == b"\x8a\x41" and data[5] == 0x83 and data[6] == 0xE0 and data[8] == 0xC3:
+        offset = signed_disp8(data[4])
+        mask = data[7]
+        return Candidate(
+            fastcall_symbol(name, 4),
+            "\n".join(
+                [
+                    f"unsigned int __fastcall {name}(void *self) {{",
+                    f"    return *(unsigned char *)({self_offset_expr(offset)}) & 0x{mask:02x};",
+                    "}",
+                    "",
+                ]
+            ),
+            "fastcall-field-u8-and-imm8",
+        )
+
     if len(data) == 4 and data[:2] == b"\x8b\x41" and data[3] == 0xC3:
         offset = data[2]
         return Candidate(
@@ -1166,6 +1198,13 @@ def candidate_for(row: dict) -> Candidate | None:
     return None
 
 
+def _with_target_sha(record: dict, args: object) -> dict:
+    target_sha = str(getattr(args, "target_sha", "") or "")
+    if target_sha:
+        record["targetSha256"] = target_sha
+    return record
+
+
 def _attempt_trivial_job(job: dict) -> dict:
     """Compile+objdiff one trivial candidate (safe for thread pool; unique out_dir)."""
     import hashlib
@@ -1193,22 +1232,25 @@ def _attempt_trivial_job(job: dict) -> dict:
         ]
     )
     if slice_proc.returncode != 0:
-        return {
-            "schema": "agentdecompile.swkotor-trivial-match.v1",
-            "name": name,
-            "entry": row.get("entry"),
-            "section": row.get("section"),
-            "bodyBytes": row.get("bodyBytes"),
-            "instructionCount": row.get("instructionCount"),
-            "symbol": symbol,
-            "kind": candidate.kind,
-            "status": "slice-failed",
-            "differences": -1,
-            "sourceSha256": source_sha,
-            "compilerProfileName": "O2_GS-_Oy",
-            "stderr": slice_proc.stderr[-2000:],
-            "outDir": str(out_dir),
-        }
+        return _with_target_sha(
+            {
+                "schema": "agentdecompile.swkotor-trivial-match.v1",
+                "name": name,
+                "entry": row.get("entry"),
+                "section": row.get("section"),
+                "bodyBytes": row.get("bodyBytes"),
+                "instructionCount": row.get("instructionCount"),
+                "symbol": symbol,
+                "kind": candidate.kind,
+                "status": "slice-failed",
+                "differences": -1,
+                "sourceSha256": source_sha,
+                "compilerProfileName": "O2_GS-_Oy",
+                "stderr": slice_proc.stderr[-2000:],
+                "outDir": str(out_dir),
+            },
+            args,
+        )
 
     candidate_c = out_dir / "candidate.c"
     candidate_obj = out_dir / "candidate.obj"
@@ -1230,23 +1272,26 @@ def _attempt_trivial_job(job: dict) -> dict:
     (out_dir / "compile.stdout").write_text(compile_proc.stdout, encoding="utf-8")
     (out_dir / "compile.stderr").write_text(compile_proc.stderr, encoding="utf-8")
     if compile_proc.returncode != 0:
-        return {
-            "schema": "agentdecompile.swkotor-trivial-match.v1",
-            "name": name,
-            "entry": row.get("entry"),
-            "section": row.get("section"),
-            "bodyBytes": row.get("bodyBytes"),
-            "instructionCount": row.get("instructionCount"),
-            "symbol": symbol,
-            "kind": candidate.kind,
-            "status": "compile-failed",
-            "differences": -1,
-            "sourceSha256": source_sha,
-            "compilerProfileName": "O2_GS-_Oy",
-            "stderr": compile_proc.stderr[-2000:],
-            "outDir": str(out_dir),
-            "source": str(candidate_c),
-        }
+        return _with_target_sha(
+            {
+                "schema": "agentdecompile.swkotor-trivial-match.v1",
+                "name": name,
+                "entry": row.get("entry"),
+                "section": row.get("section"),
+                "bodyBytes": row.get("bodyBytes"),
+                "instructionCount": row.get("instructionCount"),
+                "symbol": symbol,
+                "kind": candidate.kind,
+                "status": "compile-failed",
+                "differences": -1,
+                "sourceSha256": source_sha,
+                "compilerProfileName": "O2_GS-_Oy",
+                "stderr": compile_proc.stderr[-2000:],
+                "outDir": str(out_dir),
+                "source": str(candidate_c),
+            },
+            args,
+        )
 
     verify_proc = run(
         [
@@ -1268,22 +1313,26 @@ def _attempt_trivial_job(job: dict) -> dict:
         report = json.loads((out_dir / "verify.json").read_text(encoding="utf-8"))
         status = str(report.get("status"))
         differences = int(report.get("differences", -1))
-    return {
-        "schema": "agentdecompile.swkotor-trivial-match.v1",
-        "name": name,
-        "entry": row.get("entry"),
-        "section": row.get("section"),
-        "bodyBytes": row.get("bodyBytes"),
-        "instructionCount": row.get("instructionCount"),
-        "symbol": symbol,
-        "kind": candidate.kind,
-        "status": status,
-        "differences": differences,
-        "sourceSha256": source_sha,
-        "compilerProfileName": "O2_GS-_Oy",
-        "outDir": str(out_dir),
-        "source": str(candidate_c),
-    }
+    return _with_target_sha(
+        {
+            "schema": "agentdecompile.swkotor-trivial-match.v1",
+            "name": name,
+            "entry": row.get("entry"),
+            "section": row.get("section"),
+            "bodyBytes": row.get("bodyBytes"),
+            "instructionCount": row.get("instructionCount"),
+            "symbol": symbol,
+            "kind": candidate.kind,
+            "status": status,
+            "differences": differences,
+            "sourceSha256": source_sha,
+            "compilerProfileName": "O2_GS-_Oy",
+            "outDir": str(out_dir),
+            "source": str(candidate_c),
+            "sourceText": source,
+        },
+        args,
+    )
 
 
 def main() -> int:
@@ -1306,6 +1355,11 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=0, help="Parallel Wine/MSVC workers (0 = auto 6–8).")
     parser.add_argument("--force-rematch", action="store_true", help="Ignore match cache and rematch proven functions.")
     parser.add_argument("--match-cache", type=Path, help="Optional match-cache.json path (default: beside --out).")
+    parser.add_argument(
+        "--target-sha",
+        default="",
+        help="Analysis-image SHA-256 required for match-cache skip keys.",
+    )
     args = parser.parse_args()
 
     started = time.monotonic()
@@ -1332,11 +1386,23 @@ def main() -> int:
             # Skip only on an exact (entry, sourceSha256[, profile]) hit. Never skip
             # on entry-only match: a different candidate source at the same entry
             # must be recompiled/objdiff'd, or we would emit a stale proven row.
-            hit = cache.lookup(entry=entry, source_sha=sha, compiler_profile="O2_GS-_Oy")
+            hit = cache.lookup(
+                entry=entry,
+                source_sha=sha,
+                compiler_profile="O2_GS-_Oy",
+                target_sha=str(args.target_sha or ""),
+            )
             if hit is not None:
-                cached_rows.append({**hit, "cacheHit": True})
-                skipped_cached += 1
-                continue
+                from agentdecompile_recovery.source_parity_synthesize import record_with_source_text
+
+                try:
+                    cached_rows.append(record_with_source_text({**hit, "cacheHit": True}))
+                except FileNotFoundError:
+                    # Stale path-only cache row: rematch rather than emit incomplete proof.
+                    pass
+                else:
+                    skipped_cached += 1
+                    continue
         jobs.append(
             {
                 "row": row,

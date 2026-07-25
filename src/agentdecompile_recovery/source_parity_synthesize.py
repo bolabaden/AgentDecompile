@@ -19868,6 +19868,8 @@ def clang_asm_flags(flags: list[str]) -> list[str]:
 
 
 def compile_with_clang(*, clang: str, source: Path, object_path: Path, args: list[str], timeout: int) -> dict[str, Any]:
+    if object_path.exists():
+        object_path.unlink()
     command = [
         clang,
         *args,
@@ -19898,6 +19900,8 @@ def compile_with_clang(*, clang: str, source: Path, object_path: Path, args: lis
 
 
 def compile_asm_to_coff(*, clang: str, source: Path, object_path: Path, timeout: int) -> dict[str, Any]:
+    if object_path.exists():
+        object_path.unlink()
     command = [
         clang,
         "-target",
@@ -19926,6 +19930,8 @@ def compile_asm_to_coff(*, clang: str, source: Path, object_path: Path, timeout:
 
 
 def compile_with_clangcl(*, clang_cl: str, source: Path, object_path: Path, args: list[str], timeout: int) -> dict[str, Any]:
+    if object_path.exists():
+        object_path.unlink()
     command = [
         clang_cl,
         "--target=i686-pc-windows-msvc",
@@ -21544,8 +21550,10 @@ def run_objdiff(target_obj: Path, candidate_obj: Path, case_dir: Path, *, timeou
     stdout_path.write_text(proc.stdout, encoding="utf-8")
     stderr_path.write_text(proc.stderr, encoding="utf-8")
     raw_path.write_text(proc.stdout if proc.stdout else proc.stderr, encoding="utf-8")
-    report = parse_objdiff_report(proc.returncode, proc.stdout or proc.stderr)
+    # Parse stdout only — empty stdout must fail closed (never substitute stderr).
+    report = parse_objdiff_report(proc.returncode, proc.stdout)
     if report["status"] == "error":
+        # Diagnostic fallback only: carries fallback=… so is_proven_zero rejects it.
         fallback = compare_objdump_code_bytes(target_obj, candidate_obj, case_dir, timeout=timeout)
         if fallback is not None:
             report = fallback
@@ -21554,35 +21562,9 @@ def run_objdiff(target_obj: Path, candidate_obj: Path, case_dir: Path, *, timeou
 
 
 def parse_objdiff_report(returncode: int, output: str) -> dict[str, Any]:
-    differences = -1
-    if returncode == 0:
-        try:
-            parsed = json.loads(output) if output.strip() else {}
-        except json.JSONDecodeError:
-            parsed = {}
-        match_percents: list[float] = []
-        for item in iter_json_objects(parsed):
-            if "match_percent" in item and (item.get("kind") in {"SECTION_CODE", "SYMBOL_FUNCTION"} or "instructions" in item):
-                try:
-                    match_percents.append(float(item["match_percent"]))
-                except (TypeError, ValueError):
-                    pass
-        if match_percents and all(value == 100 for value in match_percents):
-            differences = 0
-        elif match_percents:
-            differences = 1
-        elif not output.strip():
-            differences = 0
-    status = "matched" if differences == 0 else ("mismatched" if returncode == 0 and differences > 0 else "error")
-    message = "Object files match" if status == "matched" else ("Object files do not match" if status == "mismatched" else "objdiff exited with error")
-    return {
-        "schema": "agentdecompile.verify-objdiff.v1",
-        "status": status,
-        "differences": differences,
-        "message": message,
-        "objdiffExit": returncode,
-        "output": output,
-    }
+    from .objdiff_verification import parse_objdiff_report as _parse
+
+    return _parse(returncode, output)
 
 
 def compare_objdump_code_bytes(target_obj: Path, candidate_obj: Path, case_dir: Path, *, timeout: int) -> dict[str, Any] | None:
@@ -21886,6 +21868,19 @@ def update_promotion_stats(
         add_unique_sample(bucket["sourceShapeSearchBestNames"], best.get("name"))
 
 
+def record_with_source_text(record: dict[str, Any]) -> dict[str, Any]:
+    """Embed the exact candidate bytes in an accepted match receipt."""
+
+    if record.get("sourceText") is not None:
+        return record
+    source_path = Path(str(record.get("source") or ""))
+    if not source_path.is_file():
+        raise FileNotFoundError(
+            f"accepted candidate source missing for {record.get('name')}: {source_path}"
+        )
+    return {**record, "sourceText": source_path.read_text(encoding="utf-8")}
+
+
 def matched_source_shape_record(record: dict[str, Any], search_path: str) -> dict[str, Any] | None:
     path = Path(search_path)
     try:
@@ -21901,7 +21896,7 @@ def matched_source_shape_record(record: dict[str, Any], search_path: str) -> dic
     if matched is None:
         return None
     compile_info = matched.get("compile") if isinstance(matched.get("compile"), dict) else {}
-    return {
+    return record_with_source_text({
         "schema": "agentdecompile.source-shape-code-slice-match.v1",
         "status": "source-shape-code-slice-matched",
         "name": record.get("name"),
@@ -21926,7 +21921,7 @@ def matched_source_shape_record(record: dict[str, Any], search_path: str) -> dic
         "parentAttemptDir": record.get("attemptDir"),
         "verificationTier": "source-shape-code-slice-byte-match",
         "claimBoundary": "high-level C source-shape compiled to bytes identical to the bounded target code slice; this is not a full executable/object parity claim",
-    }
+    })
 
 
 def promotion_priority(stats: dict[str, Any]) -> tuple[int, int, int, int]:
@@ -22203,6 +22198,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Optional match-cache.json path (default: <out-dir>/match-cache.json).",
     )
+    parser.add_argument(
+        "--target-sha",
+        default="",
+        help="Analysis-image SHA-256 required for match-cache skip keys.",
+    )
     args = parser.parse_args(argv)
 
     if args.clean and args.out_dir.exists():
@@ -22419,7 +22419,21 @@ def main(argv: list[str] | None = None) -> int:
         for candidate in candidates:
             source_sha = hashlib.sha256(candidate.source.encode("utf-8")).hexdigest()
             entry = str(row.get("entry") or "")
-            if not args.force_rematch and match_cache.lookup(entry=entry, source_sha=source_sha) is not None:
+            target_sha = str(
+                getattr(args, "target_sha", None)
+                or row.get("targetSha256")
+                or row.get("analysisBinarySha256")
+                or ""
+            )
+            if (
+                not args.force_rematch
+                and match_cache.lookup(
+                    entry=entry,
+                    source_sha=source_sha,
+                    target_sha=target_sha,
+                )
+                is not None
+            ):
                 cached_skips += 1
                 continue
             pending_candidates.append(candidate)
@@ -22464,6 +22478,10 @@ def main(argv: list[str] | None = None) -> int:
             for record in records:
                 record["strategyClass"] = strategy_by_name.get(str(row.get("name")))
                 record["nearestMatchedExamples"] = retrieval_by_name.get(str(row.get("name")), [])[:3]
+                # Stamp the analysis-image digest so accepted records ingest into the
+                # match cache under the same target-sha key used for lookups.
+                if getattr(args, "target_sha", "") and not record.get("targetSha256"):
+                    record["targetSha256"] = str(args.target_sha)
                 append_jsonl(attempts_path, record)
                 update_promotion_stats(promotion_stats, record)
                 quality = str(record.get("sourceQuality") or "unknown")
@@ -22476,12 +22494,14 @@ def main(argv: list[str] | None = None) -> int:
                 differences = int(record.get("differences", -1))
                 if status == "matched" and differences == 0:
                     matched_count += 1
-                    append_jsonl(accepted_path, record)
-                    match_cache.ingest(record)
+                    accepted_record = record_with_source_text(record)
+                    append_jsonl(accepted_path, accepted_record)
+                    match_cache.ingest(accepted_record)
                 elif status == "code-slice-matched" and differences == 0:
                     code_slice_matched += 1
-                    append_jsonl(code_slice_matches_path, record)
-                    match_cache.ingest(record)
+                    accepted_record = record_with_source_text(record)
+                    append_jsonl(code_slice_matches_path, accepted_record)
+                    match_cache.ingest(accepted_record)
                     code_slice_matched_by_source_quality[quality] = code_slice_matched_by_source_quality.get(quality, 0) + 1
                     recovery_scope = str(record.get("sourceRecoveryScope") or "unknown")
                     code_slice_matched_by_recovery_scope[recovery_scope] = code_slice_matched_by_recovery_scope.get(recovery_scope, 0) + 1

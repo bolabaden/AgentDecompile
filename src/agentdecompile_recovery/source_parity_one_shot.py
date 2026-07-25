@@ -8,12 +8,20 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .ghidra_analysis import (
+    export_function_inventory,
+    ensure_analyzed_program,
+    shared_project_root,
+    validate_inventory_text_coverage,
+)
 from .source_export import collect_vacuum_prompt_matches, count_vacuum_matched_prompts
+from .stage_timings import load_stage_timings, record_stage, write_stage_timings
 from .state import atomic_write_json, read_json
 from .targets import is_pe_binary, resolve_target, sha256_file
 
@@ -23,6 +31,7 @@ STAGES: tuple[str, ...] = (
     "discover",
     "prepare",
     "inventory",
+    "batch-decompile",
     "match-trivial",
     "match-reloc-wrappers",
     "queue",
@@ -572,40 +581,38 @@ def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool
             sectionCounts=section_counts,
         )
         return
-    if jsonl.exists():
-        jsonl.unlink()
     jsonl.parent.mkdir(parents=True, exist_ok=True)
     binary = inventory_binary(profile, state)
     analyze = resolve_ghidra_analyze(ghidra)
     script_dir = ROOT / "scripts" / "ghidra"
+    analysis_receipt: dict[str, Any] | None = None
+    inventory_export: dict[str, Any] | None = None
     if analyze and analyze.exists() and (script_dir / "ExportFunctionInventory.java").exists():
-        project = profile.unpack_dir / "ghidra-project"
-        project.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            str(analyze),
-            str(project),
-            profile.slug,
-            "-import",
-            str(binary),
-            "-scriptPath",
-            str(script_dir),
-            "-deleteProject",
-            "-postScript",
-            "ExportFunctionInventory.java",
-            str(jsonl),
-        ]
-        subprocess.run(cmd, cwd=ROOT, check=False)
+        shared_project = shared_project_root(profile.unpack_dir)
+        analysis_receipt = ensure_analyzed_program(
+            binary,
+            project_path=shared_project,
+            analyze_headless=analyze,
+            script_dir=script_dir,
+            cwd=ROOT,
+        )
+        inventory_export = export_function_inventory(
+            receipt=analysis_receipt,
+            inventory_jsonl=jsonl,
+            analyze_headless=analyze,
+            script_dir=script_dir,
+            cwd=ROOT,
+        )
     if not jsonl.exists():
         raise RuntimeError(
             f"inventory missing at {jsonl}; set GHIDRA_INSTALL_DIR or provide function-inventory.jsonl"
         )
-    section_counts = _inventory_section_counts(jsonl)
+    section_counts = validate_inventory_text_coverage(
+        jsonl,
+        text_section,
+        section_counter=_inventory_section_counts,
+    )
     text_count = int(section_counts.get(text_section) or 0)
-    if text_section.startswith(".text") and text_count == 0 and any(bool(name) for name in section_counts):
-        raise RuntimeError(
-            f"inventory at {jsonl} has no functions in {text_section}; "
-            "refusing to continue with a packed/stub-only function map"
-        )
     mark_stage(
         state,
         "inventory",
@@ -618,7 +625,79 @@ def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool
         textSection=text_section,
         textSectionFunctionCount=text_count,
         sectionCounts=section_counts,
+        ghidraProjectPath=(analysis_receipt or {}).get("projectPath"),
+        ghidraProjectName=(analysis_receipt or {}).get("projectName"),
+        ghidraProgramName=(analysis_receipt or {}).get("programName"),
+        ghidraAnalysisReceipt=(analysis_receipt or {}).get("receiptPath"),
+        ghidraAnalysisReused=(analysis_receipt or {}).get("reused"),
+        ghidraInventoryExportCommand=(inventory_export or {}).get("exportCommand"),
     )
+
+def _analysis_target_sha(state: dict[str, Any]) -> str:
+    stages = state.get("stages") or {}
+    for name in ("inventory", "batch-decompile", "prepare"):
+        stage = stages.get(name) or {}
+        digest = stage.get("analysisBinarySha256") or stage.get("binarySha256")
+        if digest:
+            return str(digest)
+    return str(state.get("binarySha256") or "")
+
+
+def _extend_with_target_sha(args: list[str], state: dict[str, Any]) -> None:
+    target_sha = _analysis_target_sha(state)
+    if target_sha:
+        args.extend(["--target-sha", target_sha])
+
+
+def stage_batch_decompile(
+    profile: ProfileConfig,
+    state: dict[str, Any],
+    *,
+    thread_count: int | None = None,
+) -> None:
+    """Reuse shared Ghidra project for ghidrecomp decompile; write facts for dump."""
+
+    from agentdecompile_cli.mcp_utils.batch_decompile import build_batch_decompile_payload
+
+    from .batch_decompile_facts import project_decompiled_files_to_facts
+
+    analysis_binary = inventory_binary(profile, state)
+    analysis_digest = sha256_file(analysis_binary)
+    inv_stage = (state.get("stages") or {}).get("inventory") or {}
+    project_path = Path(str(inv_stage.get("ghidraProjectPath") or shared_project_root(profile.unpack_dir)))
+    project_path.mkdir(parents=True, exist_ok=True)
+    output_root = profile.unpack_dir / "ghidrecomp-batch"
+    output_root.mkdir(parents=True, exist_ok=True)
+    # Shared analysis already ran; never force a second full analysis here.
+    payload = build_batch_decompile_payload(
+        analysis_binary,
+        output_path=output_root,
+        project_path=project_path,
+        force_analysis=False,
+        thread_count=thread_count,
+    )
+    facts_path = profile.unpack_dir / "facts" / "function-facts.jsonl"
+    projection = project_decompiled_files_to_facts(
+        list(payload.get("decompiledFiles") or []),
+        out_jsonl=facts_path,
+        target_sha=analysis_digest,
+    )
+    mark_stage(
+        state,
+        "batch-decompile",
+        "complete",
+        analysisBinary=str(analysis_binary),
+        analysisBinarySha256=analysis_digest,
+        ghidraProjectPath=str(project_path),
+        ghidraProjectName=inv_stage.get("ghidraProjectName"),
+        outputPath=str(output_root),
+        factsJsonl=str(facts_path),
+        threadCount=payload.get("threadCount"),
+        forceAnalysis=False,
+        decompiledFiles=int((payload.get("counts") or {}).get("decompiledFiles") or 0),
+        factsWritten=projection.get("written"),
+    )
+
 
 def stage_match_trivial(
     profile: ProfileConfig,
@@ -645,6 +724,7 @@ def stage_match_trivial(
         "--limit",
         str(limit),
     ]
+    _extend_with_target_sha(args, state)
     if vc_root:
         args.extend(["--vc-root", str(vc_root)])
     if wineprefix:
@@ -693,6 +773,7 @@ def stage_match_reloc(
         "--limit",
         str(limit),
     ]
+    _extend_with_target_sha(args, state)
     if vc_root:
         args.extend(["--vc-root", str(vc_root)])
     if wineprefix:
@@ -1034,6 +1115,7 @@ def stage_synthesize(
     ]
     if incremental:
         args.extend(["--offset", str(prior_limit)])
+    _extend_with_target_sha(args, state)
     args.extend(["--max-variants-per-function", str(max_variants_per_function)])
     args.extend(["--max-attempts-per-function", str(max_attempts_per_function)])
     args.extend(["--max-attempts-per-function-policy", max_attempts_per_function_policy])
@@ -1107,6 +1189,11 @@ def _register_runners() -> None:
                 ctx["state"],
                 ctx["refresh_inventory"],
                 ghidra=ctx["ghidra"],
+            ),
+            "batch-decompile": lambda ctx: stage_batch_decompile(
+                ctx["profile"],
+                ctx["state"],
+                thread_count=ctx.get("decompile_thread_count"),
             ),
             "match-trivial": lambda ctx: stage_match_trivial(
                 ctx["profile"],
@@ -1233,6 +1320,7 @@ def run_pipeline(
     no_compile: bool = False,
     force_rematch: bool = False,
     workers: int = 0,
+    decompile_thread_count: int | None = None,
 ) -> dict[str, Any]:
     _register_runners()
     slug = profile_slug or detect_profile(input_path)
@@ -1272,7 +1360,9 @@ def run_pipeline(
         "force_rematch": force_rematch,
         "workers": workers,
         "force_export_downstream": False,
+        "decompile_thread_count": decompile_thread_count,
     }
+    timings = load_stage_timings(profile.state_dir)
     stop_idx = stage_index(stop_after) if stop_after else len(STAGES) - 1
     for idx, name in enumerate(STAGES):
         if idx > stop_idx:
@@ -1400,16 +1490,22 @@ def run_pipeline(
         mark_stage(state, name, "running")
         save_state(state_path, state)
         append_event(profile.state_dir, {"stage": name, "status": "running", "at": now_iso()})
+        started = time.monotonic()
         try:
             STAGE_RUNNERS[name](ctx)
+            record_stage(timings, name, started=started, status="complete")
+            write_stage_timings(profile.state_dir, timings)
             save_state(state_path, state)
             append_event(profile.state_dir, {"stage": name, "status": "complete", "at": now_iso()})
         except Exception as exc:
+            record_stage(timings, name, started=started, status="failed", error=str(exc))
+            write_stage_timings(profile.state_dir, timings)
             mark_stage(state, name, "failed", error=str(exc))
             save_state(state_path, state)
             append_event(profile.state_dir, {"stage": name, "status": "failed", "error": str(exc), "at": now_iso()})
             write_report(profile, state, report_path)
             raise
+    write_stage_timings(profile.state_dir, timings)
     write_report(profile, state, report_path)
     return json.loads(report_path.read_text(encoding="utf-8"))
 
@@ -1487,6 +1583,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-check", action="store_true")
     parser.add_argument("--workers", type=int, default=0, help="Parallel Wine/MSVC workers (0 = auto).")
     parser.add_argument(
+        "--decompile-threads",
+        type=int,
+        default=None,
+        help="ghidrecomp batch-decompile worker threads (default: min(cpu, 16), at least 2).",
+    )
+    parser.add_argument(
         "--force-rematch",
         action="store_true",
         help="Rematch proven objdiff-0 functions; default skips via match cache.",
@@ -1530,6 +1632,7 @@ def main(argv: list[str] | None = None) -> int:
             no_compile=args.no_compile,
             force_rematch=args.force_rematch,
             workers=args.workers,
+            decompile_thread_count=args.decompile_threads,
         )
     except Exception as exc:
         print(f"source-parity-one-shot failed: {exc}", file=sys.stderr)
