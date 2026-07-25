@@ -56,7 +56,7 @@ WEBUI_ENABLED_ENV_VARS: tuple[str, ...] = (
     "AGENT_DECOMPILE_WEBUI",
     "AGENTDECOMPILE_WEBUI",
 )
-_REPO_DOC_ROOT = "https://github.com/bolabaden/AgentDecompile/blob/master"
+_REPO_DOC_ROOT = "https://github.com/bodecloud/AgentDecompile/blob/master"
 _GHIDRA_API_ROOT = "https://ghidra.re/ghidra_docs/api"
 _JAVA_API_ROOT = "https://docs.oracle.com/en/java/javase/21/docs/api"
 _FALSY_VALUES = {"0", "false", "no", "off"}
@@ -140,27 +140,32 @@ def _docs_hub() -> dict[str, Any]:
             {
                 "title": "README",
                 "url": f"{_REPO_DOC_ROOT}/README.md",
-                "description": "Project overview, runtime surfaces, environment variables, and entry points.",
+                "description": "Install, transports, env vars, and entry points.",
             },
             {
                 "title": "USAGE",
                 "url": f"{_REPO_DOC_ROOT}/USAGE.md",
-                "description": "CLI, server, and HTTP usage patterns with validated examples.",
+                "description": "CLI and HTTP examples you can copy and run.",
             },
             {
-                "title": "MCP Usage",
-                "url": f"{_REPO_DOC_ROOT}/docs/MCP_AGENTDECOMPILE_USAGE.md",
-                "description": "MCP transport notes, profiles, and client integration guidance.",
+                "title": "Hero copy",
+                "url": f"{_REPO_DOC_ROOT}/docs/HERO.md",
+                "description": "Plain-language intro used on the site and README.",
+            },
+            {
+                "title": "Critical path",
+                "url": f"{_REPO_DOC_ROOT}/docs/CRITICAL_PATH.md",
+                "description": "Source recovery walkthrough with reconstruct flags.",
             },
             {
                 "title": "PyGhidra API Reference",
                 "url": f"{_REPO_DOC_ROOT}/docs/PyGhidra_API_Reference.md",
-                "description": "Reference map for PyGhidra, GhidraScript, and embedded automation APIs.",
+                "description": "PyGhidra, GhidraScript, and automation API map.",
             },
             {
                 "title": "Shared Project CLI",
                 "url": f"{_REPO_DOC_ROOT}/docs/SharedProjectCLI.md",
-                "description": "Shared-project checkout, sync, and repository workflow details.",
+                "description": "Checkout, sync, and shared-repository workflows.",
             },
         ],
         "ghidra": [
