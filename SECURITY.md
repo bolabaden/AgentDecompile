@@ -1,21 +1,34 @@
-# Security Policy
+# Security
 
-## Supported Versions
+## Supported versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+Security fixes land on the default branch (`master`) and are included in the next tagged release. We do not maintain separate LTS branches.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| Version | Support |
+|---------|---------|
+| Latest release on GitHub | Yes |
+| Older tagged releases | Best-effort backport if feasible |
+| Unreleased `master` | Fix forward only |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Use this section to tell people how to report a vulnerability.
+**Please do not open a public GitHub issue for security problems.**
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+Email the maintainers with:
+
+- A description of the issue and impact
+- Steps to reproduce (proof-of-concept if you have one)
+- Affected versions or commits
+- Your suggested fix, if any
+
+We aim to acknowledge within a few business days and will work with you on disclosure timing. Credit reporters in the release notes when the fix ships unless you prefer to stay anonymous.
+
+## Scope notes
+
+AgentDecompile runs Ghidra analysis locally or against a Ghidra Server you configure. Typical risks:
+
+- **MCP HTTP server** bound to `0.0.0.0` exposes Ghidra project operations to the network — use auth, firewall rules, or bind to localhost.
+- **Ghidra Server credentials** in env vars or headers grant access to shared repositories — treat them like production secrets.
+- **Arbitrary binary analysis** — importing untrusted binaries into Ghidra can trigger parser bugs in Ghidra itself; run in an isolated VM when analyzing malware.
+
+We treat issues in this repo's Python MCP layer as in scope. Upstream Ghidra/JVM vulnerabilities should be reported to the [Ghidra project](https://github.com/NationalSecurityAgency/ghidra/security).

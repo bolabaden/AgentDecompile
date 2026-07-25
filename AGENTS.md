@@ -10,6 +10,8 @@ See [README.md](README.md) for project overview, [STRATEGY.md](STRATEGY.md) for 
 
 ## Recovery integration
 
+This repo is the **only** active recovery cwd. Capabilities from the Mizuchi/ReconstructKit donor fold in here; do not keep a parallel product surface. See [docs/MIZUCHI_ARCHIVE.md](docs/MIZUCHI_ARCHIVE.md): Mizuchi is read-only—do not run `source-parity-one-shot` or rematch jobs there.
+
 Package: `src/agentdecompile_recovery/` plus companion scripts under `scripts/`.
 
 Current integrated entrypoints:
@@ -19,6 +21,10 @@ Current integrated entrypoints:
 - `scripts/decomp-cli.sh` → recovery/source-parity helper front door
 
 Fast swkotor dump (AgentDecompile only): see [docs/CRITICAL_PATH.md](docs/CRITICAL_PATH.md) — `agentdecompile-reconstruct … --resume --dump-source DIR`. Never claim match without objdiff 0; never promote byte-emitters into `verified/`.
+
+**Source recovery must be self-contained.** A run that is supposed to produce source (decompile, synthesize, match, or dump) should write its own inventory, facts, and match receipts in that execution. Do not skip those stages and point at leftover `target/` files, old dumps, or backfilled JSONL. Flags like `--resume`, match cache, and `--dump-source-only` exist for operators doing incremental work — not for agents to avoid running the pipeline. When the task is to obtain source, run the producing stages (or `--force-rematch` if rematch is the point).
+
+**One-shot perf (U1–U5 done):** [docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md](docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md) — backlog only: G14–G16. Update that plan’s progress section after substantial recovery-perf changes.
 
 The imported code expects a repo-root `scripts/` tree and root-relative `target/` outputs. Preserve that layout while the integration is being consolidated; do not silently rename or relocate the script surface without updating `src/agentdecompile_recovery/`.
 
@@ -136,6 +142,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 
 ## Learned User Preferences
 
+- Source-producing recovery runs must be self-contained: run decompile/match/synth in the current execution, or use `--force-rematch` when rematch is intended. Do not pass off prior `target/` artifacts or backfilled JSONL as this run's output.
 - Prefer implementing and running (config, env, live tests) over returning instructions for the user to run.
 - After a merge or vague “continue”, infer the next slice from `STRATEGY.md`, open plans, and `docs/residual-review-findings/`; implement and open the next PR without waiting for a detailed task (see `.cursor/skills/lfg/SKILL.md` step 0).
 - Do not block the agent's main shell on long proof drivers (e.g. `scripts/lfg_cmd_sequence.ps1`): start them in a separate process, tee output to `.lfg_run/lfg_cmd_<RunId>/driver.log`, tail logs in parallel, and avoid overlapping runs without stopping the prior driver and its MCP server.
