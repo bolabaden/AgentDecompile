@@ -133,8 +133,8 @@ def summarize(summary_jsonl: Path) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--matched-examples", type=Path, default=ROOT / "target/source-parity-index/swkotor/matched-examples.jsonl")
-    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/source-parity-profile/swkotor")
+    parser.add_argument("--matched-examples", type=Path, default=ROOT / "target/source-parity-index/default/matched-examples.jsonl")
+    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/source-parity-profile/default")
     parser.add_argument("--max-cases", type=int, default=6)
     parser.add_argument("--dry-run", action="store_true", help="Select corpus but do not run compiler sweep.")
     parser.add_argument("--timeout", type=int, default=900)
@@ -179,7 +179,7 @@ def main() -> int:
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
 
-    command = [str(ROOT / "scripts/swkotor-compiler-profile.sh")]
+    command = [str(ROOT / "scripts/compiler-profile.sh")]
     for case in case_names:
         command.extend(["--case", case])
     command.extend(["--out", str(args.out_dir / "runs")])

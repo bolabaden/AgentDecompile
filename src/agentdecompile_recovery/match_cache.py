@@ -1,8 +1,9 @@
-"""Proven-match cache: skip Wine/MSVC rematch when objdiff already reported 0.
+"""Proven-match cache: skip rematch when objdiff already reported 0.
 
-Cache key: (targetSha256, entry, sourceSha256, compilerProfile). A hit with
-differences==0 and no fallback is authoritative unless --force-rematch is set.
-targetSha256 is the analysis-image digest; without it, rows cannot authorize skip.
+Cache key: (targetSha256, entry, sourceSha256, compilerProfile, compilerLane).
+A hit with differences==0 and no fallback is authoritative unless --force-rematch
+is set. targetSha256 is the analysis-image digest; without it, rows cannot
+authorize skip. C-lane hits never satisfy C++-lane candidates.
 """
 
 from __future__ import annotations
@@ -28,8 +29,9 @@ def cache_key(
     source_sha: str,
     compiler_profile: str = "default",
     target_sha: str = "",
+    compiler_lane: str = "c",
 ) -> str:
-    return f"{target_sha}|{entry}|{source_sha}|{compiler_profile}"
+    return f"{target_sha}|{entry}|{source_sha}|{compiler_profile}|{compiler_lane}"
 
 
 def is_proven_zero(row: dict[str, Any]) -> bool:
@@ -55,6 +57,13 @@ def _row_target_sha(row: dict[str, Any]) -> str:
         if value:
             return str(value)
     return ""
+
+
+def _row_compiler_lane(row: dict[str, Any]) -> str:
+    lane = str(row.get("compilerLane") or row.get("language") or "c").lower()
+    if lane in {"cxx", "c++", "cpp"}:
+        return "cxx"
+    return "c"
 
 
 def iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -111,6 +120,7 @@ class MatchCache:
             or "default"
         )
         target_sha = _row_target_sha(row)
+        lane = _row_compiler_lane(row)
         if not (entry and source_sha and target_sha):
             # Without entry, source hash, and analysis-image identity we cannot
             # form a safe skip key across binaries / unpacks.
@@ -121,6 +131,7 @@ class MatchCache:
                 source_sha=source_sha,
                 compiler_profile=profile,
                 target_sha=target_sha,
+                compiler_lane=lane,
             )
         ] = row
         prior = self.by_entry.get(entry)
@@ -137,16 +148,18 @@ class MatchCache:
         source_sha: str,
         compiler_profile: str = "default",
         target_sha: str = "",
+        compiler_lane: str = "c",
     ) -> dict[str, Any] | None:
         if not target_sha:
             return None
-        # Exact key only: a different compiler profile is not evidence for skip.
+        # Exact key only: a different compiler profile/lane is not evidence for skip.
         return self.by_key.get(
             cache_key(
                 entry=entry,
                 source_sha=source_sha,
                 compiler_profile=compiler_profile,
                 target_sha=target_sha,
+                compiler_lane=compiler_lane,
             )
         )
 

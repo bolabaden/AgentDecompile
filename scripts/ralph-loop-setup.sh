@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-PROMPT="${PROMPT_PARTS[*]:-Continue source-parity loop: SWKOTOR >=90% one-shot, JKA fully one-shottable, upstream Recovery core without gaps.}"
+PROMPT="${PROMPT_PARTS[*]:-Continue source-parity loop: PRIMARY >=90% one-shot, secondary PE fully one-shottable, upstream Recovery core without gaps.}"
 
 cat > "$STATE_FILE" <<EOF
 ---

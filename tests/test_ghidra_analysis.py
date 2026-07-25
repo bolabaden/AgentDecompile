@@ -276,7 +276,7 @@ def test_stage_inventory_wires_shared_project_receipt(
     unpack = tmp_path / "unpack"
     unpack.mkdir()
     profile = ProfileConfig(
-        slug="swkotor",
+        slug="sample",
         default_binary=binary,
         unpack_dir=unpack,
         inventory_jsonl=unpack / "facts" / "function-inventory.jsonl",

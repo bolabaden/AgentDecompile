@@ -166,7 +166,7 @@ def main() -> int:
             }
         )
 
-    rebuilt_path = args.out_dir / "swkotor-code-source-rebuilt.exe"
+    rebuilt_path = args.out_dir / "binary-code-source-rebuilt.exe"
     rebuilt_path.write_bytes(rebuilt)
     executable_bytes = sum(int(section["size"]) for section in sections)
     report = {

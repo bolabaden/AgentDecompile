@@ -126,7 +126,7 @@ class TestCliLocalFallbackPolicy:
     @patch("agentdecompile_cli.cli._call_tool_locally", new_callable=AsyncMock)
     def test_tool_seq_accepts_args_alias_and_normalizes_payload(self, mocked_local_call: AsyncMock):
         mocked_local_call.return_value = _success_result("script ran")
-        steps = '[{"name":"execute-script","args":{"program_path":"/K1/k1_win_gog_swkotor.exe","code":"__result__ = 7"}}]'
+        steps = '[{"name":"execute-script","args":{"program_path":"/prog/sample_target_a.exe","code":"__result__ = 7"}}]'
 
         result = _runner().invoke(main, ["tool-seq", steps])
 
@@ -134,7 +134,7 @@ class TestCliLocalFallbackPolicy:
         mocked_local_call.assert_awaited_once()
         _ctx, tool_name, payload = mocked_local_call.await_args.args
         assert tool_name == "execute_script"
-        assert payload["programPath"] == "/K1/k1_win_gog_swkotor.exe"
+        assert payload["programPath"] == "/prog/sample_target_a.exe"
         assert payload["code"] == "__result__ = 7"
 
     @patch("agentdecompile_cli.cli._call_tool_locally", new_callable=AsyncMock)
@@ -289,14 +289,14 @@ class TestSharedRepositoryInference:
 
         provider = ProjectToolProvider()
 
-        assert provider._infer_requested_shared_repository_name({"path": "/K1/k1_win_gog_swkotor.exe"}, "/K1/k1_win_gog_swkotor.exe") is None
+        assert provider._infer_requested_shared_repository_name({"path": "/prog/sample_target_a.exe"}, "/prog/sample_target_a.exe") is None
 
     def test_explicit_repository_name_wins_over_program_path(self):
         from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
 
         provider = ProjectToolProvider()
 
-        assert provider._infer_requested_shared_repository_name({"repositoryname": "Odyssey", "path": "/K1/k1_win_gog_swkotor.exe"}, "/K1/k1_win_gog_swkotor.exe") == "Odyssey"
+        assert provider._infer_requested_shared_repository_name({"repositoryname": "Odyssey", "path": "/prog/sample_target_a.exe"}, "/prog/sample_target_a.exe") == "Odyssey"
 
     def test_single_segment_path_can_still_select_repository(self):
         from agentdecompile_cli.mcp_server.providers.project import ProjectToolProvider
@@ -326,9 +326,9 @@ class TestProviderAliasExpansion:
 
         provider = CaptureProvider()
 
-        asyncio.run(provider.call_tool("open", {"path": "/K1/k1_win_gog_swkotor.exe"}))
+        asyncio.run(provider.call_tool("open", {"path": "/prog/sample_target_a.exe"}))
 
-        assert provider.seen_args["path"] == "/K1/k1_win_gog_swkotor.exe"
+        assert provider.seen_args["path"] == "/prog/sample_target_a.exe"
         assert "repositoryname" not in provider.seen_args
         assert "serverrepository" not in provider.seen_args
         assert "ghidraserverrepository" not in provider.seen_args

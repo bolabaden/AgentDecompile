@@ -220,7 +220,7 @@ def main() -> int:
         )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    rebuilt_path = args.out_dir / "swkotor-code-rebuilt.exe"
+    rebuilt_path = args.out_dir / "binary-code-rebuilt.exe"
     rebuilt_path.write_bytes(rebuilt)
     section_reports = []
     for section in sections:

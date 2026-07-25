@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Match trivial unpacked swkotor functions with high-level C candidates."""
+"""Match trivial unpacked target functions with high-level C candidates."""
 
 from __future__ import annotations
 
@@ -1220,7 +1220,7 @@ def _attempt_trivial_job(job: dict) -> dict:
 
     slice_proc = run(
         [
-            str(ROOT / "scripts/swkotor-inventory-slice.py"),
+            str(ROOT / "scripts/inventory-slice.py"),
             "--inventory",
             str(args.inventory),
             "--function",
@@ -1234,7 +1234,7 @@ def _attempt_trivial_job(job: dict) -> dict:
     if slice_proc.returncode != 0:
         return _with_target_sha(
             {
-                "schema": "agentdecompile.swkotor-trivial-match.v1",
+                "schema": "agentdecompile.recovery-trivial-match.v1",
                 "name": name,
                 "entry": row.get("entry"),
                 "section": row.get("section"),
@@ -1274,7 +1274,7 @@ def _attempt_trivial_job(job: dict) -> dict:
     if compile_proc.returncode != 0:
         return _with_target_sha(
             {
-                "schema": "agentdecompile.swkotor-trivial-match.v1",
+                "schema": "agentdecompile.recovery-trivial-match.v1",
                 "name": name,
                 "entry": row.get("entry"),
                 "section": row.get("section"),
@@ -1315,7 +1315,7 @@ def _attempt_trivial_job(job: dict) -> dict:
         differences = int(report.get("differences", -1))
     return _with_target_sha(
         {
-            "schema": "agentdecompile.swkotor-trivial-match.v1",
+            "schema": "agentdecompile.recovery-trivial-match.v1",
             "name": name,
             "entry": row.get("entry"),
             "section": row.get("section"),
@@ -1343,12 +1343,12 @@ def main() -> int:
     from agentdecompile_recovery.verify_pool import map_parallel, resolve_workers
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inventory", type=Path, default=ROOT / "target/swkotor-unpack/facts/function-inventory.jsonl")
+    parser.add_argument("--inventory", type=Path, default=ROOT / "target/binary-unpack/facts/function-inventory.jsonl")
     parser.add_argument("--limit", type=int, default=25, help="Max candidates to attempt; 0 means no limit.")
-    parser.add_argument("--out", type=Path, default=ROOT / "target/swkotor-trivial-matches/summary.jsonl")
-    parser.add_argument("--summary", type=Path, default=ROOT / "target/swkotor-trivial-matches/summary.json")
+    parser.add_argument("--out", type=Path, default=ROOT / "target/trivial-matches/summary.jsonl")
+    parser.add_argument("--summary", type=Path, default=ROOT / "target/trivial-matches/summary.json")
     parser.add_argument("--text-section", default=".textV", help="Inventory section to match (e.g. .textV, .textU).")
-    parser.add_argument("--match-root", type=Path, default=ROOT / "target/swkotor-match")
+    parser.add_argument("--match-root", type=Path, default=ROOT / "target/binary-match")
     parser.add_argument("--vc-root", type=Path, default=DEFAULT_VC_ROOT)
     parser.add_argument("--wineprefix", type=Path, default=DEFAULT_WINEPREFIX)
     parser.add_argument("--progress-every", type=int, default=0, help="Print attempted/matched progress to stderr every N attempted candidates.")
@@ -1416,14 +1416,14 @@ def main() -> int:
 
     workers = resolve_workers(args.workers or None)
     print(
-        f"swkotor-match-trivial: queue={len(jobs)} cached_skip={skipped_cached} workers={workers}",
+        f"match-trivial: queue={len(jobs)} cached_skip={skipped_cached} workers={workers}",
         file=sys.stderr,
         flush=True,
     )
     def _job_error(job: dict, exc: BaseException) -> dict:
         row = job["row"]
         return {
-            "schema": "agentdecompile.swkotor-trivial-match.v1",
+            "schema": "agentdecompile.recovery-trivial-match.v1",
             "name": row.get("name"),
             "entry": row.get("entry"),
             "status": "error",
@@ -1461,7 +1461,7 @@ def main() -> int:
         )
     duration = round(time.monotonic() - started, 3)
     rollup = {
-        "schema": "agentdecompile.swkotor-simple-matches-summary.v1",
+        "schema": "agentdecompile.recovery-simple-matches-summary.v1",
         "inventory": str(args.inventory),
         "summaryJsonl": str(args.out),
         "attempted": attempted,

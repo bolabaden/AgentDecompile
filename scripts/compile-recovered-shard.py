@@ -92,9 +92,9 @@ def compile_args_for_unit(unit: dict | None, default_args: list[str]) -> list[st
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", type=Path, default=ROOT / "target/swkotor-recovered/simple_matches.manifest.json")
-    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/swkotor-recovered/objects")
-    parser.add_argument("--summary", type=Path, default=ROOT / "target/swkotor-recovered/compile-summary.json")
+    parser.add_argument("--manifest", type=Path, default=ROOT / "target/recovered/simple_matches.manifest.json")
+    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/recovered/objects")
+    parser.add_argument("--summary", type=Path, default=ROOT / "target/recovered/compile-summary.json")
     parser.add_argument("--vc-root", type=Path, default=DEFAULT_VC_ROOT)
     parser.add_argument("--wineprefix", type=Path, default=DEFAULT_WINEPREFIX)
     parser.add_argument("--limit", type=int)
@@ -164,7 +164,7 @@ def main() -> int:
             compiled = sum(1 for item in rows if item["status"] == "compiled")
             failed = sum(1 for item in rows if item["status"] != "compiled")
             print(
-                f"swkotor-compile-recovered-shard: attempted={len(rows)} compiled={compiled} failed={failed}",
+                f"compile-recovered-shard: attempted={len(rows)} compiled={compiled} failed={failed}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -172,7 +172,7 @@ def main() -> int:
         args.summary.write_text(
             json.dumps(
                 {
-                    "schema": "agentdecompile.swkotor-recovered-shard-compile.v1",
+                    "schema": "agentdecompile.recovery-recovered-shard-compile.v1",
                     "manifest": str(args.manifest),
                     "attempted": len(rows),
                     "compiled": compiled_count,

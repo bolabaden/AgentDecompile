@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .source_cleanup import format_source_text
-from .source_dump import borealis_brace_style, normalize_entry_hex, strip_claim_banners
+from .source_dump import allman_brace_style, normalize_entry_hex, strip_claim_banners, strip_ghidra_noise
 
 
 SCHEMA = "agentdecompile.ghidra-advisory-batch.v1"
@@ -53,7 +53,7 @@ def write_advisory_from_facts(
             # Prefer a clean FUN_* basename even when facts carry dump-stem names.
             if name.startswith(f"{entry}_"):
                 name = name[len(entry) + 1 :]
-            styled = borealis_brace_style(strip_claim_banners(str(decompiled)))
+            styled = allman_brace_style(strip_claim_banners(strip_ghidra_noise(str(decompiled))))
             formatted, formatting = format_source_text(styled, ".c")
             header = "\n".join(
                 [

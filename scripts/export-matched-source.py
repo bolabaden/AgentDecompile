@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export objdiff/code-slice-verified swkotor candidate functions into source shards."""
+"""Export objdiff/code-slice-verified binary candidate functions into source shards."""
 
 from __future__ import annotations
 
@@ -24,13 +24,13 @@ def main() -> int:
         default=None,
         help="JSONL match summary to export. May be repeated.",
     )
-    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/swkotor-recovered")
+    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/recovered")
     parser.add_argument("--source-name", default="simple_matches.c")
     args = parser.parse_args()
 
     summaries = args.summary or [
-        ROOT / "target/swkotor-trivial-matches/summary.jsonl",
-        ROOT / "target/swkotor-reloc-wrapper-matches/summary.jsonl",
+        ROOT / "target/trivial-matches/summary.jsonl",
+        ROOT / "target/reloc-wrapper-matches/summary.jsonl",
     ]
     result = export_recovered_source(summaries, out_dir=args.out_dir, source_name=args.source_name)
     if result["status"] == "empty":

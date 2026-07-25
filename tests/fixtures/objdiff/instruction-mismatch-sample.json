@@ -1,0 +1,11 @@
+{
+  "kind": "SYMBOL_FUNCTION",
+  "name": "sample_fn",
+  "match_percent": 75.0,
+  "instructions": [
+    {"kind": "ARGUMENT_MISMATCH", "address": "0x10"},
+    {"kind": "ARGUMENT_MISMATCH", "address": "0x11"},
+    {"kind": "ARGUMENT_MISMATCH", "address": "0x12"},
+    {"kind": "OPCODE_MISMATCH", "address": "0x20"}
+  ]
+}

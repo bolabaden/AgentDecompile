@@ -36,7 +36,7 @@ def test_recovery_script_surface_is_present_in_agentdecompile_repo() -> None:
 
     assert local["oneShotSource"] is True
     assert local["sourceParityOneShot"] is True
-    assert local["swkotorInventorySlice"] is True
+    assert local["inventorySlice"] is True
     assert local["verifyObjdiff"] is True
 
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Sweep real swkotor function slices across MSVC toolchains/flags and record
+# Sweep real target function slices across MSVC toolchains/flags and record
 # objdiff evidence. This is compiler forensics, not a semantic match claim.
 set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: swkotor-compiler-profile.sh [--case FUN_0086d201]... [--out DIR]
+usage: compiler-profile.sh [--case FUN_0086d201]... [--out DIR]
 
 Environment:
   VC71_ROOT   Visual C++ Toolkit 2003 root
@@ -20,7 +20,7 @@ EOF
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="$ROOT/target/swkotor-compiler-profile"
+OUT="$ROOT/target/compiler-profile"
 VC71_ROOT="${VC71_ROOT:-$ROOT/target/toolchain-acquire/vctoolkit2003/msitools-extract/Program Files/Microsoft Visual C++ Toolkit 2003}"
 VC80_ROOT="${VC80_ROOT:-/run/media/brunner56/MyBook/Toolchains/msvc8.0-main}"
 WINEPREFIX="${WINEPREFIX:-$ROOT/target/toolchain-acquire/vctoolkit2003/wineprefix}"
@@ -109,13 +109,13 @@ emit_json() {
 }
 
 for case_name in "${cases[@]}"; do
-  case_dir="$ROOT/target/swkotor-match/$case_name"
+  case_dir="$ROOT/target/binary-match/$case_name"
   candidate="$case_dir/candidate.c"
   target="$case_dir/target.obj"
 
   if [[ ! -f "$candidate" || ! -f "$target" ]]; then
     emit_json \
-      --arg schema "agentdecompile.swkotor-compiler-profile.v1" \
+      --arg schema "agentdecompile.recovery-compiler-profile.v1" \
       --arg case "$case_name" \
       --arg status "missing-input" \
       --arg candidate "$candidate" \
@@ -161,7 +161,7 @@ for case_name in "${cases[@]}"; do
 
       if [[ "$compile_exit" -ne 0 ]]; then
         emit_json \
-          --arg schema "agentdecompile.swkotor-compiler-profile.v1" \
+          --arg schema "agentdecompile.recovery-compiler-profile.v1" \
           --arg case "$case_name" \
           --arg profile "$profile_id" \
           --arg flagSet "$flag_id" \
@@ -203,7 +203,7 @@ for case_name in "${cases[@]}"; do
       [[ "$match_percent" != "null" ]] || match_percent=""
 
       emit_json \
-        --arg schema "agentdecompile.swkotor-compiler-profile.v1" \
+        --arg schema "agentdecompile.recovery-compiler-profile.v1" \
         --arg case "$case_name" \
         --arg profile "$profile_id" \
         --arg flagSet "$flag_id" \

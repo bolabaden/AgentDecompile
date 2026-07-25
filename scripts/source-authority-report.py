@@ -202,7 +202,7 @@ def build_report(path: Path) -> dict[str, Any]:
         return manifest_report(path, data)
     if schema == "agentdecompile.binary-source-roundtrip.v1":
         return binary_roundtrip_report(path, data)
-    if schema == "agentdecompile.swkotor-recovered-source-shard.v1":
+    if schema == "agentdecompile.recovery-recovered-source-shard.v1":
         return recovered_source_shard_report(path, data)
     raise SystemExit(f"unsupported source artifact schema: {schema or '<missing>'}")
 

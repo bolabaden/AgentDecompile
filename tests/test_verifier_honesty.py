@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from agentdecompile_recovery import package_verify
+from agentdecompile_recovery.artifact_layout import is_objdiff_zero_accept
 from agentdecompile_recovery.match_cache import is_proven_zero
 from agentdecompile_recovery.objdiff_verification import parse_objdiff_report
 from agentdecompile_recovery.proof_ladder import build_proof_ladder
@@ -78,6 +79,16 @@ def test_msvc_compile_does_not_reuse_stale_object(
 
     assert result["status"] == "failed"
     assert not object_path.exists()
+
+
+def test_mismatch_class_does_not_promote_without_objdiff_zero() -> None:
+    assert not is_objdiff_zero_accept(
+        {
+            "status": "mismatched",
+            "differences": 3,
+            "mismatchClass": "operand",
+        }
+    )
 
 
 def test_proof_ladder_requires_function_candidate_inventory(tmp_path: Path) -> None:

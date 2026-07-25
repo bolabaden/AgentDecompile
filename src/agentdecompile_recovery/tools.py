@@ -90,7 +90,7 @@ def inspect_capabilities(repo_root: Path) -> dict[str, Any]:
         "oneShotSource": resolve_script_asset(repo_root, "one-shot-source.py") is not None,
         "oneShotSourcePath": str(resolve_script_asset(repo_root, "one-shot-source.py") or ""),
         "sourceParityOneShot": (repo_root / "scripts/source-parity-one-shot.py").exists(),
-        "swkotorInventorySlice": (repo_root / "scripts/swkotor-inventory-slice.py").exists(),
+        "inventorySlice": (repo_root / "scripts/inventory-slice.py").exists(),
         "verifyObjdiff": (repo_root / "scripts/lib/verify-objdiff.sh").exists(),
         "steamlessCli": steamless is not None,
         "steamlessCliPath": str(steamless) if steamless else None,

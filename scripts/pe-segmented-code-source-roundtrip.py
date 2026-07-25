@@ -125,7 +125,7 @@ def package_function_segments(package: Path, prompts_dir: Path) -> list[dict[str
         size = target.get("size")
         if not isinstance(offset, int) or not isinstance(size, int) or size <= 0:
             continue
-        prompt_name = f"swkotor_{c_ident(task.get('name'), task_path)}"
+        prompt_name = f"binary_{c_ident(task.get('name'), task_path)}"
         # Prefer imported prompt candidate source when present because this is
         # the current Recovery working surface; fall back to package candidate.
         prompt_candidate = prompts_dir / prompt_name / "candidate.c"
@@ -291,7 +291,7 @@ def main() -> int:
             }
         )
 
-    rebuilt_path = args.out_dir / "swkotor-segmented-code-source-rebuilt.exe"
+    rebuilt_path = args.out_dir / "binary-segmented-code-source-rebuilt.exe"
     rebuilt_path.write_bytes(rebuilt)
     executable_bytes = sum(int(section["size"]) for section in sections)
     report = {

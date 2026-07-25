@@ -1,4 +1,4 @@
-"""Borealis-shaped source dump with verified vs advisory claim layers."""
+"""Layered source dump with verified vs advisory claim layers."""
 
 from __future__ import annotations
 
@@ -23,14 +23,8 @@ from .source_export import (
 from .verify_pool import resolve_workers
 
 
-BOREALIS_MODULES = (
-    "game/clientcore",
-    "game/servercore",
-    "game/swmain",
-    "libsource/exobase",
-    "libsource/nwscript",
-    "libsource/AURORA",
-    "libsource/recovered",
+DEFAULT_MODULES = (
+    "recovered/unmapped",
 )
 
 BYTE_EMITTER_MARKERS = (
@@ -106,8 +100,8 @@ class PendingWrites:
         return len(items)
 
 
-def borealis_brace_style(source: str) -> str:
-    """Move opening braces to their own line for function definitions (Borealis style)."""
+def allman_brace_style(source: str) -> str:
+    """Move opening braces to their own line for function definitions (Allman brace style)."""
 
     lines = source.replace("\r\n", "\n").split("\n")
     out: list[str] = []
@@ -122,6 +116,32 @@ def borealis_brace_style(source: str) -> str:
             continue
         out.append(stripped)
     return "\n".join(out).rstrip() + "\n"
+
+
+# Back-compat alias for older call sites / imports.
+borealis_brace_style = allman_brace_style
+
+
+def strip_ghidra_noise(source: str) -> str:
+    """Drop Ghidra WARNING / library-match banner lines that hurt Port readability."""
+
+    text = source.replace("\r\n", "\n")
+    # Remove multi-line /* WARNING: ... */ and /* Library Function ... */ blocks.
+    text = re.sub(
+        r"/\*\s*(?:WARNING:|Library Function -).*?\*/\s*",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    # Collapse excess blank lines left behind.
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.lstrip("\n")
+
+
+def style_c_source(source: str) -> str:
+    """In-process Allman brace style + banner/noise strip (no clang-format subprocess)."""
+
+    return allman_brace_style(strip_claim_banners(strip_ghidra_noise(source)))
 
 
 def strip_claim_banners(source: str) -> str:
@@ -151,12 +171,6 @@ def strip_claim_banners(source: str) -> str:
             break
         text = stripped[end + 2 :].lstrip("\n")
     return text
-
-
-def style_c_source(source: str) -> str:
-    """In-process Borealis brace style + banner strip (no clang-format subprocess)."""
-
-    return borealis_brace_style(strip_claim_banners(source))
 
 
 def format_c_source(source: str) -> str:
@@ -207,25 +221,16 @@ def normalize_entry_hex(raw: Any) -> str:
         return text
 
 
-def module_for_entry(entry: str, kind: str | None) -> str:
+def module_for_entry(entry: str, kind: str | None, *, profile: str = "binary", va_bands: list | None = None) -> str:
+    """Resolve module path for an entry via evidence resolver (optional VA bands)."""
+    from .module_resolver import FALLBACK_MODULE, ModuleResolver
+
     try:
-        addr = int(entry, 16)
+        addr = int(entry, 16) if isinstance(entry, str) else int(entry)
     except (TypeError, ValueError):
-        return "libsource/recovered"
-    kind = (kind or "").lower()
-    if "thunk" in kind or "reloc" in kind or "wrapper" in kind:
-        return "libsource/recovered"
-    if addr < 0x00480000:
-        return "game/swmain"
-    if addr < 0x00500000:
-        return "game/clientcore"
-    if addr < 0x00600000:
-        return "libsource/AURORA"
-    if addr < 0x00680000:
-        return "libsource/nwscript"
-    if addr < 0x00700000:
-        return "game/servercore"
-    return "libsource/exobase"
+        return FALLBACK_MODULE
+    _ = kind, profile
+    return ModuleResolver(va_bands=list(va_bands or [])).resolve(addr).module
 
 
 def authority_label(row: dict[str, Any]) -> str:
@@ -414,17 +419,22 @@ def dump_source_tree(
     summaries: list[Path],
     ghidra_facts: Path | None = None,
     advisory_dir: Path | None = None,
-    target_name: str = "swkotor.exe",
-    borealis_reference: Path | None = None,
+    target_name: str = "binary",
+    reference_root: Path | None = None,
     clean: bool = True,
     layers: str | Iterable[str] | None = None,
+    profile: str = "binary",
+    module_hints: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Write verified/ + advisory/ghidra/ + Port/CODE + README/MANIFEST/CLAIMS."""
+
+    from .module_resolver import passes_readability_gate
 
     selected_layers = parse_dump_layers(layers)
     write_verified = "verified" in selected_layers
     write_port = "port" in selected_layers
     write_advisory = "advisory" in selected_layers
+    hints = module_hints or {}
 
     matched = collect_matched(summaries)
     ghidra_rows = collect_ghidra(ghidra_facts) if write_advisory else []
@@ -485,7 +495,7 @@ def dump_source_tree(
     code = build_dir / "Port" / "CODE"
     verified_dir = build_dir / "verified"
     advisory_out = build_dir / "advisory" / "ghidra"
-    for module in BOREALIS_MODULES:
+    for module in DEFAULT_MODULES:
         (code / module / "include").mkdir(parents=True, exist_ok=True)
     (code / "include").mkdir(parents=True, exist_ok=True)
     verified_dir.mkdir(parents=True, exist_ok=True)
@@ -498,6 +508,9 @@ def dump_source_tree(
     rejected_emitters = 0
     verified_count = 0
     code_slice_count = 0
+    readability_excluded = 0
+    named_count = 0
+    module_resolved_count = 0
 
     for row in matched:
         source = source_texts.get(match_source_key(row))
@@ -509,13 +522,16 @@ def dump_source_tree(
         entry = str(row.get("entry") or "")
         kind = str(row.get("kind") or row.get("rule") or "")
         authority = authority_label(row)
-        module = module_for_entry(entry, kind)
+        hint = hints.get(normalize_entry_hex(entry)) or {}
+        module = str(hint.get("module") or module_for_entry(entry, kind, profile=profile))
+        module_provenance = str(hint.get("moduleProvenance") or "fallback")
         stem = file_stem_for(kind, authority, rule=str(row.get("rule") or ""))
         styled = style_c_source(source)
         header = "\n".join(
             [
                 f"/* {row.get('name')} entry={entry} kind={kind}",
                 f" * Authority: {authority} ({claim_boundary_for(row)}).",
+                f" * ModuleProvenance: {module_provenance}",
                 " */",
                 "",
             ]
@@ -543,13 +559,21 @@ def dump_source_tree(
         if entry in verified_entries:
             continue
         decompiled = style_c_source(str(row["decompiled"]))
-        module = module_for_entry(entry, "ghidra")
+        hint = hints.get(entry) or {}
+        module = str(hint.get("module") or module_for_entry(entry, "ghidra", profile=profile))
+        module_provenance = str(hint.get("moduleProvenance") or "fallback")
+        name = str(row.get("name") or f"FUN_{entry}")
+        if not str(name).startswith("FUN_"):
+            named_count += 1
+        if module_provenance not in {"fallback", ""} and module != "recovered/unmapped":
+            module_resolved_count += 1
         stem = file_stem_for("ghidra", "ghidra-advisory")
         header = "\n".join(
             [
-                f"/* {row.get('name')} entry={entry} bodyBytes={row.get('bodyBytes')}",
+                f"/* {name} entry={entry} bodyBytes={row.get('bodyBytes')}",
                 " * Authority: Ghidra / agentdecompile-cli advisory — NOT objdiff-matched.",
                 f" * Prototype: {row.get('prototype')}",
+                f" * ModuleProvenance: {module_provenance}",
                 " * claimBoundary: readability only.",
                 " */",
                 "",
@@ -557,8 +581,13 @@ def dump_source_tree(
         )
         body = header + decompiled
         if write_port:
-            buckets[(module, stem)].append((row, body))
-        adv_path = advisory_out / f"{entry}_{row.get('name')}.c"
+            if not passes_readability_gate(
+                name=name, module=module, module_provenance=module_provenance
+            ):
+                readability_excluded += 1
+            else:
+                buckets[(module, stem)].append((row, body))
+        adv_path = advisory_out / f"{entry}_{name}.c"
         pending.add(adv_path, body)
 
     if not write_port:
@@ -603,7 +632,7 @@ def dump_source_tree(
         banner = [
             f" * Module: {module}/{stem}",
             f" * Target: {target_name}",
-            " * Style: Project Borealis / Odyssey Port/CODE layout",
+            " * Style: recovered Port/CODE layout",
         ]
         if has_verified:
             banner.append(" * Matched units: objdiff differences == 0")
@@ -619,7 +648,7 @@ def dump_source_tree(
         )
         written_files.extend([str(cpp_rel), str(hdr_rel)])
 
-    ref = borealis_reference or (Path.home() / "Desktop/ProjectBorealisJune4th")
+    ref = reference_root
     ghidra_count = sum(1 for f in manifest_functions if f["authority"] == "ghidra-advisory")
     matched_count = sum(1 for f in manifest_functions if f["authority"] == "objdiff-matched")
     slice_count = sum(1 for f in manifest_functions if f["authority"] == "code-slice-matched")
@@ -634,7 +663,7 @@ def dump_source_tree(
                 "",
                 "1. **verified/** — objdiff `differences==0` only (full-object under root; code-slice under `verified/code-slice/`).",
                 "2. **advisory/ghidra/** — Ghidra / `agentdecompile-cli` C — pretty, **not** proof.",
-                "3. **Port/CODE/** — Borealis-shaped modules for reading; authority still follows the layers above.",
+                "3. **Port/CODE/** — Port/CODE-shaped modules for reading; authority still follows the layers above.",
                 "",
                 "Never treat byte-emitters / `_emit` / full-binary packages as original-dev C.",
                 "",
@@ -642,7 +671,7 @@ def dump_source_tree(
                 f"- Code-slice matched: {slice_count}",
                 f"- Ghidra advisory: {ghidra_count}",
                 f"- Rejected byte-emitters: {rejected_emitters}",
-                f"- Borealis reference: `{ref}`",
+                f"- Reference tree: `{ref}`",
                 "",
             ]
         ),
@@ -667,12 +696,20 @@ def dump_source_tree(
             [
                 "# Layout correspondence",
                 "",
-                "Address banding into Borealis modules is heuristic (no PDB).",
+                "Module paths are evidence-ranked (assert/RTTI/callgraph); optional VA bands are operator-supplied.",
                 f"Compare with `{ref}/Port/CODE`.",
                 "",
             ]
         ),
     )
+
+    repair_summary = None
+    if ghidra_facts is not None:
+        facts_path = Path(ghidra_facts)
+        work_dir_guess = facts_path.parent.parent if facts_path.parent.name == "facts" else facts_path.parent
+        from .readability_repair import load_repair_queue_summary
+
+        repair_summary = load_repair_queue_summary(work_dir_guess)
 
     manifest = {
         "schema": "agentdecompile.source-dump.v1",
@@ -690,13 +727,24 @@ def dump_source_tree(
         "rejectedByteEmitters": rejected_emitters,
         "verifiedShardCount": verified_count,
         "codeSliceShardCount": code_slice_count,
+        "profile": profile,
+        "namedCount": named_count,
+        "moduleResolvedCount": module_resolved_count,
+        "readabilityExcludedFromPort": readability_excluded,
+        "readabilityThreshold": {
+            "requiresNonFunName": True,
+            "requiresNonFallbackModule": True,
+            "advisoryOnly": True,
+        },
+        **({"readabilityRepairQueue": repair_summary} if repair_summary else {}),
         "layers": sorted(selected_layers),
         "files": written_files,
         "functions": manifest_functions,
         "claimBoundary": (
             "objdiff-matched units are full-object verified C. "
             "code-slice-matched units reproduce the target function code slice at objdiff zero. "
-            "Ghidra units are advisory. This is not whole-program rebuild parity."
+            "Ghidra units are advisory. This is not whole-program rebuild parity. "
+            "Readability metrics (namedCount / moduleResolvedCount) are advisory and do not inflate proof."
         ),
     }
     pending.add(

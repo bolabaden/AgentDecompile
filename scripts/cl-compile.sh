@@ -3,7 +3,7 @@
 # cl.exe (portable VC8, run under wine) to a COFF .obj. This is what makes the
 # article's objdiff gate meaningful for x86/MSVC targets. gcc/clang cannot
 # reproduce MSVC codegen; this wrapper has produced byte-exact output for small
-# swkotor accessors/wrappers, but it is not proof of the whole compiler profile.
+# target accessors/wrappers, but it is not proof of the whole compiler profile.
 #
 # Usage: cl-compile.sh <in.c> <out.obj> [extra cl flags...]
 # Env:

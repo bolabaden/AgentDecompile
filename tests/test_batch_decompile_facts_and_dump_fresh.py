@@ -91,7 +91,7 @@ def test_dump_layers_port_only_omits_advisory(tmp_path: Path) -> None:
 def test_fresh_dump_ignores_undeclared_sibling(tmp_path: Path, monkeypatch) -> None:
     work = tmp_path / "work"
     work.mkdir()
-    sibling_root = tmp_path / "swkotor-trivial-matches"
+    sibling_root = tmp_path / "sample-trivial-matches"
     sibling_root.mkdir()
     (sibling_root / "summary.jsonl").write_text(
         json.dumps(
@@ -121,7 +121,7 @@ def test_fresh_dump_ignores_undeclared_sibling(tmp_path: Path, monkeypatch) -> N
         json=True,
     )
     # Point parent chain: reconstruct/run1 -> agentdecompile-reconstruct -> tmp_path
-    # Sibling at tmp_path/swkotor-trivial-matches is what leftover mode would load.
+    # Sibling at tmp_path/sample-trivial-matches is what leftover mode would load.
     monkeypatch.chdir(tmp_path)
     rc = run_dump_source(args, reconstruct)
     assert rc == 0

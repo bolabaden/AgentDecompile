@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from .autonomous_policy import choose_next_action
+from .dual_agent_advisory import evaluate_checker_gate
 
 
 PluginStatus = str
@@ -327,6 +328,13 @@ class PluginPipeline:
             previous_attempts,
             budget=updated.get("autonomyBudget"),
         )
+        generator_proposal = updated.get("generatorProposal") if isinstance(updated.get("generatorProposal"), dict) else {}
+        checker = evaluate_checker_gate(
+            generator_proposal=generator_proposal,
+            previous_attempts=previous_attempts,
+            context=updated,
+        )
+        decision["dualAgentChecker"] = checker
         updated["autonomousPolicy"] = decision
         self.emit(
             {
@@ -336,6 +344,8 @@ class PluginPipeline:
                 "attemptsSeen": decision.get("attemptsSeen"),
                 "attemptsRemaining": decision.get("attemptsRemaining"),
                 "bestDifferenceCount": decision.get("bestDifferenceCount"),
+                "proofTier": decision.get("proofTier"),
+                "dualAgentParity": checker.get("parity"),
             }
         )
         action = str(decision.get("action") or "")

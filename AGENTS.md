@@ -20,7 +20,7 @@ Current integrated entrypoints:
 - `agentdecompile-reconstruct` → `agentdecompile_recovery.frontdoor:main`
 - `scripts/decomp-cli.sh` → recovery/source-parity helper front door
 
-Fast swkotor dump (AgentDecompile only): see [docs/CRITICAL_PATH.md](docs/CRITICAL_PATH.md) — `agentdecompile-reconstruct … --resume --dump-source DIR`. Never claim match without objdiff 0; never promote byte-emitters into `verified/`.
+Fast recovery dump (AgentDecompile only): see [docs/CRITICAL_PATH.md](docs/CRITICAL_PATH.md) — `agentdecompile-reconstruct … --resume --dump-source DIR`. Default reconstruct runs PyGhidra enrich-decompile before source generation (`--skip-enrichment` to opt out). Never claim match without objdiff 0; never promote byte-emitters into `verified/`. Profiles are format/stem-derived (PE vs ELF); do not hardcode product binaries into recovery defaults.
 
 **Source recovery must be self-contained.** A run that is supposed to produce source (decompile, synthesize, match, or dump) should write its own inventory, facts, and match receipts in that execution. Do not skip those stages and point at leftover `target/` files, old dumps, or backfilled JSONL. Flags like `--resume`, match cache, and `--dump-source-only` exist for operators doing incremental work — not for agents to avoid running the pipeline. When the task is to obtain source, run the producing stages (or `--force-rematch` if rematch is the point).
 
@@ -157,7 +157,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 
 ## Learned Workspace Facts
 
-- When editing KOTOR or video-derived docs (e.g. docs/from_video), use correct terms: KOTOR (not Cotor), PyGhidra (Ghidra v12 Python wrapper), swkotor.exe (not sodtor.exe), CSWMinigame (not miniame).
+- When editing video-derived docs (e.g. docs/from_video), keep product names accurate in historical notes, but do not encode those names into recovery pipeline defaults or profile detection.
 - open-project: `analyzeAfterImport` is optional and defaults to true. `open` and `import-binary` always run incremental Ghidra auto-analysis when needed (blocking); other program-scoped tools wait until analysis completes for that program.
 - Load Ghidra from `GHIDRA_INSTALL_DIR` via a top-level repo `.env`; the path must match the real install folder name (for example `ghidra_12.0.4_PUBLIC`—a wrong or stale basename breaks LFG/driver).
 - Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
@@ -168,7 +168,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - get-function with an address returns the containing function (not the callee); get-references and list-cross-references accept addressOrSymbol or importName (thunk and IAT supported; .rsrc targets include LoadStringA/LoadStringW as indirect refs).
 - When Ghidra exposes multiple overloads for the same operation (e.g. `Listing.getComment` variants), support both with try/fallback for compatibility across backends.
 - Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols are advertised by default (not in registry _DEFAULT_HIDDEN_TOOLS or CLI curated-only list).
-- Cross-binary match-function uses signature (param count, return type), name, and call graph (caller/callee names) to find the same function in another binary; it does not use byte or instruction-level comparison, so it works when addresses, registers, and stack layout differ (e.g. KOTOR 1 vs KOTOR 2).
+- Cross-binary match-function uses signature (param count, return type), name, and call graph (caller/callee names) to find the same function in another binary; it does not use byte or instruction-level comparison, so it works when addresses, registers, and stack layout differ across builds.
 - Strict proof sequence `/lfg` is defined in `.cursor/commands/lfg.md` (shared Ghidra Server, MCP restarts, `tool-seq`). For automation, avoid unmodified stock `ghidraSvr.bat console` (separate JVM window and poor terminal logging); use the driver’s patched background start or a dedicated Ghidra window per that doc.
 - Setting `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` (or the legacy alias) on the MCP server process can make shared-session bootstrap treat the repository name as a program key; LFG scripting avoids exporting repository into MCP env, and program activation skips treating the repo name as a program when it matches the open shared handle’s repository.
 - ContextStream Claude Code hooks should be launched via `scripts/contextstream_claude_hook.ps1` (or a stable copy under `~/.claude/scripts`), resolving the global `@contextstream/mcp-server` install instead of stale `npx` cache paths to `index.js`.

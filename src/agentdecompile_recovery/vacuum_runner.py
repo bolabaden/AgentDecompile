@@ -66,6 +66,8 @@ def run_vacuum_prompt(
     prompt_dir: Path | None = None,
     dry_run: bool = False,
     max_attempts: int = 3,
+    source_shape_search: bool = False,
+    routed_playbook: str | None = None,
 ) -> dict[str, Any]:
     """Run bounded plugin synthesis for one vacuum queue entry."""
 
@@ -117,20 +119,25 @@ def run_vacuum_prompt(
     single_tasks = out_dir / "task.jsonl"
     single_tasks.write_text(json.dumps(task, sort_keys=True) + "\n", encoding="utf-8")
 
-    summary = run_source_plugin_pipeline(
-        SourcePluginRunConfig(
-            queue=None,
-            source_tasks=[single_tasks],
-            source_tasks_only=True,
-            out_dir=out_dir,
-            limit=1,
-            max_variants_per_function=max(1, max_attempts),
-            max_retries=max(1, max_attempts),
-            dry_run=dry_run,
-            clean=False,
-            inventory=work_dir / "binary-inventory.json",
-        )
+    from .playbook_config import apply_playbook_to_run_config, playbook_receipt
+
+    base_config = SourcePluginRunConfig(
+        queue=None,
+        source_tasks=[single_tasks],
+        source_tasks_only=True,
+        out_dir=out_dir,
+        limit=1,
+        max_variants_per_function=max(1, max_attempts),
+        max_retries=max(1, max_attempts),
+        dry_run=dry_run,
+        clean=False,
+        source_shape_search=source_shape_search,
+        work_dir=work_dir,
+        routed_playbook=routed_playbook,
+        inventory=work_dir / "binary-inventory.json",
     )
+    config = apply_playbook_to_run_config(base_config, routed_playbook, force_shape_search=source_shape_search)
+    summary = run_source_plugin_pipeline(config)
     succeeded = int(summary.get("successfulFunctions") or 0)
     exit_code = 0 if succeeded > 0 else 1
     status = "matched" if succeeded > 0 else "unmatched"
@@ -177,6 +184,8 @@ def run_vacuum_prompt(
             "failedFunctions": summary.get("failedFunctions"),
             "inspectedFunctions": summary.get("inspectedFunctions"),
         },
+        "playbookReceipt": playbook_receipt(routed_playbook or config.routed_playbook),
+        "routedPlaybook": config.routed_playbook,
         "claimBoundary": (
             "exit 0 means plugin pipeline reported an objdiff-zero accept for this function; "
             "it is not whole-binary semantic recovery"

@@ -251,18 +251,18 @@ def retrieve(remaining: list[dict[str, Any]], matched: list[dict[str, Any]], top
 
 def main() -> int:
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--inventory", type=Path, default=ROOT / "target/swkotor-unpack/facts/function-inventory.jsonl")
-    parser.add_argument("--queue", type=Path, default=ROOT / "target/swkotor-recovery-queue/queue.jsonl")
+    parser.add_argument("--inventory", type=Path, default=ROOT / "target/binary-unpack/facts/function-inventory.jsonl")
+    parser.add_argument("--queue", type=Path, default=ROOT / "target/recovery-queue/queue.jsonl")
     parser.add_argument(
         "--matched-summary",
         type=Path,
         action="append",
         default=[
-            ROOT / "target/swkotor-trivial-matches/summary.jsonl",
-            ROOT / "target/swkotor-reloc-wrapper-matches/summary.jsonl",
+            ROOT / "target/trivial-matches/summary.jsonl",
+            ROOT / "target/reloc-wrapper-matches/summary.jsonl",
         ],
     )
-    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/source-parity-index/swkotor")
+    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/source-parity-index/default")
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--max-remaining", type=int, default=500)
     args = parser.parse_args()

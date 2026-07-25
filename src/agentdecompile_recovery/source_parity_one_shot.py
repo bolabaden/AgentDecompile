@@ -24,6 +24,13 @@ from .source_export import collect_vacuum_prompt_matches, count_vacuum_matched_p
 from .stage_timings import load_stage_timings, record_stage, write_stage_timings
 from .state import atomic_write_json, read_json
 from .targets import is_pe_binary, resolve_target, sha256_file
+from .elf_target import (
+    detect_primary_text_section_elf,
+    elf_section_rows,
+    format_profile_slug,
+    is_elf_binary,
+    resolve_elf_binary,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,6 +38,9 @@ STAGES: tuple[str, ...] = (
     "discover",
     "prepare",
     "inventory",
+    "reference-corpus",
+    "enrich-decompile",
+    "module-map",
     "batch-decompile",
     "match-trivial",
     "match-reloc-wrappers",
@@ -43,22 +53,20 @@ STAGES: tuple[str, ...] = (
     "derive-coverage",
 )
 
-DEFAULT_SWKOTOR_BINARY = Path(
-    "/run/media/brunner56/MyBook/SteamLibrary/steamapps/common/swkotor/swkotor.exe"
-)
-DEFAULT_JKA_BINARY = Path(
-    "/run/media/brunner56/MyBook/SteamLibrary/steamapps/common/Jedi Academy/GameData/jamp.exe"
-)
-
 LEGACY_STAGE_ALIASES: dict[str, tuple[str, ...]] = {
     "match-reloc-wrappers": ("match-reloc",),
 }
 
 
+def _sanitize_slug(slug: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in slug.strip()).strip("-_")
+    return (cleaned or "binary").lower()[:64]
+
+
 @dataclass(frozen=True)
 class ProfileConfig:
     slug: str
-    default_binary: Path
+    default_binary: Path | None
     unpack_dir: Path
     inventory_jsonl: Path
     inventory_summary: Path
@@ -77,25 +85,40 @@ class ProfileConfig:
     state_dir: Path
     text_section: str
     match_root: Path
+    binary_format: str = "pe"
+    default_compiler: str = "msvc"
 
     @staticmethod
-    def for_slug(slug: str) -> "ProfileConfig":
-        prefix = "swkotor" if slug in {"swkotor", "kotor"} else slug.replace("_", "-")
-        trivial_dir = ROOT / f"target/{prefix}-trivial-matches"
-        reloc_dir = ROOT / f"target/{prefix}-reloc-wrapper-matches"
-        text_section = ".textV" if slug in {"swkotor", "kotor"} else ".textU"
+    def for_slug(slug: str, *, binary: Path | None = None) -> "ProfileConfig":
+        """Build paths for an arbitrary profile slug (format-derived or operator-supplied)."""
+        prefix = _sanitize_slug(slug.replace("_", "-"))
+        binary_format = "pe"
+        default_compiler = "msvc"
+        text_section = ".text"
+        if binary is not None and binary.is_file():
+            if is_elf_binary(binary, min_bytes=0):
+                binary_format = "elf"
+                default_compiler = "clang"
+                text_section = detect_primary_text_section_elf(binary) or ".text"
+            elif is_pe_binary(binary, min_bytes=0):
+                binary_format = "pe"
+                default_compiler = "msvc"
+        elif prefix.startswith("elf"):
+            binary_format = "elf"
+            default_compiler = "clang"
+            text_section = ".text"
         return ProfileConfig(
-            slug=slug,
-            default_binary=DEFAULT_SWKOTOR_BINARY if slug in {"swkotor", "kotor"} else DEFAULT_JKA_BINARY,
+            slug=prefix,
+            default_binary=None,
             unpack_dir=ROOT / f"target/{prefix}-unpack",
             inventory_jsonl=ROOT / f"target/{prefix}-unpack/facts/function-inventory.jsonl",
             inventory_summary=ROOT / f"target/{prefix}-unpack/facts/inventory-summary.json",
-            trivial_matches_dir=trivial_dir,
-            trivial_out_jsonl=trivial_dir / "summary.jsonl",
-            trivial_summary=trivial_dir / "summary.json",
-            reloc_matches_dir=reloc_dir,
-            reloc_out_jsonl=reloc_dir / "summary.jsonl",
-            reloc_summary=reloc_dir / "summary.json",
+            trivial_matches_dir=ROOT / f"target/{prefix}-trivial-matches",
+            trivial_out_jsonl=ROOT / f"target/{prefix}-trivial-matches/summary.jsonl",
+            trivial_summary=ROOT / f"target/{prefix}-trivial-matches/summary.json",
+            reloc_matches_dir=ROOT / f"target/{prefix}-reloc-wrapper-matches",
+            reloc_out_jsonl=ROOT / f"target/{prefix}-reloc-wrapper-matches/summary.jsonl",
+            reloc_summary=ROOT / f"target/{prefix}-reloc-wrapper-matches/summary.json",
             recovered_dir=ROOT / f"target/{prefix}-recovered",
             compile_summary=ROOT / f"target/{prefix}-recovered/compile-summary.json",
             coverage_json=ROOT / f"target/{prefix}-recovered/coverage.json",
@@ -105,6 +128,8 @@ class ProfileConfig:
             state_dir=ROOT / f"target/source-parity-one-shot/{prefix}",
             text_section=text_section,
             match_root=ROOT / f"target/{prefix}-match",
+            binary_format=binary_format,
+            default_compiler=default_compiler,
         )
 
 
@@ -115,6 +140,7 @@ def now_iso() -> str:
 def run_script(script: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(ROOT / "scripts" / script), *args]
     return subprocess.run(cmd, cwd=ROOT, check=check, text=True, capture_output=True)
+
 
 def append_event(state_dir: Path, event: dict[str, Any]) -> None:
     path = state_dir / "events.jsonl"
@@ -192,27 +218,16 @@ def should_run_stage(state: dict[str, Any], name: str, resume: bool) -> bool:
 
 
 def resolve_profile_binary(input_path: Path, profile_slug: str) -> Path:
-    """Resolve the analysis binary for a profile (e.g. JKA launcher -> GameData/jamp.exe)."""
+    """Resolve the analysis binary for a profile from a file or install directory."""
     path = input_path.expanduser().resolve()
-    if profile_slug in {"jedi-academy", "jedi_academy"}:
-        candidates: list[Path] = []
-        roots: list[Path] = []
-        if path.is_file():
-            roots.append(path.parent)
-            if path.name.lower() == "jediacademy.exe":
-                roots.append(path.parent / "GameData")
-        elif path.is_dir():
-            roots.append(path)
-            roots.append(path / "GameData")
-        for root in roots:
-            if not root.is_dir():
-                continue
-            for name in ("jamp.exe", "jasp.exe"):
-                exe = root / name
-                if exe.is_file():
-                    candidates.append(exe)
-        if candidates:
-            return sorted(candidates, key=lambda item: item.stat().st_size, reverse=True)[0]
+    slug = profile_slug.replace("_", "-").lower()
+    if slug.startswith("elf") or (path.is_file() and is_elf_binary(path, min_bytes=0)):
+        try:
+            return resolve_elf_binary(path)
+        except FileNotFoundError:
+            if path.is_file():
+                return path
+            raise
     return resolve_target(path)
 
 
@@ -232,7 +247,6 @@ def reconcile_binary_identity(state: dict[str, Any], binary: Path, profile: Prof
         ):
             if path.exists():
                 path.unlink()
-        # Keep inventory when it still matches the on-disk summary (identity repair).
         inv = profile.inventory_jsonl
         summary = profile.inventory_summary
         if inv.exists() and summary.exists():
@@ -250,29 +264,41 @@ def reconcile_binary_identity(state: dict[str, Any], binary: Path, profile: Prof
 
 
 def detect_profile(input_path: Path) -> str:
-    name = input_path.name.lower()
-    if name in {"jamp.exe", "jasp.exe", "jediacademy.exe"} or "jedi" in name or "academy" in name:
-        return "jedi-academy"
-    if "swkotor" in name or "kotor" in name:
-        return "swkotor"
-    if input_path.is_dir():
-        if (input_path / "swkotor.exe").exists():
-            return "swkotor"
-        if (input_path / "JediAcademy.exe").exists():
-            return "jedi-academy"
-    return "swkotor"
+    """Derive a work-dir profile slug from binary format + stem (never product names)."""
+    path = input_path.expanduser().resolve()
+    if path.is_dir():
+        try:
+            path = resolve_elf_binary(path)
+        except FileNotFoundError:
+            path = resolve_target(path)
+    return format_profile_slug(path)
+
 
 def stage_discover(binary: Path, profile: ProfileConfig, state: dict[str, Any]) -> None:
     target = resolve_profile_binary(binary, profile.slug)
-    if profile.slug in {"swkotor", "kotor", "jedi-academy", "jedi_academy"} and not is_pe_binary(target):
-        raise ValueError(
-            f"{profile.slug} requires a Windows PE game binary (>=50KB, MZ header); got: {target}"
-        )
+    if profile.binary_format == "elf":
+        if not is_elf_binary(target):
+            raise ValueError(
+                f"profile {profile.slug} expects an ELF binary (>=50KB); got: {target}"
+            )
+    elif profile.binary_format == "pe":
+        if not is_pe_binary(target):
+            raise ValueError(
+                f"profile {profile.slug} expects a PE binary (>=50KB, MZ); got: {target}"
+            )
     digest = sha256_file(target)
     state["profile"] = profile.slug
     state["binaryPath"] = str(target)
     state["binarySha256"] = digest
-    mark_stage(state, "discover", "complete", binaryPath=str(target), sha256=digest)
+    state["binaryFormat"] = profile.binary_format
+    mark_stage(
+        state,
+        "discover",
+        "complete",
+        binaryPath=str(target),
+        sha256=digest,
+        binaryFormat=profile.binary_format,
+    )
 
 
 def _pe_packed(path: Path) -> bool:
@@ -328,7 +354,9 @@ def _pe_section_rows(path: Path) -> list[dict[str, Any]]:
 
 
 def detect_primary_text_section(path: Path) -> str | None:
-    """Prefer Steamless `.textV`/`.textU`, then any executable `.text*` section."""
+    """Prefer Steamless `.textV`/`.textU`, ELF `.text`, then any executable `.text*` section."""
+    if is_elf_binary(path, min_bytes=0):
+        return detect_primary_text_section_elf(path)
     rows = [row for row in _pe_section_rows(path) if row.get("executable")]
     if not rows:
         return None
@@ -340,6 +368,13 @@ def detect_primary_text_section(path: Path) -> str | None:
     if textish:
         return str(max(textish, key=lambda row: int(row.get("size") or 0))["name"])
     return None
+
+
+def binary_section_rows(path: Path) -> list[dict[str, Any]]:
+    """PE or ELF section rows."""
+    if is_elf_binary(path, min_bytes=0):
+        return elf_section_rows(path)
+    return _pe_section_rows(path)
 
 
 def resolve_text_section(profile: ProfileConfig, state: dict[str, Any]) -> str:
@@ -447,6 +482,21 @@ def stage_prepare(
         shutil.copy2(target, dest)
 
     extra: dict[str, Any] = {"unpackDir": str(unpack), "copiedTo": str(dest)}
+    if profile.binary_format == "elf" or is_elf_binary(dest, min_bytes=0):
+        # ELF targets are already analysis-ready; never run Steamless.
+        extra["transform"] = "none-elf-unpacked"
+        extra["analysisBinary"] = str(dest)
+        extra["analysisBinarySha256"] = sha256_file(dest)
+        detected = detect_primary_text_section(dest)
+        if detected:
+            state["textSection"] = detected
+            extra["textSection"] = detected
+        else:
+            state["textSection"] = profile.text_section
+            extra["textSection"] = profile.text_section
+        mark_stage(state, "prepare", "complete", **extra)
+        return
+
     if _pe_packed(dest):
         analysis_path, transform, transform_meta = _prepare_analysis_image(
             dest,
@@ -587,6 +637,44 @@ def stage_inventory(profile: ProfileConfig, state: dict[str, Any], refresh: bool
     script_dir = ROOT / "scripts" / "ghidra"
     analysis_receipt: dict[str, Any] | None = None
     inventory_export: dict[str, Any] | None = None
+
+    if profile.binary_format == "elf":
+        from .eh_frame_inventory import EhFrameError, build_eh_frame_inventory
+
+        try:
+            eh_summary = build_eh_frame_inventory(
+                binary,
+                ghidra_jsonl=None,
+                out_jsonl=jsonl,
+                summary_path=profile.inventory_summary,
+            )
+        except EhFrameError as exc:
+            raise RuntimeError(f"ELF eh_frame inventory failed: {exc}") from exc
+        section_counts = validate_inventory_text_coverage(
+            jsonl,
+            text_section,
+            section_counter=_inventory_section_counts,
+        )
+        text_count = int(section_counts.get(text_section) or 0)
+        mark_stage(
+            state,
+            "inventory",
+            "complete",
+            inventory=str(jsonl),
+            binarySha256=digest,
+            analysisBinarySha256=analysis_digest,
+            analysisBinary=str(analysis_binary),
+            functionCount=_count_jsonl(jsonl),
+            fdeCount=eh_summary.get("fdeCount"),
+            reconciliation=eh_summary.get("reconciliation"),
+            textSection=text_section,
+            textSectionFunctionCount=text_count,
+            sectionCounts=section_counts,
+            inventorySource="eh-frame",
+            ghidraReconciliationPending=True,
+        )
+        return
+
     if analyze and analyze.exists() and (script_dir / "ExportFunctionInventory.java").exists():
         shared_project = shared_project_root(profile.unpack_dir)
         analysis_receipt = ensure_analyzed_program(
@@ -649,6 +737,379 @@ def _extend_with_target_sha(args: list[str], state: dict[str, Any]) -> None:
         args.extend(["--target-sha", target_sha])
 
 
+def stage_reference_corpus(
+    profile: ProfileConfig,
+    state: dict[str, Any],
+    *,
+    reference_root: Path | None = None,
+) -> None:
+    """Parse optional reference C/C++ tree into a corpus receipt (ELF profiles)."""
+    if profile.binary_format != "elf":
+        mark_stage(state, "reference-corpus", "complete", skipped=True, reason="profile-not-elf")
+        return
+    from .reference_corpus import build_corpus, write_corpus
+
+    if reference_root is None:
+        mark_stage(
+            state,
+            "reference-corpus",
+            "complete",
+            skipped=True,
+            reason="reference-not-configured",
+        )
+        return
+    root = reference_root.expanduser()
+    out_dir = profile.unpack_dir / "facts"
+    if not root.exists():
+        mark_stage(
+            state,
+            "reference-corpus",
+            "complete",
+            skipped=True,
+            reason="reference-missing",
+            referenceRoot=str(root),
+        )
+        return
+    corpus = build_corpus(root)
+    path = write_corpus(corpus, out_dir)
+    mark_stage(
+        state,
+        "reference-corpus",
+        "complete",
+        corpusPath=str(path),
+        referenceRoot=str(root),
+        contentDigest=corpus.content_digest,
+        classCount=len(corpus.classes),
+    )
+
+
+def stage_enrich_decompile(
+    profile: ProfileConfig,
+    state: dict[str, Any],
+    *,
+    thread_count: int | None = None,
+) -> None:
+    """Single-session enrich+decompile for ELF profiles; no-op for PE."""
+    _ = thread_count
+    if profile.binary_format != "elf":
+        mark_stage(state, "enrich-decompile", "complete", skipped=True, reason="profile-not-elf")
+        return
+    import json as _json
+
+    import pyghidra
+
+    from .eh_frame_inventory import reconcile_with_ghidra, write_inventory_jsonl
+    from .ghidra_analysis import resolve_project_name
+    from .module_resolver import ModuleResolver
+    from .reference_corpus import load_corpus
+    from .pyghidra_enrich import PyGhidraEnrichProgram, build_names_by_entry, run_enrich_pipeline
+    from .rtti_recover import RttiClass, rtti_scan_receipt
+
+    binary = inventory_binary(profile, state)
+    inventory_rows: list[dict[str, Any]] = []
+    if profile.inventory_jsonl.exists():
+        with profile.inventory_jsonl.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    inventory_rows.append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+    boundaries = []
+    for row in inventory_rows:
+        entry = row.get("entryOffset")
+        if entry is None:
+            raw = row.get("entry")
+            try:
+                entry = int(str(raw), 16) if isinstance(raw, str) else int(raw)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        boundaries.append(
+            {
+                "entry": int(entry),
+                "length": row.get("length") or row.get("bodyBytes"),
+                "section": row.get("section"),
+                "provenance": row.get("provenance") or "eh-frame",
+            }
+        )
+    rtti = rtti_scan_receipt(binary)
+    rtti_classes = [RttiClass(mangled=c["mangled"], name=c["name"]) for c in rtti.get("classes") or []]
+    corpus = None
+    corpus_path = profile.unpack_dir / "facts" / "reference-corpus.json"
+    if corpus_path.exists():
+        corpus = load_corpus(corpus_path)
+    facts_path = profile.unpack_dir / "facts" / "function-facts.jsonl"
+    if not boundaries:
+        raise RuntimeError("ELF enrichment requires a non-empty function inventory")
+    project_root = profile.unpack_dir / "pyghidra-project"
+    project_root.mkdir(parents=True, exist_ok=True)
+    project_name = resolve_project_name(binary)
+    # One context owns import, analysis, enrichment, and all decompilation.
+    with pyghidra.open_program(
+        binary,
+        project_location=project_root,
+        project_name=project_name,
+        analyze=True,
+    ) as flat_api:
+        program = flat_api.getCurrentProgram()
+        discovered = []
+        for function in program.getFunctionManager().getFunctions(True):
+            body = function.getBody()
+            discovered.append(
+                {
+                    "entry": int(function.getEntryPoint().getOffset()),
+                    "name": str(function.getName()),
+                    "length": int(body.getNumAddresses()) if body is not None else None,
+                }
+            )
+        boundaries, reconciliation = reconcile_with_ghidra(boundaries, discovered)
+        write_inventory_jsonl(
+            profile.inventory_jsonl,
+            boundaries,
+            summary_path=profile.inventory_summary,
+            extra_summary={
+                "binaryPath": str(binary),
+                "fdeCount": int(
+                    ((state.get("stages") or {}).get("inventory") or {}).get("fdeCount")
+                    or len([row for row in boundaries if row.get("boundary") != "ghidra-only"])
+                ),
+                "reconciliation": reconciliation,
+                "textSection": profile.text_section,
+            },
+        )
+        resolver = ModuleResolver()
+        function_manager = program.getFunctionManager()
+        reference_manager = program.getReferenceManager()
+        listing = program.getListing()
+        for data in listing.getDefinedData(True):
+            try:
+                value = str(data.getValue() or "")
+            except Exception:  # noqa: BLE001 - Java data values vary by type
+                continue
+            if "/CODE/" not in value and "\\CODE\\" not in value:
+                continue
+            for reference in reference_manager.getReferencesTo(data.getAddress()):
+                function = function_manager.getFunctionContaining(reference.getFromAddress())
+                if function is None:
+                    continue
+                resolver.assert_paths_by_entry[
+                    int(function.getEntryPoint().getOffset())
+                ] = value
+        if corpus is not None:
+            class_modules = {
+                name: cls.path or str(Path(cls.source_file).parent)
+                for name, cls in corpus.classes.items()
+            }
+            for row in discovered:
+                name = str(row.get("name") or "")
+                if "::" not in name:
+                    continue
+                module = class_modules.get(name.split("::", 1)[0])
+                if module:
+                    resolver.rtti_module_by_entry[int(row["entry"])] = module
+        module_by_entry: dict[int, str] = {}
+        module_entries: dict[str, dict[str, Any]] = {}
+        for row in boundaries:
+            entry = int(row["entry"])
+            evidence = resolver.resolve(entry)
+            module_by_entry[entry] = evidence.module
+            module_entries[f"{entry:08x}"] = {
+                "module": evidence.module,
+                "moduleProvenance": evidence.provenance,
+                "score": evidence.score,
+            }
+        names_by_entry = build_names_by_entry(
+            discovered=discovered,
+            rtti_classes=rtti_classes,
+            corpus=corpus,
+        )
+        summary = run_enrich_pipeline(
+            boundaries=boundaries,
+            corpus=corpus,
+            rtti_classes=rtti_classes,
+            out_facts=facts_path,
+            program_factory=lambda: PyGhidraEnrichProgram(flat_api),
+            module_by_entry=module_by_entry,
+            names_by_entry=names_by_entry,
+        )
+        module_map_path = profile.unpack_dir / "facts" / "module-map.json"
+        module_map_path.write_text(
+            _json.dumps(
+                {
+                    "schema": "agentdecompile.module-map.v1",
+                    "entries": module_entries,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    (profile.unpack_dir / "facts" / "rtti-scan.json").write_text(
+        _json.dumps(rtti, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    mark_stage(
+        state,
+        "enrich-decompile",
+        "complete",
+        factsJsonl=str(facts_path),
+        functionCount=summary.get("functionCount"),
+        namedCount=summary.get("namedCount"),
+        namesApplied=len(names_by_entry),
+        rttiClassCount=rtti.get("classCount"),
+        enrichmentOrdering="boundaries-rtti-corpus-then-decompile",
+        ghidraProjectPath=str(project_root),
+        ghidraProjectName=project_name,
+        singleSession=True,
+        reconciliation=reconciliation,
+        moduleMap=str(module_map_path),
+    )
+
+
+def stage_module_map(profile: ProfileConfig, state: dict[str, Any]) -> None:
+    """Write evidence-based module map for dump (PE and ELF)."""
+    existing = profile.unpack_dir / "facts" / "module-map.json"
+    if existing.exists():
+        payload = json.loads(existing.read_text(encoding="utf-8"))
+        mark_stage(
+            state,
+            "module-map",
+            "complete",
+            moduleMap=str(existing),
+            entryCount=len(payload.get("entries") or {}),
+            reused=True,
+        )
+        return
+    import json as _json
+
+    from .ghidra_analysis import resolve_project_name
+    from .reference_corpus import load_corpus
+    from .module_resolver import ModuleResolver, normalize_code_path
+    from .rtti_recover import extract_assert_code_paths
+
+    binary = inventory_binary(profile, state)
+    assert_paths = extract_assert_code_paths(binary)
+    corpus_path = profile.unpack_dir / "facts" / "reference-corpus.json"
+    class_modules: dict[str, str] = {}
+    if corpus_path.exists():
+        corpus = load_corpus(corpus_path)
+        for name, cls in corpus.classes.items():
+            class_modules[name] = cls.path or str(Path(cls.source_file).parent)
+    resolver = ModuleResolver()
+    # Prefer live string-xref evidence when a Ghidra project is available.
+    inv_stage = (state.get("stages") or {}).get("inventory") or {}
+    enrich_stage = (state.get("stages") or {}).get("enrich-decompile") or {}
+    project_root = Path(
+        str(
+            enrich_stage.get("ghidraProjectPath")
+            or inv_stage.get("ghidraProjectPath")
+            or (profile.unpack_dir / "pyghidra-project")
+        )
+    )
+    project_name = str(
+        enrich_stage.get("ghidraProjectName")
+        or inv_stage.get("ghidraProjectName")
+        or resolve_project_name(binary)
+    )
+    xref_mapped = 0
+    try:
+        import pyghidra
+
+        project_root.mkdir(parents=True, exist_ok=True)
+        # Prefer reusing an already-analyzed project from inventory/enrich.
+        already_analyzed = bool(
+            inv_stage.get("ghidraProjectPath") or enrich_stage.get("ghidraProjectPath")
+        )
+        with pyghidra.open_program(
+            binary,
+            project_location=project_root,
+            project_name=project_name,
+            analyze=not already_analyzed,
+        ) as flat_api:
+            program = flat_api.getCurrentProgram()
+            function_manager = program.getFunctionManager()
+            reference_manager = program.getReferenceManager()
+            listing = program.getListing()
+            for data in listing.getDefinedData(True):
+                try:
+                    value = str(data.getValue() or "")
+                except Exception:  # noqa: BLE001 - Java data values vary by type
+                    continue
+                lowered = value.lower()
+                if not (
+                    "/code/" in lowered
+                    or "\\code\\" in lowered
+                    or lowered.endswith((".cpp", ".c", ".cc", ".cxx", ".h", ".hpp"))
+                ):
+                    continue
+                for reference in reference_manager.getReferencesTo(data.getAddress()):
+                    function = function_manager.getFunctionContaining(reference.getFromAddress())
+                    if function is None:
+                        continue
+                    entry = int(function.getEntryPoint().getOffset())
+                    resolver.assert_paths_by_entry[entry] = value
+                    xref_mapped += 1
+    except Exception:  # noqa: BLE001 - module map is advisory; never hard-fail dump path
+        xref_mapped = 0
+    module_map: dict[str, Any] = {}
+    facts_path = profile.unpack_dir / "facts" / "function-facts.jsonl"
+    inventory_path = profile.inventory_jsonl
+    rows: list[dict[str, Any]] = []
+    source = facts_path if facts_path.exists() else inventory_path
+    if source.exists():
+        with source.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    rows.append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+    for row in rows:
+        raw_entry = row.get("entryOffset")
+        if raw_entry is None:
+            raw_entry = row.get("entry")
+        try:
+            entry = int(raw_entry) if not isinstance(raw_entry, str) else int(str(raw_entry), 16)
+        except (TypeError, ValueError):
+            continue
+        name = str(row.get("name") or "")
+        if "::" in name:
+            class_name = name.split("::", 1)[0]
+            if class_name in class_modules:
+                resolver.rtti_module_by_entry[entry] = class_modules[class_name]
+        ev = resolver.resolve(entry)
+        module_map[f"{entry:08x}"] = {
+            "module": ev.module,
+            "moduleProvenance": ev.provenance,
+            "score": ev.score,
+            "name": name,
+        }
+    # Keep global assert path list for operators even when no entry was mapped.
+    out = profile.unpack_dir / "facts" / "module-map.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": "agentdecompile.module-map.v1",
+        "assertCodePaths": assert_paths,
+        "entries": module_map,
+        "classModules": class_modules,
+        "xrefMapped": xref_mapped,
+        "normalizedAssertPaths": [normalize_code_path(p) for p in assert_paths],
+    }
+    out.write_text(_json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    mark_stage(
+        state,
+        "module-map",
+        "complete",
+        moduleMap=str(out),
+        entryCount=len(module_map),
+        assertPathCount=len(assert_paths),
+        xrefMapped=xref_mapped,
+    )
+
+
 def stage_batch_decompile(
     profile: ProfileConfig,
     state: dict[str, Any],
@@ -656,6 +1117,20 @@ def stage_batch_decompile(
     thread_count: int | None = None,
 ) -> None:
     """Reuse shared Ghidra project for ghidrecomp decompile; write facts for dump."""
+
+    if profile.binary_format == "elf":
+        enrich = (state.get("stages") or {}).get("enrich-decompile") or {}
+        facts = enrich.get("factsJsonl")
+        if facts and Path(str(facts)).exists():
+            mark_stage(
+                state,
+                "batch-decompile",
+                "complete",
+                skipped=True,
+                reason="elf-uses-enrich-decompile",
+                factsJsonl=str(facts),
+            )
+            return
 
     from agentdecompile_cli.mcp_utils.batch_decompile import build_batch_decompile_payload
 
@@ -735,7 +1210,7 @@ def stage_match_trivial(
         args.extend(["--workers", str(workers)])
     if force_rematch:
         args.append("--force-rematch")
-    result = run_script("swkotor-match-trivial.py", *args)
+    result = run_script("match-trivial.py", *args)
     mark_stage(
         state,
         "match-trivial",
@@ -784,7 +1259,7 @@ def stage_match_reloc(
         args.extend(["--workers", str(workers)])
     if force_rematch:
         args.append("--force-rematch")
-    result = run_script("swkotor-match-reloc-wrappers.py", *args)
+    result = run_script("match-reloc-wrappers.py", *args)
     mark_stage(
         state,
         "match-reloc-wrappers",
@@ -829,7 +1304,7 @@ def stage_export_source(profile: ProfileConfig, state: dict[str, Any]) -> None:
     args = ["--out-dir", str(profile.recovered_dir)]
     for summary in summaries:
         args.extend(["--summary", str(summary)])
-    result = run_script("swkotor-export-matched-source.py", *args)
+    result = run_script("export-matched-source.py", *args)
     mark_stage(
         state,
         "export-source",
@@ -866,7 +1341,7 @@ def stage_compile_source(profile: ProfileConfig, state: dict[str, Any], *, no_co
         return
     export_stage = (state.get("stages") or {}).get("export-source") or {}
     result = run_script(
-        "swkotor-compile-recovered-shard.py",
+        "compile-recovered-shard.py",
         "--manifest",
         str(manifest),
         "--out-dir",
@@ -1014,7 +1489,7 @@ def stage_queue(profile: ProfileConfig, state: dict[str, Any], *, queue_limit: i
     manifest_path = profile.recovered_dir / "simple_matches.manifest.json"
     if manifest_path.is_file():
         args.extend(["--manifest", str(manifest_path)])
-    result = run_script("swkotor-recovery-queue.py", *args)
+    result = run_script("recovery-queue.py", *args)
     mark_stage(state, "queue", "complete", returncode=result.returncode, queueLimit=queue_limit)
     if result.returncode != 0:
         raise RuntimeError(result.stderr or "queue failed")
@@ -1131,6 +1606,8 @@ def stage_synthesize(
         args.extend(["--wineprefix", str(wineprefix)])
     if progress_every is not None:
         args.extend(["--progress-every", str(progress_every)])
+    # ELF profiles are clang-native; never require Wine/MSVC.
+    args.extend(["--compiler", profile.default_compiler])
     if profile.trivial_out_jsonl.exists():
         args.extend(["--matched-summary", str(profile.trivial_out_jsonl)])
     if profile.reloc_out_jsonl.exists():
@@ -1138,9 +1615,8 @@ def stage_synthesize(
     code_slice_matches = profile.synthesis_out_dir / "code-slice-matches.jsonl"
     if code_slice_matches.is_file():
         args.extend(["--matched-summary", str(code_slice_matches)])
-    # JKA inventory functions are mostly byte-pattern stubs; semantic-only skips all of them.
-    if profile.slug not in {"jedi-academy", "jedi_academy"}:
-        args.append("--semantic-only")
+    # secondary PE inventory functions are mostly byte-pattern stubs; semantic-only skips all of them.
+    args.append("--semantic-only")
     result = run_script("source-parity-synthesize.py", *args)
     summary = read_json(profile.synthesis_out_dir / "summary.json") if (profile.synthesis_out_dir / "summary.json").is_file() else {}
     mark_kwargs = {
@@ -1190,6 +1666,17 @@ def _register_runners() -> None:
                 ctx["refresh_inventory"],
                 ghidra=ctx["ghidra"],
             ),
+            "reference-corpus": lambda ctx: stage_reference_corpus(
+                ctx["profile"],
+                ctx["state"],
+                reference_root=ctx.get("reference_root"),
+            ),
+            "enrich-decompile": lambda ctx: stage_enrich_decompile(
+                ctx["profile"],
+                ctx["state"],
+                thread_count=ctx.get("decompile_thread_count"),
+            ),
+            "module-map": lambda ctx: stage_module_map(ctx["profile"], ctx["state"]),
             "batch-decompile": lambda ctx: stage_batch_decompile(
                 ctx["profile"],
                 ctx["state"],
@@ -1321,14 +1808,16 @@ def run_pipeline(
     force_rematch: bool = False,
     workers: int = 0,
     decompile_thread_count: int | None = None,
+    reference_root: Path | None = None,
 ) -> dict[str, Any]:
     _register_runners()
     slug = profile_slug or detect_profile(input_path)
-    profile = ProfileConfig.for_slug(slug)
+    resolved_binary = resolve_profile_binary(input_path, slug)
+    profile = ProfileConfig.for_slug(slug, binary=resolved_binary)
     state_path = profile.state_dir / "state.json"
     report_path = profile.state_dir / "report.json"
     state = load_state(state_path)
-    binary = reconcile_binary_identity(state, input_path, profile)
+    binary = reconcile_binary_identity(state, resolved_binary, profile)
     ctx = {
         "binary": binary,
         "profile": profile,
@@ -1361,6 +1850,7 @@ def run_pipeline(
         "workers": workers,
         "force_export_downstream": False,
         "decompile_thread_count": decompile_thread_count,
+        "reference_root": reference_root,
     }
     timings = load_stage_timings(profile.state_dir)
     stop_idx = stage_index(stop_after) if stop_after else len(STAGES) - 1
@@ -1512,11 +2002,11 @@ def run_pipeline(
 
 def self_check() -> dict[str, Any]:
     scripts = [
-        "swkotor-match-trivial.py",
-        "swkotor-match-reloc-wrappers.py",
-        "swkotor-export-matched-source.py",
-        "swkotor-compile-recovered-shard.py",
-        "swkotor-recovery-queue.py",
+        "match-trivial.py",
+        "match-reloc-wrappers.py",
+        "export-matched-source.py",
+        "compile-recovered-shard.py",
+        "recovery-queue.py",
         "source-parity-feature-index.py",
         "source-parity-profile-corpus.py",
         "source-parity-synthesize.py",
@@ -1534,7 +2024,12 @@ def self_check() -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Source parity one-shot pipeline orchestrator")
     parser.add_argument("input", type=Path, nargs="?", help="Game binary or install folder")
-    parser.add_argument("--profile", help="Profile slug (swkotor, jedi-academy)")
+    parser.add_argument("--profile", help="Optional work-dir profile slug (default: format+stem from binary).")
+    parser.add_argument(
+        "--reference-root",
+        type=Path,
+        help="Optional reference C/C++ source tree for corpus enrichment.",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--stop-after", choices=STAGES)
     parser.add_argument("--refresh-inventory", action="store_true")
@@ -1633,6 +2128,7 @@ def main(argv: list[str] | None = None) -> int:
             force_rematch=args.force_rematch,
             workers=args.workers,
             decompile_thread_count=args.decompile_threads,
+            reference_root=args.reference_root,
         )
     except Exception as exc:
         print(f"source-parity-one-shot failed: {exc}", file=sys.stderr)

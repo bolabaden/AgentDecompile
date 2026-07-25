@@ -23,7 +23,7 @@ flowchart LR
   cand --> gate[Compile and objdiff]
   gate -->|pass| verified[verified/]
   ghidra -->|read-only| advisory[advisory/]
-  verified --> dump[Borealis-shaped dump]
+  verified --> dump[Layered source dump]
   advisory --> dump
 ```
 
@@ -57,11 +57,11 @@ Session-stable PyGhidra MCP/CLI with real analysis gates so agents and humans se
 
 ### Matching recovery
 
-Compiler-profile corpus, relocation-aware objects, candidate generation, vacuum/repair loop. Scale with match cache (skip proven zero-diff unless `--force-rematch`) and parallel Wine/MSVC workers. Record stage timings.
+Compiler-profile corpus, relocation-aware objects, candidate generation, vacuum/repair loop. Default `agentdecompile-reconstruct` runs **enrich-before-decompile** (names/types/RTTI/module-map via PyGhidra) before source generation; operators can pass `--skip-enrichment` for inventory/match-only runs. Scale with match cache (skip proven zero-diff unless `--force-rematch`) and parallel Wine/MSVC workers. Record stage timings.
 
 ### Multi-format export
 
-Asm, C/C++, higher-level views, hex packages — each tagged verified or advisory. Default one-shot output: Borealis-shaped dump (`--dump-source`) with `verified/`, `advisory/ghidra/`, `Port/CODE/`.
+Asm, C/C++, higher-level views, hex packages — each tagged verified or advisory. Default one-shot output: layered dump (`--dump-source`) with `verified/` (objdiff 0 only), `advisory/ghidra/`, and `Port/CODE/` (readability-gated; noise-stripped). Port readability is advisory — never a proof claim.
 
 ### One-shot performance (U1–U5 completed)
 
@@ -71,7 +71,7 @@ Shared Ghidra analysis, higher default decompile threads, digest-gated dump/matc
 
 - Calling byte emitters, `.incbin`, or copied target bytes "recovered source"
 - Treating decompiler output or LLM text as proof without compile/objdiff
-- Near-term whole-binary semantic parity claims (e.g. 90% of `swkotor.exe` in one shot)
+- Near-term whole-binary semantic parity claims (e.g. 90% of one game binary in one shot)
 - Second product brands (Mizuchi/ReconKit) or recovery from `~/Workspaces/Mizuchi`
 - Rematching objdiff-0 functions without `--force-rematch`
 - Presenting last week's match JSONL or dump as today's fresh run when the task was to produce source

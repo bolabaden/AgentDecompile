@@ -34,7 +34,7 @@ class SourcePluginRunConfig:
     queue: Path | None = None
     source_tasks: list[Path] = field(default_factory=list)
     source_tasks_only: bool = False
-    out_dir: Path = Path("target/source-plugin-pipeline/swkotor")
+    out_dir: Path = Path("target/source-plugin-pipeline/default")
     limit: int = 25
     offset: int = 0
     max_variants_per_function: int = 8
@@ -48,8 +48,10 @@ class SourcePluginRunConfig:
     semantic_only: bool = False
     skip_boundary_suspect: bool = False
     source_shape_search: bool = False
+    work_dir: Path | None = None
+    routed_playbook: str | None = None
     clean: bool = False
-    inventory: Path = Path("target/swkotor-unpack/facts/function-inventory.jsonl")
+    inventory: Path = Path("target/binary-unpack/facts/function-inventory.jsonl")
     vc_root: Path | None = None
     wine: str = "wine"
     wineprefix: Path | None = None
@@ -117,6 +119,8 @@ def run_source_plugin_pipeline(config: SourcePluginRunConfig) -> dict[str, Any]:
                 "dryRun": config.dry_run,
                 "semanticOnly": config.semantic_only,
                 "sourceShapeSearch": config.source_shape_search,
+                "routedPlaybook": config.routed_playbook,
+                "workDir": str(config.work_dir) if config.work_dir else None,
                 "maxVariantsPerFunction": config.max_variants_per_function,
                 "strategies": sorted(config.strategies) if config.strategies else None,
                 "sourceQualities": sorted(config.source_qualities) if config.source_qualities else None,

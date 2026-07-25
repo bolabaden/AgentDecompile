@@ -64,16 +64,16 @@ def collect_snapshot_sources(report_path: Path) -> list[Path]:
         if value:
             paths.add(Path(value))
 
-    recovered_dir = ROOT / "target/swkotor-recovered"
+    recovered_dir = ROOT / "target/recovered"
     if recovered_dir.exists():
         paths.add(recovered_dir)
-    trivial_dir = ROOT / "target/swkotor-trivial-matches"
+    trivial_dir = ROOT / "target/trivial-matches"
     if trivial_dir.exists():
         paths.add(trivial_dir)
-    reloc_dir = ROOT / "target/swkotor-reloc-wrapper-matches"
+    reloc_dir = ROOT / "target/reloc-wrapper-matches"
     if reloc_dir.exists():
         paths.add(reloc_dir)
-    synthesis_dir = ROOT / "target/source-parity-synthesis/swkotor"
+    synthesis_dir = ROOT / "target/source-parity-synthesis/default"
     if synthesis_dir.exists():
         paths.add(synthesis_dir)
     return sorted(paths, key=lambda path: str(path))

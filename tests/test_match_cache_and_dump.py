@@ -277,7 +277,7 @@ def test_dump_excludes_byte_emitter_from_verified(tmp_path: Path) -> None:
     ]
     summary.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
     out_dir = tmp_path / "dump"
-    manifest = dump_source_tree(out_dir=out_dir, summaries=[summary], borealis_reference=tmp_path)
+    manifest = dump_source_tree(out_dir=out_dir, summaries=[summary], reference_root=tmp_path)
 
     verified = out_dir / "verified"
     verified_files = list(verified.glob("**/*.c")) if verified.exists() else []
@@ -356,7 +356,7 @@ def test_dump_source_tree_layers_and_format_once(tmp_path: Path, monkeypatch: py
         out_dir=out_dir,
         summaries=[summary],
         ghidra_facts=facts,
-        borealis_reference=tmp_path,
+        reference_root=tmp_path,
     )
 
     verified = list((out_dir / "verified").glob("**/*.c"))
@@ -410,7 +410,7 @@ def test_dump_uses_embedded_source_when_candidate_path_is_missing(tmp_path: Path
     manifest = dump_source_tree(
         out_dir=out_dir,
         summaries=[summary],
-        borealis_reference=tmp_path,
+        reference_root=tmp_path,
     )
 
     verified = list((out_dir / "verified").glob("*EmbeddedOnly.c"))

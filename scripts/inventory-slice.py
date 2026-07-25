@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a COFF target object from a Ghidra swkotor function inventory row."""
+"""Create a COFF target object from a Ghidra target function inventory row."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def byte_rows(data: bytes) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inventory", type=Path, default=ROOT / "target/swkotor-unpack/facts/function-inventory.jsonl")
+    parser.add_argument("--inventory", type=Path, default=ROOT / "target/binary-unpack/facts/function-inventory.jsonl")
     parser.add_argument("--function", required=True, help="function name or entry address")
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--symbol", help="COFF symbol name to emit, e.g. _FUN_00401590@16")
@@ -98,7 +98,7 @@ def main() -> int:
         raise SystemExit("assembled target .text does not match inventory bytes")
 
     meta = {
-        "schema": "agentdecompile.swkotor-inventory-slice.v1",
+        "schema": "agentdecompile.inventory-slice.v1",
         "inventory": str(args.inventory),
         "name": record.get("name"),
         "entry": record.get("entry"),

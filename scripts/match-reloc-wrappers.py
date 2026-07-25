@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Match simple swkotor call/jump wrappers using relocation-aware target objects."""
+"""Match simple target call/jump wrappers using relocation-aware target objects."""
 
 from __future__ import annotations
 
@@ -338,7 +338,7 @@ def _attempt_reloc_job(job: dict) -> dict:
     if target_proc.returncode != 0:
         return _with_target_sha(
             {
-                "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+                "schema": "agentdecompile.recovery-reloc-wrapper-match.v1",
                 "name": candidate.name,
                 "entry": row.get("entry"),
                 "kind": candidate.kind,
@@ -373,7 +373,7 @@ def _attempt_reloc_job(job: dict) -> dict:
     if compile_proc.returncode != 0:
         return _with_target_sha(
             {
-                "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+                "schema": "agentdecompile.recovery-reloc-wrapper-match.v1",
                 "name": candidate.name,
                 "entry": row.get("entry"),
                 "kind": candidate.kind,
@@ -410,7 +410,7 @@ def _attempt_reloc_job(job: dict) -> dict:
         differences = int(report.get("differences", -1))
     return _with_target_sha(
         {
-            "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+            "schema": "agentdecompile.recovery-reloc-wrapper-match.v1",
             "name": candidate.name,
             "entry": row.get("entry"),
             "section": row.get("section"),
@@ -440,12 +440,12 @@ def main() -> int:
     from agentdecompile_recovery.verify_pool import map_parallel, resolve_workers
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inventory", type=Path, default=ROOT / "target/swkotor-unpack/facts/function-inventory.jsonl")
+    parser.add_argument("--inventory", type=Path, default=ROOT / "target/binary-unpack/facts/function-inventory.jsonl")
     parser.add_argument("--limit", type=int, default=200, help="Max candidates to attempt; 0 means no limit.")
-    parser.add_argument("--out", type=Path, default=ROOT / "target/swkotor-reloc-wrapper-matches/summary.jsonl")
-    parser.add_argument("--summary", type=Path, default=ROOT / "target/swkotor-reloc-wrapper-matches/summary.json")
+    parser.add_argument("--out", type=Path, default=ROOT / "target/reloc-wrapper-matches/summary.jsonl")
+    parser.add_argument("--summary", type=Path, default=ROOT / "target/reloc-wrapper-matches/summary.json")
     parser.add_argument("--text-section", default=".textV", help="Inventory section to match (e.g. .textV, .textU).")
-    parser.add_argument("--match-root", type=Path, default=ROOT / "target/swkotor-reloc-wrapper-matches")
+    parser.add_argument("--match-root", type=Path, default=ROOT / "target/reloc-wrapper-matches")
     parser.add_argument("--vc-root", type=Path, default=DEFAULT_VC_ROOT)
     parser.add_argument("--wineprefix", type=Path, default=DEFAULT_WINEPREFIX)
     parser.add_argument("--progress-every", type=int, default=0, help="Print attempted/matched progress to stderr every N attempted candidates.")
@@ -510,7 +510,7 @@ def main() -> int:
 
     workers = resolve_workers(args.workers or None)
     print(
-        f"swkotor-match-reloc-wrappers: queue={len(jobs)} cached_skip={skipped_cached} workers={workers}",
+        f"match-reloc-wrappers: queue={len(jobs)} cached_skip={skipped_cached} workers={workers}",
         file=sys.stderr,
         flush=True,
     )
@@ -518,7 +518,7 @@ def main() -> int:
         row = job["row"]
         candidate = job["candidate"]
         return {
-            "schema": "agentdecompile.swkotor-reloc-wrapper-match.v1",
+            "schema": "agentdecompile.recovery-reloc-wrapper-match.v1",
             "name": candidate.name,
             "entry": row.get("entry"),
             "kind": candidate.kind,
@@ -557,7 +557,7 @@ def main() -> int:
         )
     duration = round(time.monotonic() - started, 3)
     rollup = {
-        "schema": "agentdecompile.swkotor-reloc-wrapper-matches-summary.v1",
+        "schema": "agentdecompile.recovery-reloc-wrapper-matches-summary.v1",
         "inventory": str(args.inventory),
         "summaryJsonl": str(args.out),
         "attempted": attempted,

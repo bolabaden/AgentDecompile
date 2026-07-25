@@ -109,7 +109,8 @@ def build_parser() -> argparse.ArgumentParser:
     recover.add_argument("--work-dir", type=Path, help="Run/state directory. Defaults to target/agentdecompile-recover/<stable-target-id>.")
     recover.add_argument("--resume", action="store_true", help="Reuse complete stage receipts with matching config.")
     recover.add_argument("--force", action="store_true", help="Rerun selected stages even when receipts exist.")
-    recover.add_argument("--stop-after", choices=["discover", "inspect-capabilities", "prepare-analysis-image", "export-context", "inventory-binary", "discover-functions", "analyze-functions", "generate-source-candidates", "synthesize-source-tasks", "plan-strategy", "byte-authority", "legacy-adapter", "snapshot-existing-recovery", "report"])
+    recover.add_argument("--stop-after", choices=["discover", "inspect-capabilities", "prepare-analysis-image", "export-context", "inventory-binary", "discover-functions", "analyze-functions", "enrich-decompile", "generate-source-candidates", "synthesize-source-tasks", "plan-strategy", "byte-authority", "legacy-adapter", "snapshot-existing-recovery", "report"])
+    recover.add_argument("--skip-enrichment", action="store_true", help="Skip PyGhidra enrich-decompile before source generation.")
     recover.add_argument("--json", action="store_true", help="Emit progress as JSON lines.")
     recover.add_argument("--progress-width", type=int, default=24)
     recover.add_argument("--stage-timeout", type=int, default=300)
@@ -235,8 +236,8 @@ def build_parser() -> argparse.ArgumentParser:
     sweep.add_argument("--compiler-profile", "--clang-profile", dest="compiler_profile", action="append", default=[], help="Comma-separated compiler args for one profile, for example --compiler-profile=-O2 or --compiler-profile=/O2,/GS-,/Oy. Repeat for multiple profiles.")
 
     profile = sub.add_parser("compiler-profile-corpus", help="Select and sweep a compiler-profile corpus from verified matched examples.")
-    profile.add_argument("--matched-examples", type=Path, default=Path("target/source-parity-index/swkotor/matched-examples.jsonl"))
-    profile.add_argument("--out-dir", type=Path, default=Path("target/source-parity-profile/swkotor"))
+    profile.add_argument("--matched-examples", type=Path, default=Path("target/source-parity-index/default/matched-examples.jsonl"))
+    profile.add_argument("--out-dir", type=Path, default=Path("target/source-parity-profile/default"))
     profile.add_argument("--max-cases", type=int, default=6)
     profile.add_argument("--select-only", "--dry-run", dest="select_only", action="store_true", help="Select corpus cases without compiling.")
     profile.add_argument("--profile", action="append", default=[], help="Compiler profile as NAME=VC_ROOT. Repeat for multiple toolchains.")
@@ -247,16 +248,16 @@ def build_parser() -> argparse.ArgumentParser:
     profile.add_argument("--clean", action="store_true")
 
     synth = sub.add_parser("source-parity-synthesize", help="Generate and objdiff-gate source candidates from a recovery queue.")
-    synth.add_argument("--queue", type=Path, default=Path("target/swkotor-recovery-queue/queue.jsonl"))
+    synth.add_argument("--queue", type=Path, default=Path("target/recovery-queue/queue.jsonl"))
     synth.add_argument("--source-tasks", type=Path, action="append", default=[], help="source-generation/tasks.jsonl emitted by recover/recover-windows. Repeat for multiple task files.")
     synth.add_argument("--source-tasks-only", action="store_true", help="Only inspect rows converted from --source-tasks; do not prepend the default recovery queue.")
     synth.add_argument("--verify-packaged-source", action="store_true", help="For source-task rows, verify the packaged source file from tasks.jsonl instead of regenerating a candidate from bytes.")
     synth.add_argument("--upgrade-packaged-source", action="store_true", help="For source-task rows, try regenerated semantic candidates before the packaged source fallback.")
-    synth.add_argument("--inventory", type=Path, default=Path("target/swkotor-unpack/facts/function-inventory.jsonl"))
-    synth.add_argument("--remaining-features", type=Path, default=Path("target/source-parity-index/swkotor/remaining-features.jsonl"))
-    synth.add_argument("--retrieval", type=Path, default=Path("target/source-parity-index/swkotor/retrieval.jsonl"))
+    synth.add_argument("--inventory", type=Path, default=Path("target/binary-unpack/facts/function-inventory.jsonl"))
+    synth.add_argument("--remaining-features", type=Path, default=Path("target/source-parity-index/default/remaining-features.jsonl"))
+    synth.add_argument("--retrieval", type=Path, default=Path("target/source-parity-index/default/retrieval.jsonl"))
     synth.add_argument("--matched-summary", type=Path, action="append")
-    synth.add_argument("--out-dir", type=Path, default=Path("target/source-parity-synthesis/swkotor"))
+    synth.add_argument("--out-dir", type=Path, default=Path("target/source-parity-synthesis/default"))
     synth.add_argument("--limit", type=int, default=25)
     synth.add_argument("--offset", type=int, default=0)
     synth.add_argument("--max-variants-per-function", type=int, default=8)
@@ -289,11 +290,11 @@ def build_parser() -> argparse.ArgumentParser:
     synth.add_argument("--progress-every", type=int, default=0)
 
     plugin_synth = sub.add_parser("source-plugin-pipeline", help="Run source generation and objdiff through the upstream-style plugin lifecycle.")
-    plugin_synth.add_argument("--queue", type=Path, default=Path("target/swkotor-recovery-queue/queue.jsonl"))
+    plugin_synth.add_argument("--queue", type=Path, default=Path("target/recovery-queue/queue.jsonl"))
     plugin_synth.add_argument("--source-tasks", type=Path, action="append", default=[], help="source-generation/tasks.jsonl emitted by recover/recover-windows. Repeat for multiple task files.")
     plugin_synth.add_argument("--source-tasks-only", action="store_true", help="Only inspect rows converted from --source-tasks; do not prepend the default recovery queue.")
-    plugin_synth.add_argument("--inventory", type=Path, default=Path("target/swkotor-unpack/facts/function-inventory.jsonl"))
-    plugin_synth.add_argument("--out-dir", type=Path, default=Path("target/source-plugin-pipeline/swkotor"))
+    plugin_synth.add_argument("--inventory", type=Path, default=Path("target/binary-unpack/facts/function-inventory.jsonl"))
+    plugin_synth.add_argument("--out-dir", type=Path, default=Path("target/source-plugin-pipeline/default"))
     plugin_synth.add_argument("--limit", type=int, default=25)
     plugin_synth.add_argument("--offset", type=int, default=0)
     plugin_synth.add_argument("--max-variants-per-function", type=int, default=8)
@@ -408,6 +409,7 @@ def run_recover(args: argparse.Namespace) -> int:
         context_max_index_text_chars=args.context_max_index_text_chars,
         context_extract_containers=not args.no_context_extract_containers,
         context_include_low_signal_members=args.context_include_low_signal_members,
+        skip_enrichment=bool(getattr(args, "skip_enrichment", False)),
     )
     return RecoveryRunner(config).run()
 

@@ -13,6 +13,16 @@ from typing import Any, Iterable
 
 SCHEMA = "agentdecompile.verify-objdiff.v1"
 
+INSTRUCTION_MISMATCH_KINDS = frozenset(
+    {
+        "INSERTION",
+        "DELETION",
+        "REPLACEMENT",
+        "OPCODE_MISMATCH",
+        "ARGUMENT_MISMATCH",
+    }
+)
+
 
 def iter_json_objects(value: Any) -> Iterable[dict[str, Any]]:
     if isinstance(value, dict):
@@ -71,6 +81,9 @@ def parse_objdiff_report(returncode: int, output: str) -> dict[str, Any]:
                 # Malformed percentages provide no proof; keep parsing other sections.
                 continue
 
+    histogram = extract_mismatch_histogram(parsed)
+    detail_level = "instruction" if histogram else "scalar-only"
+
     if match_percents and all(value == 100 for value in match_percents):
         differences = 0
         status = "matched"
@@ -84,11 +97,37 @@ def parse_objdiff_report(returncode: int, output: str) -> dict[str, Any]:
         status = "error"
         message = "objdiff JSON lacked match_percent sections"
 
-    return {
+    report: dict[str, Any] = {
         "schema": SCHEMA,
         "status": status,
         "differences": differences,
         "message": message,
         "objdiffExit": returncode,
         "output": text,
+        "detailLevel": detail_level,
     }
+    if histogram:
+        report["mismatchHistogram"] = histogram
+        report["instructionMismatchCount"] = sum(int(value) for value in histogram.values())
+    return report
+
+
+def extract_mismatch_histogram(parsed: Any) -> dict[str, int]:
+    """Count objdiff instruction mismatch kinds from parsed JSON or raw output."""
+
+    if isinstance(parsed, str):
+        text = parsed.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+
+    histogram: dict[str, int] = {}
+    for item in iter_json_objects(parsed):
+        kind = item.get("kind")
+        if kind not in INSTRUCTION_MISMATCH_KINDS:
+            continue
+        histogram[str(kind)] = histogram.get(str(kind), 0) + 1
+    return histogram

@@ -326,8 +326,8 @@ def run_sweep(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--matched-examples", type=Path, default=Path("target/source-parity-index/swkotor/matched-examples.jsonl"))
-    parser.add_argument("--out-dir", type=Path, default=Path("target/source-parity-profile/swkotor"))
+    parser.add_argument("--matched-examples", type=Path, default=Path("target/source-parity-index/default/matched-examples.jsonl"))
+    parser.add_argument("--out-dir", type=Path, default=Path("target/source-parity-profile/default"))
     parser.add_argument("--max-cases", type=int, default=6)
     parser.add_argument("--select-only", "--dry-run", dest="select_only", action="store_true", help="Select corpus cases without compiling.")
     parser.add_argument("--profile", action="append", default=[], help="Compiler profile as NAME=VC_ROOT. Repeat for multiple toolchains.")

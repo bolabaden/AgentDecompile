@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a prioritized swkotor source-recovery queue from current proof artifacts."""
+"""Build a prioritized target source-recovery queue from current proof artifacts."""
 
 from __future__ import annotations
 
@@ -92,8 +92,8 @@ def priority(row: dict, data: bytes, *, text_section: str = ".textV") -> tuple[i
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inventory", type=Path, default=ROOT / "target/swkotor-unpack/facts/function-inventory.jsonl")
-    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/swkotor-recovery-queue")
+    parser.add_argument("--inventory", type=Path, default=ROOT / "target/binary-unpack/facts/function-inventory.jsonl")
+    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/recovery-queue")
     parser.add_argument("--limit", type=int, default=250)
     parser.add_argument(
         "--text-section",
@@ -116,8 +116,8 @@ def main() -> int:
     args = parser.parse_args()
 
     summary_paths = args.summary or [
-        ROOT / "target/swkotor-trivial-matches/summary.jsonl",
-        ROOT / "target/swkotor-reloc-wrapper-matches/summary.jsonl",
+        ROOT / "target/trivial-matches/summary.jsonl",
+        ROOT / "target/reloc-wrapper-matches/summary.jsonl",
     ]
     matched = load_matched(summary_paths)
     matched.update(load_manifest_matched(args.manifest))
@@ -132,7 +132,7 @@ def main() -> int:
         tags = classify(row, data)
         entries.append(
             {
-                "schema": "agentdecompile.swkotor-recovery-queue-entry.v1",
+                "schema": "agentdecompile.recovery-recovery-queue-entry.v1",
                 "name": name,
                 "entry": row.get("entry"),
                 "section": row.get("section"),
@@ -153,7 +153,7 @@ def main() -> int:
     queue_path.write_text("\n".join(json.dumps(row, sort_keys=True) for row in selected) + "\n", encoding="utf-8")
 
     summary = {
-        "schema": "agentdecompile.swkotor-recovery-queue.v1",
+        "schema": "agentdecompile.recovery-recovery-queue.v1",
         "inventory": str(args.inventory),
         "queue": str(queue_path),
         "totalInventoryFunctions": total,
@@ -170,7 +170,7 @@ def main() -> int:
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     lines = [
-        "# SWKOTOR Recovery Queue",
+        "# PRIMARY Recovery Queue",
         "",
         f"- Total inventory functions: `{summary['totalInventoryFunctions']}`",
         f"- Verified matched functions: `{summary['verifiedMatchedFunctions']}`",

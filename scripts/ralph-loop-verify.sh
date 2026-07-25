@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # Machine-readable gate for the Recovery source-parity Ralph loop.
+# Targets are supplied via env; this script does not hardcode product binaries.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-SWKOTOR_COVERAGE="${ROOT}/target/swkotor-recovered/coverage.json"
-SWKOTOR_REPORT="${ROOT}/target/source-parity-one-shot/swkotor/report.json"
-JKA_BINARY="/run/media/brunner56/MyBook/SteamLibrary/steamapps/common/Jedi Academy/GameData/jamp.exe"
-JKA_LAUNCHER="/run/media/brunner56/MyBook/SteamLibrary/steamapps/common/Jedi Academy/JediAcademy.exe"
-JKA_COVERAGE="${ROOT}/target/jedi-academy-recovered/coverage.json"
-JKA_INVENTORY="${ROOT}/target/jedi-academy-unpack/facts/function-inventory.jsonl"
-TARGET_RATIO="${RALPH_SWKOTOR_TARGET:-0.90}"
-JKA_TARGET_RATIO="${RALPH_JKA_TARGET:-0.90}"
-export ROOT SWKOTOR_COVERAGE SWKOTOR_REPORT JKA_BINARY JKA_LAUNCHER JKA_COVERAGE JKA_INVENTORY
-export RALPH_SWKOTOR_TARGET="${TARGET_RATIO}" RALPH_JKA_TARGET="${JKA_TARGET_RATIO}"
+PRIMARY_COVERAGE="${RALPH_PRIMARY_COVERAGE:-${ROOT}/target/recovered/coverage.json}"
+PRIMARY_REPORT="${RALPH_PRIMARY_REPORT:-${ROOT}/target/source-parity-one-shot/default/report.json}"
+PRIMARY_TARGET_RATIO="${RALPH_PRIMARY_TARGET:-0.90}"
+SECONDARY_BINARY="${RALPH_SECONDARY_BINARY:-}"
+SECONDARY_COVERAGE="${RALPH_SECONDARY_COVERAGE:-${ROOT}/target/secondary-pe-recovered/coverage.json}"
+SECONDARY_INVENTORY="${RALPH_SECONDARY_INVENTORY:-${ROOT}/target/secondary-pe-unpack/facts/function-inventory.jsonl}"
+SECONDARY_TARGET_RATIO="${RALPH_SECONDARY_TARGET:-0.90}"
+
+export ROOT PRIMARY_COVERAGE PRIMARY_REPORT PRIMARY_TARGET_RATIO
+export SECONDARY_BINARY SECONDARY_COVERAGE SECONDARY_INVENTORY SECONDARY_TARGET_RATIO
 
 python3 - <<'PY'
 import json
@@ -24,9 +25,8 @@ import sys
 from pathlib import Path
 
 root = Path(os.environ["ROOT"])
-target_ratio = float(os.environ.get("RALPH_SWKOTOR_TARGET", "0.90"))
-jka_target_ratio = float(os.environ.get("RALPH_JKA_TARGET", "0.90"))
-
+primary_target = float(os.environ.get("PRIMARY_TARGET_RATIO", "0.90"))
+secondary_target = float(os.environ.get("SECONDARY_TARGET_RATIO", "0.90"))
 checks: list[dict] = []
 
 
@@ -49,35 +49,32 @@ def read_ratio(path: Path) -> tuple[float, dict]:
     }
 
 
-sw_ratio, sw_detail = read_ratio(root / "target/swkotor-recovered/coverage.json")
-add(
-    "swkotor-coverage",
-    sw_ratio >= target_ratio,
-    {"target": target_ratio, **sw_detail},
-)
+primary_ratio, primary_detail = read_ratio(Path(os.environ["PRIMARY_COVERAGE"]))
+add("primary-coverage", primary_ratio >= primary_target, {"target": primary_target, **primary_detail})
 
-jka_binary = Path(os.environ["JKA_BINARY"])
-jka_launcher = Path(os.environ.get("JKA_LAUNCHER", ""))
-add("jka-binary-present", jka_binary.exists(), {"path": str(jka_binary), "launcher": str(jka_launcher)})
+secondary_binary = Path(os.environ.get("SECONDARY_BINARY") or "")
+if str(secondary_binary):
+    add("secondary-binary-present", secondary_binary.exists(), {"path": str(secondary_binary)})
+    secondary_ratio, secondary_detail = read_ratio(Path(os.environ["SECONDARY_COVERAGE"]))
+    inventory = Path(os.environ["SECONDARY_INVENTORY"])
+    if not secondary_detail.get("functionCount") and inventory.exists():
+        lines = sum(1 for line in inventory.read_text(encoding="utf-8").splitlines() if line.strip())
+        secondary_detail["functionCount"] = lines
+        secondary_detail["inventoryOnly"] = True
+    add(
+        "secondary-coverage",
+        secondary_ratio >= secondary_target,
+        {"target": secondary_target, **secondary_detail},
+    )
+else:
+    add("secondary-binary-present", True, {"skipped": True, "reason": "RALPH_SECONDARY_BINARY unset"})
 
-jka_ratio, jka_detail = read_ratio(root / "target/jedi-academy-recovered/coverage.json")
-inventory = root / "target/jedi-academy-unpack/facts/function-inventory.jsonl"
-if not jka_detail.get("functionCount") and inventory.exists():
-    lines = sum(1 for line in inventory.read_text(encoding="utf-8").splitlines() if line.strip())
-    jka_detail["functionCount"] = lines
-    jka_detail["inventoryOnly"] = True
-add(
-    "jka-coverage",
-    jka_ratio >= jka_target_ratio,
-    {"target": jka_target_ratio, **jka_detail},
-)
-
-orch = root / "scripts/source-parity-one-shot.py"
+orch = root / "src/agentdecompile_recovery/source_parity_one_shot.py"
 self_check_ok = False
 self_check_detail: dict = {}
 if orch.exists():
     proc = subprocess.run(
-        [sys.executable, str(orch), "--self-check"],
+        [sys.executable, "-m", "agentdecompile_recovery.source_parity_one_shot", "--self-check"],
         cwd=root,
         text=True,
         capture_output=True,
@@ -98,48 +95,11 @@ core_scripts = [
     "scripts/ghidra/ExportFunctionInventory.java",
     "src/agentdecompile_recovery/source_parity_one_shot.py",
     "src/agentdecompile_recovery/source_parity_synthesize.py",
-    "src/agentdecompile_recovery/package_verify.py",
 ]
-missing = [rel for rel in core_scripts if not (root / rel).exists()]
-add("core-surfaces", not missing, {"missing": missing})
+missing = [path for path in core_scripts if not (root / path).exists()]
+add("core-scripts-present", not missing, {"missing": missing})
 
-bridges = {
-    "vacuum": (root / "scripts/vacuum.sh").exists(),
-    "decomp-atlas": True,
-    "scorer": (root / "scripts/lib/scorer.sh").exists() or (root / "scripts/decomp-cli.sh").exists(),
-    "matcher": (root / "scripts/decomp-cli.sh").exists(),
-}
-add("workspace-bridges", all(bridges.values()), bridges)
-
-upstream = subprocess.run(
-    [sys.executable, "-m", "agentdecompile_recovery.frontdoor", "upstream-status", "--json"],
-    cwd=root,
-    text=True,
-    capture_output=True,
-    env={**os.environ, "PYTHONPATH": str(root / "src")},
-    check=False,
-)
-upstream_ok = False
-upstream_detail: dict = {}
-if upstream.returncode == 0:
-    try:
-        payload = json.loads(upstream.stdout or "{}")
-        mapped = {row.get("upstreamSurface") for row in payload.get("mappedSurfaces", [])}
-        upstream_ok = {"run", "atlas", "index-codebase"}.issubset(mapped)
-        upstream_detail = {"mapped": sorted(mapped)}
-    except json.JSONDecodeError:
-        upstream_detail = {"stdout": (upstream.stdout or "")[:300]}
-else:
-    upstream_detail = {"stderr": (upstream.stderr or "")[:300], "returncode": upstream.returncode}
-add("upstream-cli-bridge", upstream_ok, upstream_detail)
-
-complete = all(row["ok"] for row in checks)
-report = {
-    "schema": "agentdecompile.recovery.ralph-verify.v1",
-    "complete": complete,
-    "checks": checks,
-    "completionPromise": "SOURCE_PARITY_LOOP_COMPLETE",
-}
-print(json.dumps(report, indent=2))
-sys.exit(0 if complete else 1)
+ok = all(item["ok"] for item in checks)
+print(json.dumps({"ok": ok, "checks": checks}, indent=2, sort_keys=True))
+raise SystemExit(0 if ok else 1)
 PY

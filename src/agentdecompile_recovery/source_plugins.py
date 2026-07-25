@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .mismatch_classify import enrich_attempt_records, routed_playbook_for_class, write_mismatch_class_last
 from .plugin_pipeline import PluginResult, now_ms
 from .source_export import export_recovered_source
 from .source_parity_synthesize import (
@@ -96,6 +97,11 @@ class SourceCandidateGeneratorPlugin:
             "regenerate-source-shape",
             "",
         }
+        if action == "try-nearby-source-shape-or-permuter":
+            updated["sourceShapeSearch"] = True
+            routed = policy.get("routedPlaybook") or routed_playbook_for_class(policy.get("mismatchClass"))
+            if routed:
+                updated["routedPlaybook"] = routed
         if action in bump_actions:
             updated["sourceCandidateIndex"] = int(updated.get("sourceCandidateIndex") or 0) + 1
         return updated
@@ -122,7 +128,7 @@ class SourceCandidateObjdiffPlugin:
             compiler=str(context.get("compiler") or "msvc"),
             clang=str(context.get("clang") or "clang"),
             compiler_profiles=list(context.get("compilerProfiles") or []),
-            inventory=Path(str(context.get("inventory") or "target/swkotor-unpack/facts/function-inventory.jsonl")),
+            inventory=Path(str(context.get("inventory") or "target/binary-unpack/facts/function-inventory.jsonl")),
             vc_root=Path(str(context["vcRoot"])) if context.get("vcRoot") else None,
             wine=str(context.get("wine") or "wine"),
             wineprefix=Path(str(context["wineprefix"])) if context.get("wineprefix") else None,
@@ -130,6 +136,7 @@ class SourceCandidateObjdiffPlugin:
             dry_run=bool(context.get("dryRun")),
             source_shape_search=bool(context.get("sourceShapeSearch")),
         )
+        enrich_attempt_records(records, row if isinstance(row, dict) else None)
         matches = [
             record
             for record in records
@@ -149,11 +156,21 @@ class SourceCandidateObjdiffPlugin:
                 if source_shape_record is not None:
                     source_shape_matches.append(source_shape_record)
         best_difference = min((int(record.get("differences", 999999)) for record in records), default=999999)
+        latest_record = records[-1] if records else {}
         attempts_path = out_dir / "plugin-attempts.jsonl"
         out_dir.mkdir(parents=True, exist_ok=True)
         with attempts_path.open("a", encoding="utf-8") as fh:
             for record in records:
                 fh.write(json.dumps(record, sort_keys=True) + "\n")
+        if latest_record.get("mismatchClass"):
+            work_dir_value = context.get("workDir")
+            if work_dir_value:
+                write_mismatch_class_last(
+                    Path(str(work_dir_value)),
+                    function_name=str(row.get("name") or ""),
+                    classification=latest_record,
+                    routed_playbook=str(latest_record.get("routedPlaybook") or routed_playbook_for_class(latest_record.get("mismatchClass"))),
+                )
         match_rows_path = Path(str(context.get("codeSliceMatchesPath"))) if context.get("codeSliceMatchesPath") else None
         if match_rows_path is not None and exportable_matches:
             match_rows_path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +204,11 @@ class SourceCandidateObjdiffPlugin:
                     "differenceCount": 0 if matches else best_difference,
                     "attemptsPath": str(attempts_path),
                     "bestStatus": matches[0].get("status") if matches else (records[0].get("status") if records else None),
+                    "mismatchClass": latest_record.get("mismatchClass"),
+                    "mismatchHistogram": latest_record.get("mismatchHistogram"),
+                    "primaryMismatchKind": latest_record.get("primaryMismatchKind"),
+                    "detailLevel": latest_record.get("detailLevel"),
+                    "routedPlaybook": routed_playbook_for_class(latest_record.get("mismatchClass")),
                 },
             ),
             updated,

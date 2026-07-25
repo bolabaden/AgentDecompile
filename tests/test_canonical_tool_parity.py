@@ -471,30 +471,30 @@ def test_get_function_decompile_uses_decompile_function_provider(monkeypatch: py
 async def test_execute_script_reports_executed_program_in_json() -> None:
     provider: ScriptToolProvider = ScriptToolProvider(
         program_info=SimpleNamespace(
-            program=cast("ProgramInfo", FakeProgram("k2_win_gog_aspyr_swkotor2.exe")),
+            program=cast("ProgramInfo", FakeProgram("sample_target_b.exe")),
             flat_api=None,
             decompiler=None,
-            name="k2_win_gog_aspyr_swkotor2.exe",
-            file_path="/TSL/k2_win_gog_aspyr_swkotor2.exe",
+            name="sample_target_b.exe",
+            file_path="/prog/sample_target_b.exe",
         )
     )
 
-    result = await provider._handle_execute({"code": "__result__ = currentProgram.getName()", "programPath": "/TSL/k2_win_gog_aspyr_swkotor2.exe"})
+    result = await provider._handle_execute({"code": "__result__ = currentProgram.getName()", "programPath": "/prog/sample_target_b.exe"})
 
     assert len(result) == 1
-    assert '"executedProgram": {"path": "/TSL/k2_win_gog_aspyr_swkotor2.exe", "name": "k2_win_gog_aspyr_swkotor2.exe"}' in result[0].text
-    assert '"result": "k2_win_gog_aspyr_swkotor2.exe"' in result[0].text
+    assert '"executedProgram": {"path": "/prog/sample_target_b.exe", "name": "sample_target_b.exe"}' in result[0].text
+    assert '"result": "sample_target_b.exe"' in result[0].text
 
 
 @pytest.mark.asyncio
 async def test_execute_script_ignores_gpr_path_argument_for_program_resolution() -> None:
     provider: ScriptToolProvider = ScriptToolProvider(
         program_info=SimpleNamespace(
-            program=cast("ProgramInfo", FakeProgram("k2_win_gog_aspyr_swkotor2.exe")),
+            program=cast("ProgramInfo", FakeProgram("sample_target_b.exe")),
             flat_api=None,
             decompiler=None,
-            name="k2_win_gog_aspyr_swkotor2.exe",
-            file_path="/TSL/k2_win_gog_aspyr_swkotor2.exe",
+            name="sample_target_b.exe",
+            file_path="/prog/sample_target_b.exe",
         )
     )
 
@@ -503,9 +503,9 @@ async def test_execute_script_ignores_gpr_path_argument_for_program_resolution()
     )
 
     assert len(result) == 1
-    assert '"executedProgram": {"path": "/TSL/k2_win_gog_aspyr_swkotor2.exe", "name": "k2_win_gog_aspyr_swkotor2.exe"}' in result[0].text
+    assert '"executedProgram": {"path": "/prog/sample_target_b.exe", "name": "sample_target_b.exe"}' in result[0].text
     assert 'my_project.gpr' not in result[0].text
-    assert '"result": "k2_win_gog_aspyr_swkotor2.exe"' in result[0].text
+    assert '"result": "sample_target_b.exe"' in result[0].text
 
 
 def test_render_execute_script_includes_executed_program() -> None:
@@ -514,14 +514,14 @@ def test_render_execute_script_includes_executed_program() -> None:
             "success": True,
             "result": "[]",
             "executedProgram": {
-                "name": "k2_win_gog_aspyr_swkotor2.exe",
-                "path": "/TSL/k2_win_gog_aspyr_swkotor2.exe",
+                "name": "sample_target_b.exe",
+                "path": "/prog/sample_target_b.exe",
             },
         }
     )
 
-    assert "**Executed Program:** `k2_win_gog_aspyr_swkotor2.exe`" in rendered
-    assert "**Program Path:** `/TSL/k2_win_gog_aspyr_swkotor2.exe`" in rendered
+    assert "**Executed Program:** `sample_target_b.exe`" in rendered
+    assert "**Program Path:** `/prog/sample_target_b.exe`" in rendered
 
 
 @pytest.mark.asyncio
@@ -540,11 +540,11 @@ async def test_tool_provider_manager_uses_requested_program_for_provider_dispatc
     )
 
     requested_program_info: SimpleNamespace = SimpleNamespace(
-        program=cast("GhidraProgram", FakeProgram("k1_win_gog_swkotor.exe")),
+        program=cast("GhidraProgram", FakeProgram("sample_target_a.exe")),
         flat_api=None,
         decompiler=None,
-        name="k1_win_gog_swkotor.exe",
-        file_path="/K1/k1_win_gog_swkotor.exe",
+        name="sample_target_a.exe",
+        file_path="/prog/sample_target_a.exe",
     )
 
     async def _fake_activate(session_id: str, program_path: str) -> SimpleNamespace:
@@ -554,12 +554,12 @@ async def test_tool_provider_manager_uses_requested_program_for_provider_dispatc
 
     result = await manager.call_tool(
         "dummy-requested-program",
-        {"programPath": "/K1/k1_win_gog_swkotor.exe", "responseFormat": "json"},
+        {"programPath": "/prog/sample_target_a.exe", "responseFormat": "json"},
     )
 
     assert len(result) == 1
-    assert '"programPath": "/K1/k1_win_gog_swkotor.exe"' in result[0].text
-    assert '"programName": "k1_win_gog_swkotor.exe"' in result[0].text
+    assert '"programPath": "/prog/sample_target_a.exe"' in result[0].text
+    assert '"programName": "sample_target_a.exe"' in result[0].text
 
 
 @pytest.mark.asyncio
@@ -569,11 +569,11 @@ async def test_tool_provider_manager_does_not_treat_gpr_path_as_program_request(
     manager._register(provider)
 
     active_program_info: SimpleNamespace = SimpleNamespace(
-        program=cast("GhidraProgram", FakeProgram("k1_win_gog_swkotor.exe")),
+        program=cast("GhidraProgram", FakeProgram("sample_target_a.exe")),
         flat_api=None,
         decompiler=None,
-        name="k1_win_gog_swkotor.exe",
-        file_path="/K1/k1_win_gog_swkotor.exe",
+        name="sample_target_a.exe",
+        file_path="/prog/sample_target_a.exe",
     )
     manager.set_program_info(active_program_info)
 
@@ -588,8 +588,8 @@ async def test_tool_provider_manager_does_not_treat_gpr_path_as_program_request(
     )
 
     assert len(result) == 1
-    assert '"programPath": "/K1/k1_win_gog_swkotor.exe"' in result[0].text
-    assert '"programName": "k1_win_gog_swkotor.exe"' in result[0].text
+    assert '"programPath": "/prog/sample_target_a.exe"' in result[0].text
+    assert '"programName": "sample_target_a.exe"' in result[0].text
 
 
 def test_extract_result_uses_text_from_model_like_error_content() -> None:

@@ -144,7 +144,7 @@ def export_recovered_source(
         out_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = out_dir / "simple_matches.manifest.json"
         manifest = {
-            "schema": "agentdecompile.swkotor-recovered-source-shard.v1",
+            "schema": "agentdecompile.recovery-recovered-source-shard.v1",
             "status": "empty",
             "summaries": [str(summary) for summary in summaries],
             "functionCount": 0,
@@ -273,7 +273,7 @@ def export_recovered_source(
     }
     build_manifest_path.write_text(json.dumps(build_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     manifest = {
-        "schema": "agentdecompile.swkotor-recovered-source-shard.v1",
+        "schema": "agentdecompile.recovery-recovered-source-shard.v1",
         "status": "complete",
         "summaries": [str(summary) for summary in summaries],
         "combinedSource": str(source_path),
@@ -298,12 +298,9 @@ def export_recovered_source(
 
 
 def profile_prompt_prefixes(profile_slug: str) -> tuple[str, ...]:
-    if profile_slug in {"swkotor", "kotor"}:
-        return ("swkotor_",)
-    if profile_slug in {"jedi-academy", "jedi_academy", "jka"}:
-        return ("jedi-academy_", "jka_")
-    prefix = profile_slug.replace("_", "-")
-    return (f"{prefix}_",)
+    """Accept prompt names prefixed by the active profile slug (any target)."""
+    slug = (profile_slug or "default").replace("_", "-").strip("-") or "default"
+    return (f"{slug}_",)
 
 
 def prompt_matches_profile(name: str, profile_slug: str) -> bool:

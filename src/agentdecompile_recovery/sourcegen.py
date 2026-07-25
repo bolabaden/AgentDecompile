@@ -3892,7 +3892,7 @@ def thiscall_indexed_field_selector(task: dict[str, Any], data: bytes) -> dict[s
             "compiler": "msvc",
             "language": "c++",
             "args": ["/O2", "/GS-", "/Oy", "/TP"],
-            "reason": "real swkotor selector slices match this generated C++ member shape with MSVC optimization",
+            "reason": "real target selector slices match this generated C++ member shape with MSVC optimization",
         },
     }
 

@@ -32,8 +32,8 @@ def test_get_prompt_substitutes_active_program_from_session(
 ) -> None:
     fake_session = SimpleNamespace(
         project_handle={"mode": "local", "path": "/tmp/proj.gpr"},
-        open_programs={"/K1/swkotor.exe": SimpleNamespace()},
-        active_program_key="/K1/swkotor.exe",
+        open_programs={"/prog/sample.exe": SimpleNamespace()},
+        active_program_key="/prog/sample.exe",
         project_binaries=[],
     )
     _patch_session(monkeypatch, fake_session)
@@ -45,7 +45,7 @@ def test_get_prompt_substitutes_active_program_from_session(
     )
 
     text = result.messages[0].content.text
-    assert "/K1/swkotor.exe" in text
+    assert "/prog/sample.exe" in text
     assert "(current project)" not in text
 
 
