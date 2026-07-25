@@ -452,7 +452,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
         context_max_index_text_chars=args.context_max_index_text_chars,
         context_extract_containers=not args.no_context_extract_containers,
         context_include_low_signal_members=args.context_include_low_signal_members,
-        skip_enrichment=bool(getattr(args, "skip_enrichment", False)),
+        skip_enrichment=False,
     )
     rc = RecoveryRunner(config).run()
     write_critical_path(work_dir)
