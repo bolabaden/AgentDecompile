@@ -57,11 +57,69 @@ DEFAULT_CLANG_PROFILES: list[tuple[str, list[str]]] = [
     ("clang_i386_O0", ["-m32", "-O0", "-ffreestanding", "-fno-pic", "-fno-pie", "-fno-asynchronous-unwind-tables", "-fno-stack-protector", "-fno-ident"]),
 ]
 
+DEFAULT_CLANG_CXX_PROFILES: list[tuple[str, list[str]]] = [
+    (
+        "clangxx_i386_O2",
+        [
+            "-m32",
+            "-O2",
+            "-std=c++03",
+            "-fno-exceptions",
+            "-fno-rtti",
+            "-fno-pic",
+            "-fno-pie",
+            "-fno-asynchronous-unwind-tables",
+            "-fno-stack-protector",
+            "-fno-ident",
+        ],
+    ),
+    (
+        "clangxx_i386_O0",
+        [
+            "-m32",
+            "-O0",
+            "-std=c++03",
+            "-fno-exceptions",
+            "-fno-rtti",
+            "-fno-pic",
+            "-fno-pie",
+            "-fno-asynchronous-unwind-tables",
+            "-fno-stack-protector",
+            "-fno-ident",
+        ],
+    ),
+]
+
 DEFAULT_CLANG_CL_PROFILES: list[tuple[str, list[str]]] = [
     ("clangcl_i386_O2_Gz", ["/O2", "/GS-", "/Oy", "/Gz"]),
     ("clangcl_i386_O1_Gz", ["/O1", "/GS-", "/Oy", "/Gz"]),
     ("clangcl_i386_O2_Gz_frameptr", ["/O2", "/GS-", "/Oy-", "/Gz"]),
 ]
+
+
+def detect_compiler_lane(row: dict[str, Any], source: str | None = None) -> str:
+    """Return ``c`` or ``cxx`` lane for clang verify.
+
+    Member-function / class-qualified names and C++ tokens select cxx.
+    """
+    explicit = str(row.get("compilerLane") or row.get("language") or "").lower()
+    if explicit in {"c", "cxx", "c++", "cpp"}:
+        return "cxx" if explicit in {"cxx", "c++", "cpp"} else "c"
+    name = str(row.get("name") or "")
+    if "::" in name:
+        return "cxx"
+    text = source or str(row.get("sourceText") or "")
+    if re.search(r"\b(class|namespace|template|typename|this)\b", text):
+        return "cxx"
+    if re.search(r"\b[\w:]+::[\w~]+\s*\(", text):
+        return "cxx"
+    return "c"
+
+
+def profiles_for_clang_lane(lane: str) -> list[tuple[str, list[str]]]:
+    if lane == "cxx":
+        return list(DEFAULT_CLANG_CXX_PROFILES)
+    return list(DEFAULT_CLANG_PROFILES)
 
 
 def parse_profile_flag_set(value: str) -> tuple[str, list[str]]:
@@ -128,7 +186,9 @@ def resolve_profiles(
                 profiles.append((name, args))
         return profiles
     if compiler == "clang":
-        return DEFAULT_CLANG_PROFILES
+        return profiles_for_clang_lane(detect_compiler_lane(row))
+    if compiler == "clang-cxx":
+        return list(DEFAULT_CLANG_CXX_PROFILES)
     if compiler == "clang-cl":
         return DEFAULT_CLANG_CL_PROFILES
     return DEFAULT_PROFILES
@@ -137,6 +197,8 @@ def resolve_profiles(
 def default_profile_set(compiler: str) -> list[tuple[str, list[str]]]:
     if compiler == "clang":
         return DEFAULT_CLANG_PROFILES
+    if compiler == "clang-cxx":
+        return list(DEFAULT_CLANG_CXX_PROFILES)
     if compiler == "clang-cl":
         return DEFAULT_CLANG_CL_PROFILES
     return DEFAULT_PROFILES
@@ -19388,7 +19450,7 @@ def attempt_candidate(
         [
             sys.executable,
             "-m",
-            "agentdecompile_recovery.swkotor_inventory_slice",
+            "agentdecompile_recovery.inventory_slice",
             "--inventory",
             str(inventory),
             "--function",
@@ -22134,21 +22196,21 @@ def write_high_level_promotion_targets(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--queue", type=Path, default=ROOT / "target/swkotor-recovery-queue/queue.jsonl")
+    parser.add_argument("--queue", type=Path, default=ROOT / "target/recovery-queue/queue.jsonl")
     parser.add_argument("--source-tasks", type=Path, action="append", default=[], help="source-generation/tasks.jsonl from recover/recover-windows. Converted rows use task target-slice bytes.")
     parser.add_argument("--source-tasks-only", action="store_true", help="Only inspect rows converted from --source-tasks; do not prepend the default recovery queue.")
     parser.add_argument("--verify-packaged-source", action="store_true", help="For source-task rows, verify the packaged source file from tasks.jsonl instead of regenerating a candidate from bytes.")
     parser.add_argument("--upgrade-packaged-source", action="store_true", help="For source-task rows, try regenerated semantic candidates before the packaged source fallback.")
-    parser.add_argument("--inventory", type=Path, default=ROOT / "target/swkotor-unpack/facts/function-inventory.jsonl")
-    parser.add_argument("--remaining-features", type=Path, default=ROOT / "target/source-parity-index/swkotor/remaining-features.jsonl")
-    parser.add_argument("--retrieval", type=Path, default=ROOT / "target/source-parity-index/swkotor/retrieval.jsonl")
+    parser.add_argument("--inventory", type=Path, default=ROOT / "target/binary-unpack/facts/function-inventory.jsonl")
+    parser.add_argument("--remaining-features", type=Path, default=ROOT / "target/source-parity-index/default/remaining-features.jsonl")
+    parser.add_argument("--retrieval", type=Path, default=ROOT / "target/source-parity-index/default/retrieval.jsonl")
     parser.add_argument(
         "--matched-summary",
         type=Path,
         action="append",
         default=[],
     )
-    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/source-parity-synthesis/swkotor")
+    parser.add_argument("--out-dir", type=Path, default=ROOT / "target/source-parity-synthesis/default")
     parser.add_argument("--limit", type=int, default=25, help="Maximum queued functions to inspect.")
     parser.add_argument("--offset", type=int, default=0, help="Eligible queued functions to skip before inspecting.")
     parser.add_argument("--max-variants-per-function", type=int, default=4)
@@ -22232,8 +22294,13 @@ def main(argv: list[str] | None = None) -> int:
     strategy_by_name = load_strategy(args.remaining_features)
     retrieval_by_name = load_retrieval(args.retrieval)
     matched = load_matched(args.matched_summary)
-    from .match_cache import MatchCache
-    from .verify_pool import map_parallel, resolve_workers
+    from .compile_cache import cache_dir as compile_cache_dir
+    from .compile_cache import cache_key as compile_cache_key
+    from .compile_cache import lookup as compile_cache_lookup
+    from .compile_cache import store as compile_cache_store
+    from .compile_cache import target_slice_sha256
+    from .match_cache import MatchCache, source_sha256
+    from .verify_pool import get_worker_index, map_parallel, resolve_workers
 
     cache_path = args.match_cache or (args.out_dir / "match-cache.json")
     match_cache = MatchCache()
@@ -22251,6 +22318,17 @@ def main(argv: list[str] | None = None) -> int:
             matched.add((name, entry))
     workers = resolve_workers(args.workers or None)
     cached_skips = 0
+    compile_cache_hits = 0
+    compile_cache_root = compile_cache_dir(args.out_dir.parent)
+    worker_prefix_root = args.out_dir.parent / "wine-prefixes"
+    worker_env_factory = None
+    if args.compiler == "msvc" and workers > 1:
+
+        def worker_env_factory(worker_index: int) -> dict[str, str]:
+            prefix = worker_prefix_root / f"worker-{worker_index}"
+            prefix.mkdir(parents=True, exist_ok=True)
+            return {"WINEPREFIX": str(prefix.resolve())}
+
     print(
         f"source-parity-synthesize: workers={workers} force_rematch={bool(args.force_rematch)} cached_entries={len(match_cache.by_entry)}",
         file=sys.stderr,
@@ -22439,7 +22517,37 @@ def main(argv: list[str] | None = None) -> int:
             pending_candidates.append(candidate)
 
         def _run_one(candidate: GeneratedCandidate) -> list[dict[str, Any]]:
-            return attempt_candidate(
+            profile_name = (
+                compiler_profiles[0][0]
+                if compiler_profiles
+                else (default_profile_set(args.compiler)[0][0] if default_profile_set(args.compiler) else "default")
+            )
+            cache_key_value = compile_cache_key(
+                target_slice_sha=target_slice_sha256(row),
+                source_sha=source_sha256(candidate.source),
+                compiler_profile=profile_name,
+                compiler_lane="cxx" if candidate.source_suffix.lower() in {".cpp", ".cc", ".cxx"} else "c",
+            )
+            if not args.force_rematch:
+                hit = compile_cache_lookup(compile_cache_root, cache_key_value)
+                if hit is not None:
+                    nonlocal compile_cache_hits
+                    compile_cache_hits += 1
+                    return [
+                        {
+                            **record,
+                            "compileCacheHit": True,
+                            "workerIndex": get_worker_index(),
+                            "workerPrefix": os.environ.get("WINEPREFIX"),
+                        }
+                        for record in hit.get("records") or []
+                        if isinstance(record, dict)
+                    ]
+
+            wineprefix = args.wineprefix
+            if wineprefix is None and os.environ.get("WINEPREFIX"):
+                wineprefix = Path(os.environ["WINEPREFIX"])
+            records = attempt_candidate(
                 row,
                 candidate,
                 args.out_dir,
@@ -22449,11 +22557,33 @@ def main(argv: list[str] | None = None) -> int:
                 inventory=args.inventory,
                 vc_root=args.vc_root,
                 wine=args.wine,
-                wineprefix=args.wineprefix,
+                wineprefix=wineprefix,
                 timeout=args.timeout,
                 dry_run=args.dry_run,
                 source_shape_search=args.source_shape_search,
             )
+            worker_index = get_worker_index()
+            worker_prefix = os.environ.get("WINEPREFIX")
+            stamped: list[dict[str, Any]] = []
+            for record in records:
+                if isinstance(record, dict):
+                    stamped.append(
+                        {
+                            **record,
+                            "workerIndex": worker_index,
+                            **({"workerPrefix": worker_prefix} if worker_prefix else {}),
+                        }
+                    )
+                else:
+                    stamped.append(record)
+            if not args.dry_run and stamped:
+                compile_cache_store(
+                    compile_cache_root,
+                    cache_key_value,
+                    records=stamped,
+                    metadata={"name": row.get("name"), "entry": row.get("entry")},
+                )
+            return stamped
 
         def _candidate_error(candidate: GeneratedCandidate, exc: BaseException) -> list[dict[str, Any]]:
             return [
@@ -22470,7 +22600,13 @@ def main(argv: list[str] | None = None) -> int:
             ]
 
         record_batches = (
-            map_parallel(pending_candidates, _run_one, workers=workers, on_error=_candidate_error)
+            map_parallel(
+                pending_candidates,
+                _run_one,
+                workers=workers,
+                on_error=_candidate_error,
+                worker_env_factory=worker_env_factory,
+            )
             if pending_candidates
             else []
         )
@@ -22482,6 +22618,10 @@ def main(argv: list[str] | None = None) -> int:
                 # match cache under the same target-sha key used for lookups.
                 if getattr(args, "target_sha", "") and not record.get("targetSha256"):
                     record["targetSha256"] = str(args.target_sha)
+                from .mismatch_classify import enrich_attempt_record
+
+                boundary = (row.get("targetSlice") or {}).get("boundaryQuality") or {}
+                enrich_attempt_record(record, boundary_quality=boundary if isinstance(boundary, dict) else {})
                 append_jsonl(attempts_path, record)
                 update_promotion_stats(promotion_stats, record)
                 quality = str(record.get("sourceQuality") or "unknown")
@@ -22606,6 +22746,8 @@ def main(argv: list[str] | None = None) -> int:
         "skippedSourceQualityFilteredCandidates": skipped_source_quality,
         "skippedNonSemanticCandidates": skipped_nonsemantic,
         "cachedSkippedCandidates": cached_skips,
+        "compileCacheHits": compile_cache_hits,
+        "compileCacheDir": str(compile_cache_root),
         "workers": workers,
         "forceRematch": bool(args.force_rematch),
         "matchCache": str(cache_path),
@@ -22631,6 +22773,8 @@ def main(argv: list[str] | None = None) -> int:
             "stage": "source-parity-synthesize",
             "workers": workers,
             "cachedSkippedCandidates": cached_skips,
+            "compileCacheHits": compile_cache_hits,
+            "compileCacheDir": str(compile_cache_root),
             "attemptedCandidates": attempted,
             "acceptedCandidates": matched_count,
             "forceRematch": bool(args.force_rematch),

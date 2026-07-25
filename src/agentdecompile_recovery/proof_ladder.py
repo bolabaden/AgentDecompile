@@ -7,6 +7,7 @@ never bare verified/ source files or acceptedCandidates.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,8 @@ def build_proof_ladder(work_dir: Path) -> dict[str, Any]:
         rung = _rung_for_coverage(coverage)
         next_rung = _next_rung(rung)
 
+    next_target, functions_to_next = _targeting_fields(denominator, numerator, next_rung)
+
     return {
         "schema": SCHEMA,
         "status": status,
@@ -55,6 +58,8 @@ def build_proof_ladder(work_dir: Path) -> dict[str, Any]:
         "coveragePercent": round(coverage * 100.0, 4),
         "rung": rung,
         "nextRung": next_rung,
+        "nextRungTargetNumerator": next_target,
+        "functionsToNextRung": functions_to_next,
         "rungs": [name for name, _ in RUNGS],
         "thresholds": {name: threshold for name, threshold in RUNGS},
         "claimBoundary": CLAIM_BOUNDARY,
@@ -68,7 +73,31 @@ def write_proof_ladder(work_dir: Path) -> dict[str, Any]:
 
 
 def _count_inventoried_functions(work_dir: Path) -> tuple[int, str | None]:
-    """Count only function-candidates.json — never shrink via binary-inventory."""
+    """Prefer eh-frame inventory when present; else function-candidates.json."""
+
+    # elf-i386: authoritative FDE count from inventory-summary / function-inventory.
+    for candidate in (
+        work_dir / "unpack" / "facts" / "inventory-summary.json",
+        work_dir / "facts" / "inventory-summary.json",
+        work_dir / "inventory-summary.json",
+    ):
+        if not candidate.is_file():
+            continue
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key in ("fdeCount", "functionCount"):
+            value = data.get(key)
+            if isinstance(value, int) and value > 0:
+                return value, str(candidate.name)
+        recon = data.get("reconciliation")
+        if isinstance(recon, dict):
+            total = sum(int(v) for v in recon.values() if isinstance(v, int))
+            if total > 0:
+                return total, str(candidate.name)
 
     path = work_dir / "function-candidates.json"
     if not path.is_file():
@@ -109,3 +138,20 @@ def _next_rung(rung: str) -> str | None:
     if idx + 1 >= len(names):
         return None
     return names[idx + 1]
+
+
+def _targeting_fields(
+    denominator: int,
+    numerator: int,
+    next_rung: str | None,
+) -> tuple[int | None, int]:
+    """Return (nextRungTargetNumerator, functionsToNextRung) for actionable targeting."""
+
+    if next_rung is None or denominator <= 0:
+        return None, 0
+    thresholds = dict(RUNGS)
+    threshold = thresholds.get(next_rung)
+    if threshold is None:
+        return None, 0
+    target = math.ceil(threshold * denominator)
+    return target, max(0, target - numerator)

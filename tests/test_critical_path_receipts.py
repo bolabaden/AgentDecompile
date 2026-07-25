@@ -46,7 +46,7 @@ def _write_capabilities(work: Path, *, objdiff: bool = True, clang: bool = True)
                 "wine": {"available": False},
             },
             "localSurfaces": {
-                "swkotorInventorySlice": True,
+                "inventorySlice": True,
                 "verifyObjdiff": True,
             },
         },

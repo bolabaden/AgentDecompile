@@ -44,6 +44,9 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
     if export_pkg is None and isinstance((report or {}).get("exportPackage"), dict):
         export_pkg = report.get("exportPackage")  # type: ignore[assignment]
     ladder = _load_json(work_dir / "proof-ladder.json")
+    proof_target_queue = _load_json(work_dir / "facts" / "proof-target-queue.json")
+    proof_campaign = _load_json(work_dir / "state" / "proof-campaign.json")
+    proof_campaign_loop = _load_json(work_dir / "state" / "proof-campaign-loop.json")
     if ladder is None and isinstance((claim or {}).get("proofLadder"), dict):
         ladder = claim.get("proofLadder")  # type: ignore[assignment]
     if ladder is None and isinstance((report or {}).get("proofLadder"), dict):
@@ -58,6 +61,12 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
     placement = _load_json(work_dir / "acquisition" / "placement.json")
     acquire = _load_json(work_dir / "acquisition" / "acquire.json")
     propose = _load_json(work_dir / "acquisition" / "propose-labels.json")
+    context_apply_run = _load_json(work_dir / "state" / "context-apply-run.json")
+    near_miss_repair_run = _load_json(work_dir / "state" / "near-miss-repair-run.json")
+    agent_closure_run = _load_json(work_dir / "state" / "agent-closure-run.json")
+    symbol_provenance = _load_json(work_dir / "facts" / "symbol-provenance.json")
+    campaign_checkpoints = _load_json(work_dir / "facts" / "campaign-checkpoints.json")
+    pattern_memory = _load_json(work_dir / "facts" / "pattern-memory.json")
     if propose is None and isinstance((acquire or {}).get("proposeLabels"), dict):
         propose = acquire.get("proposeLabels")  # type: ignore[assignment]
     slice_verify = _load_json(work_dir / "slice-verify" / "summary.json")
@@ -145,6 +154,8 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
                 "coveragePercent": ladder.get("coveragePercent"),
                 "rung": ladder.get("rung"),
                 "nextRung": ladder.get("nextRung"),
+                "functionsToNextRung": ladder.get("functionsToNextRung"),
+                "nextRungTargetNumerator": ladder.get("nextRungTargetNumerator"),
                 "claimBoundary": ladder.get("claimBoundary")
                 or (
                     "proof ladder coverage is receipt-backed objdiff accepts only; "
@@ -152,6 +163,49 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
                 ),
             }
             if ladder is not None
+            else None
+        ),
+        "proofTargetQueue": (
+            {
+                "status": proof_target_queue.get("status"),
+                "queueCount": proof_target_queue.get("queueCount"),
+                "synthesisEligibleCount": proof_target_queue.get("synthesisEligibleCount"),
+                "functionsToNextRung": proof_target_queue.get("functionsToNextRung"),
+                "nearMissRetryCount": proof_target_queue.get("nearMissRetryCount"),
+                "topEntries": (proof_target_queue.get("entries") or [])[:3],
+                "claimBoundary": proof_target_queue.get("claimBoundary")
+                or "proof-target queue is advisory; does not count toward numerator",
+            }
+            if proof_target_queue is not None
+            else None
+        ),
+        "proofCampaign": (
+            {
+                "status": proof_campaign.get("status"),
+                "attempted": proof_campaign.get("attempted"),
+                "accepts": proof_campaign.get("accepts"),
+                "nearMisses": proof_campaign.get("nearMisses"),
+                "bestDifference": proof_campaign.get("bestDifference"),
+                "rungBefore": proof_campaign.get("rungBefore"),
+                "rungAfter": proof_campaign.get("rungAfter"),
+                "claimBoundary": proof_campaign.get("claimBoundary"),
+            }
+            if proof_campaign is not None
+            else None
+        ),
+        "proofCampaignLoop": (
+            {
+                "status": proof_campaign_loop.get("status"),
+                "campaignCount": proof_campaign_loop.get("campaignCount"),
+                "maxCampaigns": proof_campaign_loop.get("maxCampaigns"),
+                "stopOnAccept": proof_campaign_loop.get("stopOnAccept"),
+                "totalAttempted": proof_campaign_loop.get("totalAttempted"),
+                "totalAccepts": proof_campaign_loop.get("totalAccepts"),
+                "numeratorDelta": proof_campaign_loop.get("numeratorDelta"),
+                "bestDifference": proof_campaign_loop.get("bestDifference"),
+                "claimBoundary": proof_campaign_loop.get("claimBoundary"),
+            }
+            if proof_campaign_loop is not None
             else None
         ),
         "contextFusion": (
@@ -183,6 +237,61 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
                 "nextStep": propose.get("nextStep"),
             }
             if propose is not None
+            else None
+        ),
+        "contextApplyRun": (
+            {
+                "status": context_apply_run.get("status"),
+                "applied": context_apply_run.get("applied"),
+                "mcpStatus": context_apply_run.get("mcpStatus"),
+                "claimBoundary": context_apply_run.get("claimBoundary"),
+            }
+            if context_apply_run is not None
+            else None
+        ),
+        "nearMissRepairRun": (
+            {
+                "status": near_miss_repair_run.get("status"),
+                "matchedCount": near_miss_repair_run.get("matchedCount"),
+                "claimBoundary": near_miss_repair_run.get("claimBoundary"),
+            }
+            if near_miss_repair_run is not None
+            else None
+        ),
+        "agentClosureRun": (
+            {
+                "status": agent_closure_run.get("status"),
+                "claimBoundary": agent_closure_run.get("claimBoundary"),
+            }
+            if agent_closure_run is not None
+            else None
+        ),
+        "symbolProvenance": (
+            {
+                "status": symbol_provenance.get("status"),
+                "symbolCount": symbol_provenance.get("symbolCount"),
+                "source": symbol_provenance.get("source"),
+                "claimBoundary": symbol_provenance.get("claimBoundary"),
+            }
+            if symbol_provenance is not None
+            else None
+        ),
+        "campaignCheckpoints": (
+            {
+                "entryCount": len(campaign_checkpoints.get("entries") or {}),
+                "writtenAt": campaign_checkpoints.get("writtenAt"),
+                "claimBoundary": campaign_checkpoints.get("claimBoundary"),
+            }
+            if campaign_checkpoints is not None
+            else None
+        ),
+        "patternMemory": (
+            {
+                "patternCount": len(pattern_memory.get("patterns") or []),
+                "writtenAt": pattern_memory.get("writtenAt"),
+                "claimBoundary": pattern_memory.get("claimBoundary"),
+            }
+            if pattern_memory is not None
             else None
         ),
         "criticalPath": (
@@ -226,6 +335,15 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             "proofLadder": str(work_dir / "proof-ladder.json")
             if (work_dir / "proof-ladder.json").is_file()
             else None,
+            "proofTargetQueue": str(work_dir / "facts" / "proof-target-queue.json")
+            if (work_dir / "facts" / "proof-target-queue.json").is_file()
+            else None,
+            "proofCampaign": str(work_dir / "state" / "proof-campaign.json")
+            if (work_dir / "state" / "proof-campaign.json").is_file()
+            else None,
+            "proofCampaignLoop": str(work_dir / "state" / "proof-campaign-loop.json")
+            if (work_dir / "state" / "proof-campaign-loop.json").is_file()
+            else None,
             "criticalPath": str(work_dir / "critical-path.json")
             if (work_dir / "critical-path.json").is_file()
             else None,
@@ -237,6 +355,18 @@ def build_recovery_status(work_dir: Path) -> dict[str, Any]:
             else None,
             "proposeLabels": str(work_dir / "acquisition" / "propose-labels.json")
             if (work_dir / "acquisition" / "propose-labels.json").is_file()
+            else None,
+            "contextApplyRun": str(work_dir / "state" / "context-apply-run.json")
+            if (work_dir / "state" / "context-apply-run.json").is_file()
+            else None,
+            "nearMissRepairRun": str(work_dir / "state" / "near-miss-repair-run.json")
+            if (work_dir / "state" / "near-miss-repair-run.json").is_file()
+            else None,
+            "agentClosureRun": str(work_dir / "state" / "agent-closure-run.json")
+            if (work_dir / "state" / "agent-closure-run.json").is_file()
+            else None,
+            "symbolProvenance": str(work_dir / "facts" / "symbol-provenance.json")
+            if (work_dir / "facts" / "symbol-provenance.json").is_file()
             else None,
             "contextSeeds": str(work_dir / "advisory" / "context-seeds" / "manifest.json")
             if (work_dir / "advisory" / "context-seeds" / "manifest.json").is_file()

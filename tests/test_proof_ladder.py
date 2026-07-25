@@ -110,6 +110,42 @@ def test_proof_ladder_skips_corrupt_candidate_file(tmp_path: Path) -> None:
     assert ladder["status"] in {"empty", "no-inventory"}
 
 
+def test_proof_ladder_targeting_fields(tmp_path: Path) -> None:
+    work = tmp_path / "targeting"
+    work.mkdir()
+    _write_candidates(work, 1000)
+    for i in range(5):
+        _write_objdiff_receipt(work, f"fn_{i}")
+    ladder = build_proof_ladder(work)
+    assert ladder["nextRung"] == "1%"
+    assert ladder["nextRungTargetNumerator"] == 10
+    assert ladder["functionsToNextRung"] == 5
+
+    work_at_1 = tmp_path / "at1"
+    work_at_1.mkdir()
+    _write_candidates(work_at_1, 1000)
+    for i in range(10):
+        _write_objdiff_receipt(work_at_1, f"fn_{i}")
+    ladder_at_1 = build_proof_ladder(work_at_1)
+    assert ladder_at_1["rung"] == "1%"
+    assert ladder_at_1["nextRung"] == "5%"
+    assert ladder_at_1["nextRungTargetNumerator"] == 50
+    assert ladder_at_1["functionsToNextRung"] == 40
+
+
+def test_proof_ladder_top_rung_has_no_next_target(tmp_path: Path) -> None:
+    work = tmp_path / "top"
+    work.mkdir()
+    _write_candidates(work, 100)
+    for i in range(20):
+        _write_objdiff_receipt(work, f"fn_{i}")
+    ladder = build_proof_ladder(work)
+    assert ladder["rung"] == "20%"
+    assert ladder["nextRung"] is None
+    assert ladder["nextRungTargetNumerator"] is None
+    assert ladder["functionsToNextRung"] == 0
+
+
 def test_claim_report_embeds_proof_ladder(tmp_path: Path) -> None:
     work = tmp_path / "claim"
     work.mkdir()

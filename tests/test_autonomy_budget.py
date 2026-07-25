@@ -12,6 +12,7 @@ from agentdecompile_recovery.autonomy_budget import (
     budget_from_args,
     write_autonomy_budget_receipt,
 )
+from agentdecompile_recovery.mismatch_classify import CLASS_OPERAND, PLAYBOOK_OPERAND
 from agentdecompile_recovery.autonomous_policy import choose_next_action
 from agentdecompile_recovery.frontdoor import build_parser, build_reconstruct_namespace
 
@@ -30,6 +31,8 @@ def test_budget_defaults_and_vacuum_args(tmp_path: Path) -> None:
     assert budget.max_functions == 1
     assert budget.max_attempts_per_function == 3
     assert budget.max_wall_seconds is None
+    assert budget.max_campaigns == 1
+    assert budget.stop_on_accept is False
     args = budget.vacuum_bridge_args(queue=tmp_path / "queue.json")
     assert args is not None
     assert args[args.index("--max-functions") + 1] == "1"
@@ -179,19 +182,62 @@ def test_policy_rejects_near_miss_when_budget_exhausted() -> None:
     assert decision["attemptsRemaining"] == 0
 
 
+def test_policy_routes_operand_near_miss_with_playbook() -> None:
+    decision = choose_next_action(
+        {},
+        [
+            {
+                "source-candidate-generator": _Step(),
+                "source-candidate-objdiff": _Step(
+                    data={
+                        "differenceCount": 3,
+                        "status": "mismatched",
+                        "mismatchClass": CLASS_OPERAND,
+                        "mismatchHistogram": {"ARGUMENT_MISMATCH": 2},
+                    }
+                ),
+                "mismatchClass": CLASS_OPERAND,
+            }
+        ],
+    )
+    assert decision["action"] == "try-nearby-source-shape-or-permuter"
+    assert decision["routedPlaybook"] == PLAYBOOK_OPERAND
+    assert decision["mismatchClass"] == CLASS_OPERAND
+
+
+def test_policy_boundary_suspect_class_preempts_near_miss() -> None:
+    decision = choose_next_action(
+        {},
+        [
+            {
+                "source-candidate-generator": _Step(),
+                "source-candidate-objdiff": _Step(data={"differenceCount": 4, "status": "mismatched"}),
+                "mismatchClass": "boundary-suspect",
+            }
+        ],
+    )
+    assert decision["action"] == "repair-boundary-before-retry"
+
+
 def test_frontdoor_exposes_autonomy_budget_flags() -> None:
     dests = {action.dest for action in build_parser()._actions}
     assert "autonomous_max_functions" in dests
     assert "autonomous_max_attempts" in dests
     assert "autonomous_max_wall_seconds" in dests
+    assert "autonomous_max_campaigns" in dests
+    assert "autonomous_stop_on_accept" in dests
     ns = build_reconstruct_namespace(
         Path("/tmp/bin"),
         autonomous=True,
         autonomous_max_functions=0,
         autonomous_max_attempts=5,
         autonomous_max_wall_seconds=120,
+        autonomous_max_campaigns=3,
+        autonomous_stop_on_accept=True,
     )
     assert ns.autonomous is True
     assert ns.autonomous_max_functions == 0
     assert ns.autonomous_max_attempts == 5
     assert ns.autonomous_max_wall_seconds == 120
+    assert ns.autonomous_max_campaigns == 3
+    assert ns.autonomous_stop_on_accept is True

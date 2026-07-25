@@ -20,14 +20,13 @@ from pathlib import Path
 from typing import Any
 
 from .acquire import acquire_context
-from .autonomy_budget import budget_from_args, ensure_vacuum_queue, reconstruct_vacuum_runner_command, write_autonomy_budget_receipt
+from .autonomy_budget import budget_from_args
 from .claim_report import write_claim_report
 from .critical_path import write_critical_path
 from .cli import main as legacy_main
 from .pipeline import RecoveryConfig, RecoveryRunner
 from .targets import identify_binary
 from .tools import inspect_capabilities, resolve_script_asset
-from .vacuum_queue import seed_vacuum_queue_from_work_dir
 
 
 LEGACY_COMMANDS = {
@@ -89,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "PE critical path (bounded checkpoints): "
             "prepare-analysis-image → inventory-binary → discover-functions → "
-            "generate-source-candidates → synthesize-source-tasks. "
+            "enrich-decompile → generate-source-candidates → synthesize-source-tasks. "
             "Example: reconstruct game.exe --stop-after discover-functions. "
             "Inspect readiness via critical-path.json or recovery status."
         ),
@@ -149,6 +148,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Autonomy budget: optional wall-clock cap forwarded to vacuum when supported.",
     )
     parser.add_argument(
+        "--autonomous-max-campaigns",
+        type=int,
+        default=1,
+        help="Autonomy budget: maximum proof campaigns per --autonomous invocation (default: 1).",
+    )
+    parser.add_argument(
+        "--autonomous-stop-on-accept",
+        action="store_true",
+        help="Stop the proof campaign loop after the first objdiff accept in the loop.",
+    )
+    parser.add_argument(
+        "--skip-closure-executors",
+        action="store_true",
+        help="Skip context apply and symbol provenance stages before autonomous proof campaign.",
+    )
+    parser.add_argument(
         "--resume",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -165,6 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
             "inventory-binary",
             "discover-functions",
             "analyze-functions",
+            "enrich-decompile",
             "generate-source-candidates",
             "synthesize-source-tasks",
             "plan-strategy",
@@ -174,6 +190,11 @@ def build_parser() -> argparse.ArgumentParser:
             "report",
         ],
         help="Stop after a named stage for bounded runs.",
+    )
+    parser.add_argument(
+        "--skip-enrichment",
+        action="store_true",
+        help="Skip PyGhidra enrich-decompile (typed names/modules before source generation).",
     )
     parser.add_argument("--json", action="store_true", help="Emit progress as JSON lines.")
     parser.add_argument("--stage-timeout", type=int, default=300, help="Timeout per orchestration stage.")
@@ -215,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dump-source",
         type=Path,
-        help="Export Borealis-shaped dump (verified/ + advisory/ghidra/ + Port/CODE) to this directory after resume/export.",
+        help="Export reference-shaped dump (verified/ + advisory/ghidra/ + Port/CODE) to this directory after resume/export.",
     )
     parser.add_argument(
         "--dump-source-only",
@@ -431,6 +452,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
         context_max_index_text_chars=args.context_max_index_text_chars,
         context_extract_containers=not args.no_context_extract_containers,
         context_include_low_signal_members=args.context_include_low_signal_members,
+        skip_enrichment=bool(getattr(args, "skip_enrichment", False)),
     )
     rc = RecoveryRunner(config).run()
     write_critical_path(work_dir)
@@ -469,6 +491,8 @@ def run_one_shot(args: argparse.Namespace) -> int:
             max_functions=getattr(args, "autonomous_max_functions", None),
             max_attempts_per_function=getattr(args, "autonomous_max_attempts", None),
             max_wall_seconds=getattr(args, "autonomous_max_wall_seconds", None),
+            max_campaigns=getattr(args, "autonomous_max_campaigns", None),
+            stop_on_accept=bool(getattr(args, "autonomous_stop_on_accept", False)),
         )
         if not args.json:
             print(
@@ -490,56 +514,22 @@ def run_one_shot(args: argparse.Namespace) -> int:
             max_functions=getattr(args, "autonomous_max_functions", None),
             max_attempts_per_function=getattr(args, "autonomous_max_attempts", None),
             max_wall_seconds=getattr(args, "autonomous_max_wall_seconds", None),
+            max_campaigns=getattr(args, "autonomous_max_campaigns", None),
+            stop_on_accept=bool(getattr(args, "autonomous_stop_on_accept", False)),
         )
-        queue = ensure_vacuum_queue(work_dir / "state" / "queue.json")
-        prompts_dir = work_dir / "prompts"
-        seed = seed_vacuum_queue_from_work_dir(
-            work_dir,
-            limit=max(budget.max_functions, 0),
-            queue_path=queue,
-            prompts_dir=prompts_dir,
-        )
-        bridge_args = budget.vacuum_bridge_args(
-            queue=queue,
-            prompts_dir=prompts_dir,
-            work_dir=work_dir,
-            runner_command=reconstruct_vacuum_runner_command(
-                work_dir,
-                max_attempts=budget.max_attempts_per_function,
-            ),
-        )
-        if bridge_args is None:
-            write_autonomy_budget_receipt(
-                work_dir,
-                budget,
-                requested=True,
-                status="skipped:budget-exhausted",
-                reason="autonomous-max-functions is 0; vacuum not started",
-            )
-            return rc
-        if int(seed.get("seededCount") or 0) == 0 and int(seed.get("pendingCount") or 0) == 0:
-            write_autonomy_budget_receipt(
-                work_dir,
-                budget,
-                requested=True,
-                status="skipped:empty-queue",
-                reason="no source-generation tasks available to seed vacuum pending queue",
-                bridge_args=None,
-            )
-            return rc
-        # Advanced hook: bridge to vacuum without making it a peer CLI brand.
-        bridge_rc = run_decomp_cli_bridge(bridge_args)
-        write_autonomy_budget_receipt(
+        if not getattr(args, "skip_closure_executors", False):
+            from .agent_closure import run_agent_closure_stages
+
+            run_agent_closure_stages(work_dir, budget)
+        from .proof_campaign import run_proof_campaign_loop
+
+        loop_result = run_proof_campaign_loop(
             work_dir,
             budget,
-            requested=True,
-            status="bridged" if bridge_rc == 0 else "bridge-failed",
-            reason=f"vacuum start via decomp-cli bridge; seeded={seed.get('seededCount')}",
-            bridge_args=bridge_args,
-            bridge_returncode=bridge_rc,
+            run_decomp_cli_bridge=run_decomp_cli_bridge,
         )
-        if bridge_rc != 0:
-            return bridge_rc
+        if int(loop_result.get("returncode") or 0) != 0:
+            rc = int(loop_result["returncode"])
     if getattr(args, "dump_source", None):
         dump_rc = run_dump_source(args, work_dir)
         if dump_rc != 0:
@@ -606,9 +596,10 @@ def _jsonl_compatible_with_analysis(path: Path, expected_sha: str) -> bool:
 
 
 def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
-    """Export Borealis-shaped dump from existing proofs + optional Ghidra advisory."""
+    """Export a layered source dump from proofs plus optional Ghidra advisory."""
 
     from .source_dump import dump_source_tree
+    from .source_parity_one_shot import detect_profile
     from .stage_timings import load_stage_timings, record_stage, write_stage_timings
 
     dump_started = time.monotonic()
@@ -625,8 +616,8 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         "source-synthesis/accepted.jsonl",
         "source-synthesis/code-slice-matches.jsonl",
         "source-synthesis/source-shape-matches.jsonl",
-        "swkotor-trivial-matches/summary.jsonl",
-        "swkotor-reloc-wrapper-matches/summary.jsonl",
+        "trivial-matches/summary.jsonl",
+        "reloc-wrapper-matches/summary.jsonl",
     ):
         path = work_dir / rel
         if path.exists() and (allow_leftovers or _jsonl_compatible_with_analysis(path, expected_sha)):
@@ -639,12 +630,13 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
             if work_dir.parent.name == "agentdecompile-reconstruct"
             else work_dir.parent
         )
-        for sibling in (
-            target_root / "swkotor-trivial-matches" / "summary.jsonl",
-            target_root / "swkotor-reloc-wrapper-matches" / "summary.jsonl",
-            work_dir.parent / "swkotor-trivial-matches" / "summary.jsonl",
-            work_dir.parent / "swkotor-reloc-wrapper-matches" / "summary.jsonl",
-        ):
+        siblings = [
+            *target_root.glob("*-trivial-matches/summary.jsonl"),
+            *target_root.glob("*-reloc-wrapper-matches/summary.jsonl"),
+            *work_dir.parent.glob("*-trivial-matches/summary.jsonl"),
+            *work_dir.parent.glob("*-reloc-wrapper-matches/summary.jsonl"),
+        ]
+        for sibling in siblings:
             if sibling.exists():
                 summaries.append(sibling)
 
@@ -675,7 +667,7 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
             work_dir / "unpack" / "facts" / "function-facts.jsonl",
             work_dir / "batch-decompile" / "function-facts.jsonl",
         )
-        leftover_facts_candidates = (Path("target/swkotor-ghidra-merged-decomp.jsonl"),)
+        leftover_facts_candidates = tuple(Path("target").glob("*-ghidra-merged-decomp.jsonl"))
         for candidate in fresh_facts_candidates + (leftover_facts_candidates if allow_leftovers else ()):
             if not candidate.exists():
                 continue
@@ -689,6 +681,17 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
     use_advisory_seed = advisory_seed.is_dir() and ghidra_facts is None and allow_leftovers
 
     dump_layers = getattr(args, "dump_layers", None) or "verified,port"
+    profile_slug = str(getattr(args, "profile", None) or detect_profile(Path(args.input)))
+    module_hints: dict[str, dict] = {}
+    module_map_path = work_dir / "unpack" / "facts" / "module-map.json"
+    if not module_map_path.exists():
+        module_map_path = work_dir / "facts" / "module-map.json"
+    if module_map_path.exists():
+        try:
+            payload = json.loads(module_map_path.read_text(encoding="utf-8"))
+            module_hints = dict(payload.get("entries") or {})
+        except (OSError, json.JSONDecodeError, TypeError):
+            module_hints = {}
     manifest = dump_source_tree(
         out_dir=out_dir,
         summaries=unique,
@@ -697,6 +700,8 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         target_name=args.input.name if hasattr(args.input, "name") else "binary",
         clean=True,
         layers=dump_layers,
+        profile=profile_slug,
+        module_hints=module_hints,
     )
     receipt = {
         "schema": "agentdecompile.dump-source.v1",
@@ -742,6 +747,8 @@ def build_reconstruct_namespace(
     autonomous_max_functions: int = 1,
     autonomous_max_attempts: int = 3,
     autonomous_max_wall_seconds: int | None = None,
+    autonomous_max_campaigns: int = 1,
+    autonomous_stop_on_accept: bool = False,
     force: bool = False,
     resume: bool = True,
 ) -> argparse.Namespace:
@@ -766,6 +773,10 @@ def build_reconstruct_namespace(
     argv.extend(["--autonomous-max-attempts", str(autonomous_max_attempts)])
     if autonomous_max_wall_seconds is not None:
         argv.extend(["--autonomous-max-wall-seconds", str(autonomous_max_wall_seconds)])
+    if autonomous_max_campaigns != 1:
+        argv.extend(["--autonomous-max-campaigns", str(autonomous_max_campaigns)])
+    if autonomous_stop_on_accept:
+        argv.append("--autonomous-stop-on-accept")
     if force:
         argv.append("--force")
     if not resume:
@@ -786,6 +797,8 @@ def run_reconstruct_job(
     autonomous_max_functions: int = 1,
     autonomous_max_attempts: int = 3,
     autonomous_max_wall_seconds: int | None = None,
+    autonomous_max_campaigns: int = 1,
+    autonomous_stop_on_accept: bool = False,
     force: bool = False,
     resume: bool = True,
 ) -> dict[str, Any]:
@@ -806,6 +819,8 @@ def run_reconstruct_job(
         autonomous_max_functions=autonomous_max_functions,
         autonomous_max_attempts=autonomous_max_attempts,
         autonomous_max_wall_seconds=autonomous_max_wall_seconds,
+        autonomous_max_campaigns=autonomous_max_campaigns,
+        autonomous_stop_on_accept=autonomous_stop_on_accept,
         force=force,
         resume=resume,
     )
@@ -825,6 +840,8 @@ def run_reconstruct_job(
         max_functions=autonomous_max_functions,
         max_attempts_per_function=autonomous_max_attempts,
         max_wall_seconds=autonomous_max_wall_seconds,
+        max_campaigns=autonomous_max_campaigns,
+        stop_on_accept=autonomous_stop_on_accept,
     )
     return {
         "tool": "reconstruct",

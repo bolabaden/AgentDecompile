@@ -6,6 +6,16 @@ from typing import Any
 
 from .artifact_layout import is_objdiff_zero_accept
 from .autonomy_budget import AutonomyBudget, remaining_attempts
+from .proof_tier_router import enrich_policy_with_proof_tier
+from .mismatch_classify import (
+    CLASS_BOUNDARY_SUSPECT,
+    CLASS_INSERT_DELETE,
+    CLASS_OPCODE,
+    CLASS_OPERAND,
+    routed_playbook_for_class,
+)
+
+NEAR_MISS_MAX_DIFF = 8
 
 
 def choose_next_action(
@@ -39,7 +49,7 @@ def choose_next_action(
                 f"near-miss rejected after budget exhaustion "
                 f"(bestDifferenceCount={best_diff}; not objdiff-zero)"
             )
-        return {
+        decision = {
             "schema": "agentdecompile.autonomous-policy-decision.v1",
             "action": action,
             "reason": reason,
@@ -49,6 +59,14 @@ def choose_next_action(
             "boundaryQuality": None,
             "claimBoundary": "policy selects the next recovery action; it does not promote source without the verifier gate",
         }
+        verifier_error = (getattr(verifier, "error", None) or "") if verifier else ""
+        generator = latest.get("source-candidate-generator")
+        generator_error = (getattr(generator, "error", None) or "") if generator else ""
+        return enrich_policy_with_proof_tier(
+            decision,
+            verifier_error=str(verifier_error),
+            generator_error=str(generator_error),
+        )
 
     latest = previous_attempts[-1] if previous_attempts else {}
     generator = latest.get("source-candidate-generator")
@@ -63,11 +81,12 @@ def choose_next_action(
     generator_error = (generator.error if generator else "") or ""
 
     verifier_ok = getattr(verifier, "status", None) == "success"
+    mismatch_class, mismatch_histogram = _mismatch_evidence(latest, verifier_data)
 
     if generator and generator.status == "failure" and "no source candidate" in generator_error:
         action = "reacquire-or-expand-source-facts"
         reason = "candidate generator exhausted compatible source shapes"
-    elif boundary_quality.get("status") == "suspect":
+    elif boundary_quality.get("status") == "suspect" or mismatch_class == CLASS_BOUNDARY_SUSPECT:
         action = "repair-boundary-before-retry"
         reason = "target slice boundary is suspect"
     elif "compile" in verifier_error.lower() or "syntax" in verifier_error.lower():
@@ -80,9 +99,16 @@ def choose_next_action(
         # Quality-filtered / non-exportable zero-diff rows must not stop the retry loop.
         action = "try-next-generated-candidate"
         reason = "differenceCount 0 but verifier plugin did not succeed (non-exportable match)"
-    elif best_diff is not None and best_diff <= 8:
+    elif best_diff is not None and best_diff <= NEAR_MISS_MAX_DIFF:
         action = "try-nearby-source-shape-or-permuter"
-        reason = f"candidate is close to match with {best_diff} difference(s); near-miss is not promote"
+        if mismatch_class == CLASS_OPERAND:
+            reason = f"operand near-miss with {best_diff} difference(s); permuter-first playbook"
+        elif mismatch_class == CLASS_OPCODE:
+            reason = f"opcode near-miss with {best_diff} difference(s); shape-search playbook"
+        elif mismatch_class == CLASS_INSERT_DELETE:
+            reason = f"insert/delete near-miss with {best_diff} difference(s); branch-shape playbook"
+        else:
+            reason = f"candidate is close to match with {best_diff} difference(s); near-miss is not promote"
     elif context.get("compilerProfiles") in (None, [], ()):
         action = "block-on-compiler-profile-evidence"
         reason = "large mismatch without compiler-profile evidence"
@@ -97,11 +123,29 @@ def choose_next_action(
         "attemptsSeen": attempts_seen,
         "bestDifferenceCount": best_diff,
         "boundaryQuality": boundary_quality.get("status"),
+        "mismatchClass": mismatch_class,
+        "mismatchHistogram": mismatch_histogram or None,
+        "routedPlaybook": routed_playbook_for_class(mismatch_class) if action == "try-nearby-source-shape-or-permuter" else None,
         "claimBoundary": "policy selects the next recovery action; it does not promote source without the verifier gate",
     }
     if remaining is not None:
         decision["attemptsRemaining"] = remaining
-    return decision
+    return enrich_policy_with_proof_tier(
+        decision,
+        verifier_error=verifier_error,
+        generator_error=generator_error,
+    )
+
+
+def _mismatch_evidence(latest: dict[str, Any], verifier_data: dict[str, Any]) -> tuple[str | None, dict[str, int] | None]:
+    for source in (latest, verifier_data):
+        if not isinstance(source, dict):
+            continue
+        mismatch_class = source.get("mismatchClass")
+        histogram = source.get("mismatchHistogram")
+        if mismatch_class:
+            return str(mismatch_class), histogram if isinstance(histogram, dict) else None
+    return None, None
 
 
 def _is_objdiff_zero_verifier(verifier_data: dict[str, Any], best_diff: int | None) -> bool:
@@ -137,6 +181,8 @@ def _coerce_budget(budget: AutonomyBudget | dict[str, Any] | None) -> AutonomyBu
             if budget.get("max_wall_seconds") is not None
             else (int(budget["maxWallSeconds"]) if budget.get("maxWallSeconds") is not None else None)
         ),
+        max_campaigns=int(budget.get("max_campaigns") or budget.get("maxCampaigns") or 1),
+        stop_on_accept=bool(budget.get("stop_on_accept") or budget.get("stopOnAccept")),
     )
 
 

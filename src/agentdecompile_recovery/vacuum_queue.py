@@ -23,6 +23,7 @@ def seed_vacuum_queue_from_work_dir(
     limit: int = 1,
     queue_path: Path | None = None,
     prompts_dir: Path | None = None,
+    prefer_proof_targets: bool = True,
 ) -> dict[str, Any]:
     """Populate ``state/queue.json`` pending entries from source-generation tasks.
 
@@ -40,7 +41,14 @@ def seed_vacuum_queue_from_work_dir(
     verified_names = _verified_names(work_dir / "verified")
     occupied |= verified_names
 
-    candidates = _candidate_entries(work_dir / "source-generation" / "tasks.jsonl")
+    repair_candidates = _repair_queue_entries(work_dir)
+    proof_candidates = _proof_target_entries(work_dir) if prefer_proof_targets else []
+    task_candidates = _candidate_entries(work_dir / "source-generation" / "tasks.jsonl")
+    # Readability repair rows are handled by run_readability_repair — not vacuum synthesis.
+    candidates = _merge_seed_candidates(proof_candidates, task_candidates)
+    readability_queue_present = bool(repair_candidates)
+    proof_target_first = bool(proof_candidates)
+
     seeded: list[dict[str, Any]] = []
     for entry in candidates:
         if len(seeded) >= limit:
@@ -64,6 +72,8 @@ def seed_vacuum_queue_from_work_dir(
         "limit": limit,
         "seededCount": len(seeded),
         "pendingCount": len(queue.get("pending") or []),
+        "readabilityQueueExcludedFromVacuum": readability_queue_present,
+        "proofTargetFirst": proof_target_first,
         "seeded": [{"name": row["name"], "score": row.get("score"), "reason": row.get("reason")} for row in seeded],
         "claimBoundary": CLAIM_BOUNDARY,
     }
@@ -112,6 +122,33 @@ def _verified_names(verified_dir: Path) -> set[str]:
             if "_" in path.stem:
                 names.add(path.stem.rsplit("_", 1)[0])
     return names
+
+
+def _repair_queue_entries(work_dir: Path) -> list[dict[str, Any]]:
+    from .readability_repair import repair_queue_vacuum_entries
+
+    return repair_queue_vacuum_entries(work_dir)
+
+
+def _proof_target_entries(work_dir: Path) -> list[dict[str, Any]]:
+    from .proof_target import proof_target_vacuum_entries
+
+    return proof_target_vacuum_entries(work_dir)
+
+
+def _merge_seed_candidates(
+    proof_candidates: list[dict[str, Any]],
+    task_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in [*proof_candidates, *task_candidates]:
+        name = str(entry.get("name") or "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        merged.append(entry)
+    return merged
 
 
 def _candidate_entries(tasks_path: Path) -> list[dict[str, Any]]:

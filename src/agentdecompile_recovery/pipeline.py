@@ -109,6 +109,7 @@ class RecoveryConfig:
     context_max_index_text_chars: int = 2_000
     context_extract_containers: bool = True
     context_include_low_signal_members: bool = False
+    skip_enrichment: bool = False
 
 
 class RecoveryRunner:
@@ -129,6 +130,12 @@ class RecoveryRunner:
             Stage("inventory-binary", "derive executable sections, imports, symbols, and code/data ranges", (self.run_dir / "binary-inventory.json",), RecoveryRunner.stage_inventory_binary),
             Stage("discover-functions", "derive function-boundary candidates from symbols and executable ranges", (self.run_dir / "function-candidates.json",), RecoveryRunner.stage_discover_functions),
             Stage("analyze-functions", "enrich function candidates with tool-backed boundary analysis", (self.run_dir / "function-analysis.json",), RecoveryRunner.stage_analyze_functions),
+            Stage(
+                "enrich-decompile",
+                "PyGhidra enrich DB and decompile facts before source generation",
+                (self.run_dir / "facts" / "enrich-receipt.json",),
+                RecoveryRunner.stage_enrich_decompile,
+            ),
             Stage("generate-source-candidates", "generate automatic source-candidate tasks from decompiler facts", (self.run_dir / "source-generation/summary.json",), RecoveryRunner.stage_generate_source_candidates),
             Stage("synthesize-source-tasks", "compile and objdiff generated source tasks against bounded target slices", (self.run_dir / "source-synthesis/summary.json",), RecoveryRunner.stage_synthesize_source_tasks),
             Stage("plan-strategy", "derive recovery strategy and required proof inputs", (self.run_dir / "strategy.json",), RecoveryRunner.stage_plan_strategy),
@@ -277,6 +284,7 @@ class RecoveryRunner:
             "enableLegacyAdapters": self.config.enable_legacy_adapters,
             "snapshotExistingLabel": self.config.snapshot_existing_label,
             "functionAnalysis": self.config.function_analysis,
+            "skipEnrichment": self.config.skip_enrichment,
             "sourceTaskLimit": self.config.source_task_limit,
             "sourceTaskOffset": self.config.source_task_offset,
             "sourceSynthesisEngine": self.config.source_synthesis_engine,
@@ -634,6 +642,20 @@ class RecoveryRunner:
         atomic_write_json(out_path, summary)
         return summary
 
+    def stage_enrich_decompile(self, _stage: Stage) -> dict[str, Any]:
+        from .reconstruct_enrich import analysis_binary_from_work_dir, run_reconstruct_enrich
+
+        candidates = json.loads((self.run_dir / "function-candidates.json").read_text(encoding="utf-8"))
+        binary = analysis_binary_from_work_dir(self.run_dir)
+        if binary is None:
+            binary = self.load_analysis_target().binary_path
+        return run_reconstruct_enrich(
+            binary=binary,
+            work_dir=self.run_dir,
+            candidates_payload=candidates,
+            skip=self.config.skip_enrichment,
+        )
+
     def resolve_acquisition_facts_source(self, target: dict[str, Any]) -> Path | None:
         # Prefer an explicit acquisition bundle (e.g. frontdoor mid-run snapshot with
         # prior merge) over rebuilding a path-only pack that would drop fused facts.
@@ -932,6 +954,11 @@ class RecoveryRunner:
         return summary
 
     def stage_report(self, _stage: Stage) -> dict[str, Any]:
+        from .readability_repair import write_readability_repair_queue
+        from .proof_target import write_proof_target_queue
+
+        write_readability_repair_queue(self.run_dir)
+        proof_target_queue = write_proof_target_queue(self.run_dir)
         export_manifest = build_export_package(self.run_dir)
         proof_ladder = write_proof_ladder(self.run_dir)
         critical_path = write_critical_path(self.run_dir)
@@ -966,7 +993,17 @@ class RecoveryRunner:
                 "coveragePercent": proof_ladder.get("coveragePercent"),
                 "rung": proof_ladder.get("rung"),
                 "nextRung": proof_ladder.get("nextRung"),
+                "functionsToNextRung": proof_ladder.get("functionsToNextRung"),
+                "nextRungTargetNumerator": proof_ladder.get("nextRungTargetNumerator"),
                 "claimBoundary": proof_ladder.get("claimBoundary"),
+            },
+            "proofTargetQueue": {
+                "status": proof_target_queue.get("status"),
+                "queueCount": proof_target_queue.get("queueCount"),
+                "synthesisEligibleCount": proof_target_queue.get("synthesisEligibleCount"),
+                "functionsToNextRung": proof_target_queue.get("functionsToNextRung"),
+                "topEntries": (proof_target_queue.get("entries") or [])[:5],
+                "claimBoundary": proof_target_queue.get("claimBoundary"),
             },
             "criticalPath": {
                 "readiness": critical_path.get("readiness"),
@@ -1008,8 +1045,10 @@ def command_error(exc: subprocess.CalledProcessError) -> str:
 
 
 def default_function_facts_path(run_dir: Path) -> Path | None:
-    path = run_dir / "function-facts.jsonl"
-    return path if path.exists() else None
+    for path in (run_dir / "facts" / "function-facts.jsonl", run_dir / "function-facts.jsonl"):
+        if path.exists():
+            return path
+    return None
 
 
 def sha256_file(path: Path) -> str:

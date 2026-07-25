@@ -22,9 +22,49 @@ def _capabilities(work: Path) -> None:
                 "objcopy": {"available": True},
                 "objdump": {"available": True},
             },
-            "localSurfaces": {"swkotorInventorySlice": True, "verifyObjdiff": True},
+            "localSurfaces": {"inventorySlice": True, "verifyObjdiff": True},
         },
     )
+
+
+def test_next_actions_proof_scale_ready(tmp_path: Path) -> None:
+    work = tmp_path / "proof"
+    work.mkdir()
+    _capabilities(work)
+    atomic_write_json(
+        work / "function-candidates.json",
+        {
+            "candidates": [
+                {"name": "fn_a", "entry": "00401000", "bodyBytes": 64},
+                {"name": "fn_b", "entry": "00402000", "bodyBytes": 32, "semanticSource": True},
+            ],
+            "summary": {"count": 2},
+        },
+    )
+    atomic_write_json(
+        work / "proof-ladder.json",
+        {
+            "nextRung": "1%",
+            "functionsToNextRung": 5,
+            "numerator": 0,
+            "denominator": 100,
+        },
+    )
+    atomic_write_json(
+        work / "facts" / "proof-target-queue.json",
+        {
+            "queueCount": 2,
+            "synthesisEligibleCount": 1,
+            "entries": [{"name": "fn_b", "score": 100}],
+            "claimBoundary": "proof-target-advisory",
+        },
+    )
+    actions = build_next_actions(work)
+    proof = next(row for row in actions if row["id"] == "proof-scale")
+    assert proof["status"] == "ready"
+    assert "--autonomous" in proof.get("commandHint", "")
+    assert "--autonomous-max-campaigns 5" in proof.get("commandHint", "")
+    assert proof.get("counts", {}).get("nearMissRetryCount") == 0
 
 
 def test_next_actions_vacuum_ready_with_tasks(tmp_path: Path) -> None:
@@ -60,7 +100,7 @@ def test_next_actions_reloc_slice_ready_for_pe(tmp_path: Path) -> None:
     actions = build_next_actions(work)
     reloc = next(row for row in actions if row["id"] == "reloc-slice")
     assert reloc["status"] == "ready"
-    assert "swkotor-inventory-slice" in reloc.get("commandHint", "")
+    assert "inventory-slice" in reloc.get("commandHint", "")
     slice_verify = next(row for row in actions if row["id"] == "slice-verify")
     assert slice_verify["status"] == "blocked"
     assert "ELF/Mach-O" in slice_verify["reason"]
