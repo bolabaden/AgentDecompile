@@ -20447,8 +20447,21 @@ def byte_field_guard_return_self_variants(row: dict[str, Any], candidate: Genera
     ]
 
 
+# Two distinct concerns share this check.
+#
+# Preprocessor/linker directives are a sandbox concern: a rewrite is untrusted
+# text and must not be able to pull in headers or influence linkage.
+#
+# Inline assembly, naked functions, and byte emission are a *deliverable*
+# concern: they reproduce the target bytes exactly, so they pass the objdiff
+# gate while destroying the readable-C output the pipeline exists to produce.
+# An unconstrained rewrite lane converges on them immediately -- the only
+# completed mechanism-3 result before this clause existed was
+# `__asm { inc dword ptr [DAT_00830540] }`. Word boundaries keep ordinary
+# identifiers that merely contain these letters (plasmaCount) from matching.
 _REWRITE_CONTENT_DISALLOWED_RE = re.compile(
-    r"^\s*#\s*(pragma|include|import|define|undef|ifdef|ifndef|if|elif|else|endif|error|line)\b|_Pragma\s*\(",
+    r"^\s*#\s*(pragma|include|import|define|undef|ifdef|ifndef|if|elif|else|endif|error|line)\b|_Pragma\s*\("
+    r"|\b__asm\b|\b_asm\b|\basm\s*\(|__declspec\s*\(\s*naked|\b__emit\b|\.incbin\b",
     re.MULTILINE,
 )
 _REWRITE_LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")

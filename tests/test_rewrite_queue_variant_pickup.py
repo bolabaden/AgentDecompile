@@ -187,6 +187,46 @@ def test_pending_rewrite_variant_rejects_empty_source() -> None:
     assert pending_rewrite_variant({"name": "sub_1000"}, _candidate(), result) is None
 
 
+# -- readable-source constraint --------------------------------------------
+#
+# Inline assembly reproduces the target bytes exactly, so it passes the objdiff
+# gate while defeating the readable-C deliverable. An unconstrained rewrite lane
+# converges on it: the only completed mechanism-3 result before this gate existed
+# was `__asm { inc dword ptr [DAT_00830540] }`.
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "int x(void) { __asm { nop } return 1; }",
+        "int x(void) { _asm nop; return 1; }",
+        "__declspec(naked) int x(void) { return 1; }",
+        "int x(void) { __emit(0x90); return 1; }",
+    ],
+)
+def test_pending_rewrite_variant_rejects_inline_assembly(body: str) -> None:
+    result = {"status": "completed", "source": body}
+    assert pending_rewrite_variant({"name": "sub_1000"}, _candidate(), result) is None
+
+
+def test_pending_rewrite_variant_rejects_inline_assembly_split_by_line_continuation() -> None:
+    """Line continuations are removed before the check, so `__\\<nl>asm` rejoins
+    into the keyword and is caught -- unlike a block comment, which the C
+    translation phases replace with a space (`__ asm`, two tokens, not the
+    keyword) and which therefore needs no special handling here."""
+
+    source = "int x(void) { __\\\nasm { nop } return 1; }"
+    assert pending_rewrite_variant({"name": "sub_1000"}, _candidate(), {"status": "completed", "source": source}) is None
+
+
+def test_pending_rewrite_variant_allows_identifier_containing_asm() -> None:
+    """`asm` inside an ordinary identifier is not inline assembly."""
+
+    source = "int x(void) { int plasmaCount = 1; return plasmaCount; }"
+    variant = pending_rewrite_variant({"name": "sub_1000"}, _candidate(), {"status": "completed", "source": source})
+    assert variant is not None
+
+
 # -- content-check obfuscation bypasses (security review) -------------------
 
 
