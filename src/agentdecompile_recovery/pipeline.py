@@ -751,6 +751,11 @@ class RecoveryRunner:
             limit=self.config.source_task_limit,
             offset=self.config.source_task_offset,
         )
+        truncation = summary.get("candidateTruncation") if isinstance(summary, dict) else None
+        if isinstance(truncation, dict) and truncation.get("warning"):
+            # A truncated run still reports success, so the only way an operator
+            # learns the inventory was cut is if we say so here.
+            print(f"agentdecompile-reconstruct: warning: {truncation['warning']}", file=sys.stderr)
         atomic_write_json(self.run_dir / "source-generation/summary.json", summary)
         return summary
 
