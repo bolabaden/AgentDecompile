@@ -39,6 +39,13 @@ typedef char *LPSTR;
 
 GLOBAL_RE = re.compile(r"\b(?:DAT|UNK|PTR|iRam|uRam|bRam|sRam|wRam|dRam|qRam|fRam|g_|s_)[A-Za-z0-9_]*\b")
 STACK_SYMBOL_RE = re.compile(r"\bstack0x[0-9A-Fa-f]+\b")
+# Matches `*<global>` (with optional intervening whitespace) so build_shim can
+# tell a dereferenced global apart from a plain scalar use -- declaring a
+# dereferenced global as `extern int` produces a real MSVC type error
+# ("indirection requires pointer operand"), not just a style nit.
+_GLOBAL_DEREF_RE = re.compile(
+    r"\*\s*((?:DAT|UNK|PTR|iRam|uRam|bRam|sRam|wRam|dRam|qRam|fRam|g_|s_)[A-Za-z0-9_]*)\b"
+)
 
 
 def run_command(
@@ -836,9 +843,22 @@ def acceptance_gate_for_tier(tier: str) -> str:
 
 
 def build_shim(source: str) -> str:
+    # PTR_-prefixed names are Ghidra's own pointer-typed-global convention --
+    # treat them as pointers unconditionally. Other matched globals (DAT_*,
+    # UNK_*, etc.) are only pointers when the source actually dereferences
+    # them; declaring an otherwise-scalar global as a pointer would be just
+    # as wrong as the reverse.
+    dereferenced = set(_GLOBAL_DEREF_RE.findall(source))
     declarations = []
     for name in sorted(set(GLOBAL_RE.findall(source))):
-        declarations.append(f"extern int {name};")
+        if name.startswith("PTR_") or name in dereferenced:
+            # char* (not void*): dereferencing must yield an arithmetic-
+            # compatible type (Ghidra's decompiler output routinely does
+            # `*global + <offset>` before an outer cast reinterprets the
+            # result) -- `*(void *)` is a hard type error, `*(char *)` is not.
+            declarations.append(f"extern char *{name};")
+        else:
+            declarations.append(f"extern int {name};")
     for name in sorted(set(STACK_SYMBOL_RE.findall(source))):
         declarations.append(f"extern undefined4 {name};")
     return TYPE_SHIM + ("\n" + "\n".join(declarations) if declarations else "")
