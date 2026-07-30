@@ -23,6 +23,25 @@ def _claim_worker(work_dir: str, request_id: str, claimant: str, result_path: st
     Path(result_path).write_text("1" if ok else "0", encoding="utf-8")
 
 
+def _write_request_worker(work_dir: str, name: str) -> None:
+    rewrite_queue.write_rewrite_request(
+        Path(work_dir), function_name=name, entry="0x1", candidate_source=f"src-{name}", mismatch_class=None, mismatch_histogram=None
+    )
+
+
+# macOS defaults multiprocessing to the "spawn" start method, which re-imports
+# the target function in a fresh interpreter rather than fork()ing the
+# already-loaded parent. Under pytest, the test module isn't reliably
+# importable by that fresh interpreter (no guaranteed `tests` package on
+# sys.path), so spawn-based Process creation fails here with
+# ModuleNotFoundError/AttributeError on macOS CI even though the exact same
+# code passes on Linux (which defaults to fork). Force fork explicitly --
+# available on both Linux and macOS (the only two CI platforms) -- since
+# these tests only need process-level isolation, not spawn's clean-slate
+# import behavior.
+_FORK_CONTEXT = multiprocessing.get_context("fork")
+
+
 def test_write_rewrite_request_creates_pending_entry(tmp_path: Path) -> None:
     request_id = rewrite_queue.write_rewrite_request(
         tmp_path,
@@ -241,8 +260,8 @@ def test_concurrent_claims_from_separate_processes_only_one_wins(tmp_path: Path)
     )
     result_a = tmp_path / "result_a.txt"
     result_b = tmp_path / "result_b.txt"
-    proc_a = multiprocessing.Process(target=_claim_worker, args=(str(tmp_path), request_id, "proc-a", str(result_a)))
-    proc_b = multiprocessing.Process(target=_claim_worker, args=(str(tmp_path), request_id, "proc-b", str(result_b)))
+    proc_a = _FORK_CONTEXT.Process(target=_claim_worker, args=(str(tmp_path), request_id, "proc-a", str(result_a)))
+    proc_b = _FORK_CONTEXT.Process(target=_claim_worker, args=(str(tmp_path), request_id, "proc-b", str(result_b)))
     proc_a.start()
     proc_b.start()
     proc_a.join(timeout=10)
@@ -264,13 +283,8 @@ def test_write_rewrite_request_survives_concurrent_writes_to_different_entries(t
     not lose each other's entries (the lock serializes the whole file, not
     just same-entry races)."""
 
-    def _writer(work_dir: str, name: str) -> None:
-        rewrite_queue.write_rewrite_request(
-            Path(work_dir), function_name=name, entry="0x1", candidate_source=f"src-{name}", mismatch_class=None, mismatch_histogram=None
-        )
-
     procs = [
-        multiprocessing.Process(target=_writer, args=(str(tmp_path), f"sub_{i}"))
+        _FORK_CONTEXT.Process(target=_write_request_worker, args=(str(tmp_path), f"sub_{i}"))
         for i in range(6)
     ]
     for proc in procs:
