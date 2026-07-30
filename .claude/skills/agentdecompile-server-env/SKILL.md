@@ -5,6 +5,28 @@ description: Environment setup, env-var reference, and MCP session/proxy behavio
 
 # AgentDecompile MCP Server: Environment and Session Reference
 
+## Installing via `/plugin install`
+
+This repo also ships as a Claude Code plugin (`.claude-plugin/plugin.json` +
+`marketplace.json`): `/plugin marketplace add <owner>/AgentDecompile` (as two
+separate turns, then `/plugin install agentdecompile@agentdecompile`) launches
+the MCP server automatically via `uv run --project ${CLAUDE_PLUGIN_ROOT}
+mcp-agentdecompile`. **`/plugin marketplace add` executes the target repo's
+code on install** (it spawns the `mcpServers` subprocess unconditionally) —
+only point it at a source (fork or otherwise) you trust. The manual setup
+below remains valid and is not replaced by plugin install; the Ghidra
+install/env-var prerequisites documented here still apply either way — plugin
+install does not install Ghidra itself.
+
+Note: the challenger-lane rewrite-request mechanism
+(`--autonomous-max-rewrite-requests`, see
+`docs/plans/2026-07-29-002-feat-subagent-rewrite-and-plugin-install-plan.md`)
+only *writes* requests during a `--autonomous` run. A completed rewrite is
+only ever consumed by a **separate, later** `--autonomous` invocation against
+the same work dir — nothing here makes it a single automatic end-to-end loop.
+Run `/loop <interval> /agentdecompile-rewrite-worker <work_dir>` in a live
+session to keep requests fulfilled between campaign runs.
+
 ## Environment
 
 - **Python 3.10+** and **Java 21** (OpenJDK) are pre-installed in the Cursor Cloud VM.
