@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .package_verify import build_shim, compile_with_msvc
-from .state import now
 
 ROOT = Path.cwd()
 DEFAULT_VC_ROOT: Path | None = None
