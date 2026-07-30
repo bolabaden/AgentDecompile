@@ -19,9 +19,28 @@ from __future__ import annotations
 
 import pytest
 
-from agentdecompile_recovery.package_verify import build_shim
+from agentdecompile_recovery.package_verify import TYPE_SHIM, build_shim
 
 pytestmark = pytest.mark.unit
+
+
+def test_type_shim_defines_bool() -> None:
+    """MSVC8 in C mode has no native bool -- Ghidra's decompiler emits `bool`
+    return types routinely (e.g. `bool __fastcall FUN_00406030(char *param_1)`),
+    which previously produced C2143 ("missing '{' before '__fastcall'") since
+    `bool` was an undeclared identifier being parsed as part of the type.
+    Confirmed against the real archived FUN_00406030 failure and re-verified
+    with a real wine+MSVC8 compile after this fix (not just clang)."""
+    assert "typedef" in TYPE_SHIM
+    assert " bool;" in TYPE_SHIM or "\nbool" in TYPE_SHIM
+
+
+def test_type_shim_defines_ushort() -> None:
+    """Ghidra emits `ushort` directly (not just the undefined2 pseudo-type)
+    for some decompiled parameter/return types -- confirmed against the real
+    archived FUN_0043e340 failure (`uint __fastcall FUN_0043e340(ushort
+    *param_1)`, C2143 "missing ')' before '*'")."""
+    assert " ushort;" in TYPE_SHIM or "\nushort" in TYPE_SHIM
 
 
 def test_dereferenced_global_is_declared_as_pointer() -> None:

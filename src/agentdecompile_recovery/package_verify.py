@@ -25,6 +25,8 @@ typedef unsigned int undefined4;
 typedef unsigned long long undefined8;
 typedef unsigned int uint;
 typedef unsigned long ulong;
+typedef unsigned short ushort;
+typedef unsigned char bool;
 typedef int code();
 typedef int BOOL;
 typedef void *HANDLE;
