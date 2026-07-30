@@ -18,7 +18,12 @@ SCHEMA = "agentdecompile.autonomy-budget.v1"
 DEFAULT_MAX_FUNCTIONS = 1
 DEFAULT_MAX_ATTEMPTS_PER_FUNCTION = 3
 DEFAULT_MAX_CAMPAIGNS = 1
-DEFAULT_MAX_REWRITE_REQUESTS_PER_FUNCTION = 0
+# Mechanism 3 is the only stage that reconstructs C rather than searching a
+# fixed space of compiler flags and idiom permutations. A default of 0 left
+# choose_next_action unable to reach `try-rewrite-request` at all, so every
+# default campaign silently degraded to mechanisms 1+2 and reported zero
+# accepts without ever indicating the reconstruction stage had been skipped.
+DEFAULT_MAX_REWRITE_REQUESTS_PER_FUNCTION = 1
 CLAIM_BOUNDARY = (
     "autonomy budget bounds repair/vacuum loops only; it does not establish "
     "objdiff-verified-semantic recovery"
