@@ -207,15 +207,48 @@ claim, per `STRATEGY.md`.
 
 ## Sequencing
 
-| Unit | Change | Findings |
-|---|---|---|
-| U1 | Aligned diff + target disassembly into the context pack | F3 |
-| U2 | Readability constraint: prompt, content check, promotion gate | F5 |
-| U3 | Headless CLI fulfillment provider | F2 |
-| U4 | Closed inner loop with diff feedback | F2 |
-| U5 | Pattern memory rebuild and prompt injection | F4 |
-| U6 | Enable the rewrite budget by default | F1 |
-| U7 | Equivalence-class batching | F6 covered incidentally |
+| Unit | Change | Findings | Status |
+|---|---|---|---|
+| U1 | Aligned diff into the context pack | F3 | done — `ef6d38b` |
+| U2 | Readability constraint: prompt + content gate | F5 | done — `faaab2f`, `92b3627` |
+| U3 | Headless CLI fulfillment provider | F2 | done — `8b45668` |
+| U4 | In-process loop closure | F2 | done — `808d3c1` |
+| U5 | Pattern memory rebuild and prompt injection | F4, F6 | done — `3e7f4c6` |
+| U6 | Enable the rewrite budget by default | F1 | done — `808d3c1` |
+| U7 | Equivalence-class batching | — | open |
 
-U6 lands after U1–U5 deliberately: enabling the budget before the prompt carries
-the target would only spend budget on the unsolvable formulation.
+U6 landed with U4 rather than before U1–U3 deliberately: enabling the budget
+while the prompt still omitted the target would only have spent budget on the
+unsolvable formulation.
+
+## Validation
+
+`FUN_004a23b0` is the one function with a completed mechanism-3 result predating
+these changes. Its recorded result was:
+
+```c
+void FUN_004a23b0(void) { __asm { inc dword ptr [DAT_00830540] } }
+```
+
+Re-running the same function through the rebuilt prompt and the headless
+provider returns:
+
+```c
+void FUN_004a23b0(void) { ++DAT_00830540; }
+```
+
+Same target instruction (`inc dword ptr [...]`), as readable C. The prompt
+change converted the cheat into the intended answer.
+
+679 unit tests pass; ruff clean.
+
+## Open items
+
+- **F7** — `source_parity_synthesize.py` at 23,118 lines. Recorded, not
+  scheduled. Recent defects cluster there and size is a contributing cause.
+- **F8** — the active work dir is on a rotational USB disk. `work_dir_diagnostics`
+  warns on every run; per-function compile+objdiff is I/O-bound, so this caps
+  throughput regardless of loop quality.
+- **U7** — equivalence-class batching. The repo's own history is the argument
+  for it: one stdcall-decoration fix unblocked 37 functions at once, while the
+  per-function loop rediscovers shared root causes once per function.
