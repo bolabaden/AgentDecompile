@@ -628,6 +628,36 @@ def inc_abs_global(row: dict[str, Any], c_name: str, data: bytes) -> list[Genera
     ]
 
 
+def single_absolute_address_relocation(offset: int, addr: int) -> list[dict[str, Any]]:
+    """Return the absoluteAddressRelocations shape for one absolute-address reference.
+
+    Matches the target-side reconstruction absolute_address_relocations() reads
+    (render_target_coff_for_candidate) -- without this, the synthetic target
+    object renders the address as a raw byte blob instead of a symbol
+    relocation, and a candidate referencing the same global through a
+    compiler-visible symbol can never byte-match it.
+
+    Do NOT call this for a candidate whose generated source only references
+    the address via a literal pointer cast (e.g. `*(unsigned int *)0x...`) --
+    MSVC compiles a literal cast as a bare immediate with no relocation, so
+    there is nothing on the candidate side for this evidence to mirror.
+    Confirmed via real MSVC8/wine + objdiff A/B testing to make matching
+    measurably worse for literal-cast candidates (see
+    docs/plans/2026-07-30-001-fix-generalize-relocation-evidence-plan.md).
+    Only use this when the generated source references the address through a
+    named extern symbol, as bink_buffer_set_direct_draw_forwarder does.
+    """
+
+    return [
+        {
+            "offset": offset,
+            "type": "IMAGE_REL_I386_DIR32",
+            "symbol": f"_DAT_{addr:08x}",
+            "decodedAddress": f"0x{addr:08x}",
+        }
+    ]
+
+
 def inc_field_return_stack4(row: dict[str, Any], c_name: str, data: bytes) -> list[GeneratedCandidate]:
     if len(data) != 10 or data[0] != 0x8B or data[1] != 0x41 or data[3] != 0x40 or data[4] != 0x89 or data[5] != 0x41:
         return []
