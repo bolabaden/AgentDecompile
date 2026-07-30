@@ -63,8 +63,9 @@ if [[ ! -d "$prompt_root" ]]; then
 fi
 
 entries_tmp="$(mktemp)"
-trap 'rm -f "$entries_tmp" "$queue_tmp"' EXIT
+trap 'rm -f "$entries_tmp" "$queue_tmp" "$report_entries_tmp"' EXIT
 queue_tmp=""
+report_entries_tmp=""
 
 if [[ -n "$queue" && -f "$queue" ]]; then
   jq -r '.pending[]?.name' "$queue" | while IFS= read -r name; do
@@ -120,11 +121,13 @@ if [[ "$update_queue" == true ]]; then
     "$ROOT/scripts/lib/queue-state.sh" init --queue "$queue" --prompts-dir "$prompt_root" >/dev/null
     jq '.' "$queue" >"$queue_tmp"
   fi
-  jq --argjson entries "$(printf '%s\n' "$report" | jq '.entries')" '
+  report_entries_tmp="$(mktemp)"
+  printf '%s\n' "$report" | jq '.entries' >"$report_entries_tmp"
+  jq --slurpfile entries "$report_entries_tmp" '
     .pending = (
       .pending
       | map(. as $p
-        | ([$entries[]? | select(.name == $p.name)] | .[0]) as $s
+        | ([$entries[0][]? | select(.name == $p.name)] | .[0]) as $s
         | if $s then
             $p + {
               score: $s.score,
