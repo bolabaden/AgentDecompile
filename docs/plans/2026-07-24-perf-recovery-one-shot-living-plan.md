@@ -66,12 +66,14 @@ flowchart TD
 |------|--------|
 | U1–U5 | Landed on `feat/idempotent-oneshot-perf` |
 | Post-review | Shell objdiff fail-closed; synthesize target-sha; dump digest gate; dump timings |
-| Remaining scale | G14 per-worker Wine prefixes; G15 synth wall; G16 SSD work-dir guidance (operator) |
+| Remaining scale | ~~G14 per-worker Wine prefixes~~ done; ~~G15 synth wall~~ done; G16 SSD work-dir guidance now has an automated warning (see below) |
+
+**Update (2026-07-30):** G14 and G15 are done — `5000b14` (2026-07-25) shipped U4 (compile/objdiff cache, G15) and U5 (per-worker Wine prefix, G14); `c1bb46b` (2026-07-29) closed a residual G14 gap by threading `--vc-root`/`--source-synthesis-wineprefix` all the way through the autonomous vacuum loop's per-function compile subprocess (previously silently falling back to a shared/wrong `WINEPREFIX`). G16 now has a real code fix: `work_dir_diagnostics.rotational_disk_warning()` (`src/agentdecompile_recovery/work_dir_diagnostics.py`) prints an advisory warning when `--autonomous`'s work dir resolves to a rotational disk, wired into `frontdoor.py`. All three "remaining scale" items are closed; only the "Done when" wall-time measurement below is still open.
 
 **Next** (backlog only — outside U1–U5)
 
-1. Optional per-worker Wine prefixes (G14)
-2. Synth wall-time / compile cache (G15) without skipping inventory
+1. ~~Optional per-worker Wine prefixes (G14)~~ — done, see above.
+2. ~~Synth wall-time / compile cache (G15) without skipping inventory~~ — done, see above.
 
 ## Backlog
 
@@ -104,9 +106,9 @@ flowchart TD
 | ID | Issue | Files |
 |----|-------|-------|
 | G13 | Always dual advisory + Port write | ~~`--dump-layers`~~ |
-| G14 | Shared WINEPREFIX false mismatches | docs, per-worker prefixes |
-| G15 | Exhaustive synth wall time | workers, compile cache, timings |
-| G16 | USB work-dir I/O | use local SSD; archive after |
+| G14 | Shared WINEPREFIX false mismatches | ~~per-worker prefixes (`5000b14` U5, `c1bb46b`)~~ fixed |
+| G15 | Exhaustive synth wall time | ~~compile cache (`5000b14` U4)~~ fixed |
+| G16 | USB work-dir I/O | ~~automated warning (`work_dir_diagnostics.py`)~~ fixed 2026-07-30; operator still chooses where to point `--work-dir` |
 
 ## Done when
 
@@ -115,7 +117,7 @@ flowchart TD
 - [x] Fresh dump rejects undeclared leftover JSONL; receipts include `sourceText`
 - [x] `is_proven_zero` fail-closed; tests for G1–G4
 - [x] CRITICAL_PATH separates fresh runs from operator resume/dump-only
-- [ ] Pre-synth wall down without dropping inventoried functions (measure on cold host after U2–U3; G15 remains)
+- [ ] Pre-synth wall down without dropping inventoried functions (measure on cold host after U2–U3; the compile-cache mechanism (G15) landed in `5000b14` — this item is now the cold-host wall-time *measurement*, not the fix)
 
 ## Related plans
 
