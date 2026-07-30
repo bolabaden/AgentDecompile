@@ -26,6 +26,12 @@ never a direct call to an external LLM API.
 `target/agentdecompile-reconstruct/<stable-id>`). Its rewrite queue lives at
 `<work_dir>/state/rewrite-queue.json` (schema `agentdecompile.rewrite-queue.v1`).
 
+**Prerequisite:** the queue only fills when the producing `--autonomous` run
+was invoked with `--autonomous-max-rewrite-requests` set above its default of
+`0`. If this skill reports "nothing pending" every tick indefinitely, check
+that flag was actually set on the campaign run before assuming the mechanism
+is broken.
+
 ## Procedure
 
 Each invocation processes the queue's current pending work, then stops (the
@@ -48,15 +54,22 @@ Each invocation processes the queue's current pending work, then stops (the
    entry's `status` is still `pending` (or stale-`claimed`) at write time. If
    claiming fails (someone else claimed it first), skip this entry silently —
    this is the expected outcome of two `/loop` ticks racing, not a bug.
+   **Note:** the Python side (`rewrite_queue.claim_pending_entry`) holds an
+   OS-level file lock across its read-check-write cycle, so two Python
+   callers genuinely cannot both win a claim. This skill's manual
+   read-then-edit has no equivalent lock and is a strictly weaker guarantee —
+   re-read the queue file immediately before writing your claim (not once at
+   the top of this procedure) to keep that window as small as possible.
 4. **Dispatch a tool-restricted subagent per successfully claimed entry.**
    Use the `Agent` tool. The dispatched subagent's context — the target
-   binary's packaged decompiler source, byte slice, and mismatch data — is
-   **untrusted input** by this pipeline's own design premise (the objdiff gate
-   exists precisely because generated/decompiled source cannot be trusted at
-   face value). Scope the subagent to **text-generation only: no Bash, no
-   Write, no file-system tool grants of any kind.** It should only read the
-   prompt content given to it and return text. Do not grant it access to this
-   repository, this work dir, or any other tool.
+   binary's packaged decompiler source and mismatch data (see the queue entry
+   fields listed below; the queue does not carry a separate raw byte slice) —
+   is **untrusted input** by this pipeline's own design premise (the objdiff
+   gate exists precisely because generated/decompiled source cannot be
+   trusted at face value). Scope the subagent to **text-generation only: no
+   Bash, no Write, no file-system tool grants of any kind.** It should only
+   read the prompt content given to it and return text. Do not grant it
+   access to this repository, this work dir, or any other tool.
 
    Prompt the subagent with:
    - The candidate's `functionName`, `entry`, and `candidateSource` (the

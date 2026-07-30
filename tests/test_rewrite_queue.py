@@ -8,6 +8,7 @@ concurrent /loop-driven worker sessions.
 from __future__ import annotations
 
 import json
+import multiprocessing
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,11 @@ import pytest
 from agentdecompile_recovery import rewrite_queue
 
 pytestmark = pytest.mark.unit
+
+
+def _claim_worker(work_dir: str, request_id: str, claimant: str, result_path: str) -> None:
+    ok = rewrite_queue.claim_pending_entry(Path(work_dir), request_id, claimant=claimant)
+    Path(result_path).write_text("1" if ok else "0", encoding="utf-8")
 
 
 def test_write_rewrite_request_creates_pending_entry(tmp_path: Path) -> None:
@@ -222,3 +228,89 @@ def test_derive_request_id_is_deterministic_and_source_sensitive() -> None:
     assert id_a == id_b
     assert id_a != id_c
     assert id_a.startswith("sub_1000:")
+
+
+# -- real cross-process concurrency (code review: claim was a TOCTOU race
+# without file locking; these exercise actual separate processes, not just
+# sequential calls in one process) --------------------------------------
+
+
+def test_concurrent_claims_from_separate_processes_only_one_wins(tmp_path: Path) -> None:
+    request_id = rewrite_queue.write_rewrite_request(
+        tmp_path, function_name="sub_5000", entry="0x5000", candidate_source="s", mismatch_class=None, mismatch_histogram=None
+    )
+    result_a = tmp_path / "result_a.txt"
+    result_b = tmp_path / "result_b.txt"
+    proc_a = multiprocessing.Process(target=_claim_worker, args=(str(tmp_path), request_id, "proc-a", str(result_a)))
+    proc_b = multiprocessing.Process(target=_claim_worker, args=(str(tmp_path), request_id, "proc-b", str(result_b)))
+    proc_a.start()
+    proc_b.start()
+    proc_a.join(timeout=10)
+    proc_b.join(timeout=10)
+    assert proc_a.exitcode == 0
+    assert proc_b.exitcode == 0
+
+    outcome_a = result_a.read_text(encoding="utf-8")
+    outcome_b = result_b.read_text(encoding="utf-8")
+    # Exactly one of the two processes must have won the claim -- the file
+    # lock (not just an in-memory check) must serialize the two attempts.
+    assert (outcome_a, outcome_b) in {("1", "0"), ("0", "1")}
+    entry = rewrite_queue.find_entry(tmp_path, request_id)
+    assert entry["claimedBy"] in {"proc-a", "proc-b"}
+
+
+def test_write_rewrite_request_survives_concurrent_writes_to_different_entries(tmp_path: Path) -> None:
+    """Two writers touching different request ids in the same queue file must
+    not lose each other's entries (the lock serializes the whole file, not
+    just same-entry races)."""
+
+    def _writer(work_dir: str, name: str) -> None:
+        rewrite_queue.write_rewrite_request(
+            Path(work_dir), function_name=name, entry="0x1", candidate_source=f"src-{name}", mismatch_class=None, mismatch_histogram=None
+        )
+
+    procs = [
+        multiprocessing.Process(target=_writer, args=(str(tmp_path), f"sub_{i}"))
+        for i in range(6)
+    ]
+    for proc in procs:
+        proc.start()
+    for proc in procs:
+        proc.join(timeout=10)
+        assert proc.exitcode == 0
+
+    queue = rewrite_queue.read_rewrite_queue(tmp_path)
+    assert len(queue["entries"]) == 6
+
+
+# -- durable budget accounting (code review: pruning a resolved entry must
+# not silently reset max_rewrite_requests_per_function's remaining budget) --
+
+
+def test_count_requests_for_function_survives_pruning(tmp_path: Path) -> None:
+    request_id = rewrite_queue.write_rewrite_request(
+        tmp_path, function_name="sub_6000", entry="0x6000", candidate_source="s", mismatch_class=None, mismatch_histogram=None
+    )
+    assert rewrite_queue.count_requests_for_function(tmp_path, "sub_6000") == 1
+
+    rewrite_queue.claim_pending_entry(tmp_path, request_id, claimant="worker-a")
+    rewrite_queue.write_claimed_result(tmp_path, request_id, claimant="worker-a", status=rewrite_queue.STATUS_COMPLETED, source="int x(void){return 0;}")
+    rewrite_queue.prune_consumed_entries(tmp_path, [request_id])
+
+    assert rewrite_queue.find_entry(tmp_path, request_id) is None, "entry should be pruned"
+    assert rewrite_queue.count_requests_for_function(tmp_path, "sub_6000") == 1, (
+        "budget accounting must survive pruning -- otherwise "
+        "max_rewrite_requests_per_function silently resets to full every time "
+        "a resolved request is consumed"
+    )
+
+
+def test_count_requests_for_function_accumulates_across_multiple_requests(tmp_path: Path) -> None:
+    for i in range(3):
+        request_id = rewrite_queue.write_rewrite_request(
+            tmp_path, function_name="sub_7000", entry="0x7000", candidate_source=f"variant-{i}", mismatch_class=None, mismatch_histogram=None
+        )
+        rewrite_queue.claim_pending_entry(tmp_path, request_id, claimant="worker-a")
+        rewrite_queue.write_claimed_result(tmp_path, request_id, claimant="worker-a", status=rewrite_queue.STATUS_FAILED, reason="no usable rewrite")
+        rewrite_queue.prune_consumed_entries(tmp_path, [request_id])
+    assert rewrite_queue.count_requests_for_function(tmp_path, "sub_7000") == 3

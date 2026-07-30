@@ -183,7 +183,6 @@ class SourceCandidateObjdiffPlugin:
             for record in records:
                 fh.write(json.dumps(record, sort_keys=True) + "\n")
         if latest_record.get("mismatchClass"):
-            work_dir_value = context.get("workDir")
             if work_dir_value:
                 write_mismatch_class_last(
                     Path(str(work_dir_value)),

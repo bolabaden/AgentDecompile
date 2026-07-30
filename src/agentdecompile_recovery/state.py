@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,11 @@ def now() -> str:
 
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # Unique per-writer tmp name -- concurrent writers to the same destination
+    # (e.g. rewrite_queue.py's campaign process + worker session) must not
+    # share one intermediate file, or one writer's in-progress .tmp can be
+    # replaced out from under another mid-write.
+    tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{os.urandom(4).hex()}.tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(path)
 

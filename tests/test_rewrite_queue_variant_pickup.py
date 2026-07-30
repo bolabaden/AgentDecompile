@@ -67,7 +67,6 @@ def test_try_rewrite_request_is_a_stop_action() -> None:
     """The load-bearing fix from feasibility review: without this, the pipeline
     would retry synchronously in-process instead of handing off to the queue."""
     assert "try-rewrite-request" in AUTONOMY_STOP_ACTIONS
-    assert "rewrite-unavailable" in AUTONOMY_STOP_ACTIONS
 
 
 def test_policy_does_not_request_rewrite_before_shape_search_exhausted() -> None:
@@ -188,6 +187,35 @@ def test_pending_rewrite_variant_rejects_empty_source() -> None:
     assert pending_rewrite_variant({"name": "sub_1000"}, _candidate(), result) is None
 
 
+# -- content-check obfuscation bypasses (security review) -------------------
+
+
+def test_pending_rewrite_variant_rejects_directive_split_by_line_continuation() -> None:
+    source = "#\\\npragma comment(lib, \"evil.lib\")\nint x(void) { return 1; }"
+    assert pending_rewrite_variant({"name": "sub_1000"}, _candidate(), {"status": "completed", "source": source}) is None
+
+
+def test_pending_rewrite_variant_rejects_directive_hidden_by_block_comment() -> None:
+    source = "#/**/pragma comment(lib, \"evil.lib\")\nint x(void) { return 1; }"
+    assert pending_rewrite_variant({"name": "sub_1000"}, _candidate(), {"status": "completed", "source": source}) is None
+
+
+def test_pending_rewrite_variant_rejects_underscore_pragma() -> None:
+    source = 'int x(void) { _Pragma("comment(lib, \\"evil.lib\\")") return 1; }'
+    assert pending_rewrite_variant({"name": "sub_1000"}, _candidate(), {"status": "completed", "source": source}) is None
+
+
+def test_pending_rewrite_variant_rejects_define_directive() -> None:
+    source = "#define EVIL 1\nint x(void) { return EVIL; }"
+    assert pending_rewrite_variant({"name": "sub_1000"}, _candidate(), {"status": "completed", "source": source}) is None
+
+
+def test_pending_rewrite_variant_allows_line_comment_not_containing_directive() -> None:
+    source = "// a plain comment, not a directive\nint x(void) { return 1; }"
+    variant = pending_rewrite_variant({"name": "sub_1000"}, _candidate(), {"status": "completed", "source": source})
+    assert variant is not None
+
+
 def test_semantic_equivalent_variants_reaches_pending_rewrite_for_packaged_source() -> None:
     """Packaged-source candidates with no matching template (mechanism 1) and no
     idiom-permutable shape (mechanism 2) must still reach the rewrite-queue
@@ -229,3 +257,28 @@ def test_byte_field_guard_fallback_still_wins_over_pending_rewrite() -> None:
     )
     assert len(variants) == 3
     assert variants[0]["name"] == "byte-field-guard-mask-arithmetic-ternary"
+
+
+def test_stdcall_mechanical_fallback_not_shadowed_by_pending_but_unresolved_rewrite() -> None:
+    """Correctness review: a pending_rewrite_result that hasn't resolved to a
+    usable variant (still pending/claimed/failed) must fall through to the
+    stdcall mechanical fallback rather than short-circuiting to []."""
+    candidate = GeneratedCandidate(
+        rule="stdcall-store-two-stack-args-to-globals",
+        variant="stdcall-store-two-stack-args-to-globals",
+        c_name="sub_4000",
+        symbol="sub_4000",
+        source="void __stdcall sub_4000(int a, int b) { g_first = a; g_second = b; }\n",
+        callconv="stdcall",
+        return_type="void",
+        source_suffix=".c",
+        semantic_source=True,
+        evidence={"firstAddress": "0x00500000", "secondAddress": "0x00500004"},
+    )
+    variants = semantic_equivalent_variants(
+        {"name": "sub_4000"},
+        candidate,
+        pending_rewrite_result={"status": "pending"},
+    )
+    assert variants, "stdcall mechanical fallback must still fire when the rewrite hasn't resolved"
+    assert variants[0]["name"] == "direct-volatile-stores"

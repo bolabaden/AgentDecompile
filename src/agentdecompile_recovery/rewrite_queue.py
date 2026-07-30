@@ -8,18 +8,22 @@ against the agentdecompile-rewrite-worker skill -- claims pending entries,
 dispatches a tool-restricted Agent subagent, and writes the result back. A
 later --autonomous invocation picks up completed results.
 
-Lifecycle: pending -> claimed -> completed | failed. Every mutation is
-read-current -> verify-expected-state -> write-full-snapshot; a mutation that
-finds an entry no longer in the expected state is discarded rather than
-clobbering a concurrent writer's result (see docs/plans/2026-07-29-002-...).
+Lifecycle: pending -> claimed -> completed | failed. Every mutation holds an
+exclusive file lock across its read -> verify-expected-state -> write cycle
+(see `_locked`), so two processes racing on the same entry cannot both
+succeed -- one blocks until the other's mutation (and lock release) completes,
+then re-reads current state before deciding whether its own mutation still
+applies.
 """
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .state import atomic_write_json, now, read_json
 
@@ -41,13 +45,37 @@ def queue_path(work_dir: Path) -> Path:
     return work_dir / "state" / "rewrite-queue.json"
 
 
+def _lock_path(work_dir: Path) -> Path:
+    return work_dir / "state" / "rewrite-queue.lock"
+
+
+@contextmanager
+def _locked(work_dir: Path) -> Iterator[None]:
+    """Exclusive cross-process lock spanning a full read-check-write cycle.
+
+    Blocking (not try-lock): a losing writer waits for the winner to finish
+    and release, then proceeds against fresh on-disk state, rather than
+    failing outright. Without this, two processes can both read the same
+    "pending" snapshot and both believe their write is the first to land.
+    """
+
+    lock_path = _lock_path(work_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
 def derive_request_id(function_name: str, candidate_source: str) -> str:
     digest = hashlib.sha256(candidate_source.encode("utf-8")).hexdigest()[:16]
     return f"{function_name}:{digest}"
 
 
 def _empty_queue() -> dict[str, Any]:
-    return {"schema": SCHEMA, "claimBoundary": CLAIM_BOUNDARY, "entries": {}}
+    return {"schema": SCHEMA, "claimBoundary": CLAIM_BOUNDARY, "entries": {}, "requestCounts": {}}
 
 
 def read_rewrite_queue(work_dir: Path) -> dict[str, Any]:
@@ -60,6 +88,8 @@ def read_rewrite_queue(work_dir: Path) -> dict[str, Any]:
         return _empty_queue()
     if not isinstance(data, dict) or not isinstance(data.get("entries"), dict):
         return _empty_queue()
+    if not isinstance(data.get("requestCounts"), dict):
+        data["requestCounts"] = {}
     return data
 
 
@@ -70,9 +100,16 @@ def find_entry(work_dir: Path, request_id: str) -> dict[str, Any] | None:
 
 
 def count_requests_for_function(work_dir: Path, function_name: str) -> int:
+    """Cumulative requests ever written for this function.
+
+    Reads the durable requestCounts counter, not a scan of currently-live
+    entries -- entries are pruned once consumed (prune_consumed_entries), and
+    a live-entry scan would let max_rewrite_requests_per_function silently
+    reset to full every time a resolved entry gets pruned.
+    """
+
     queue = read_rewrite_queue(work_dir)
-    prefix = f"{function_name}:"
-    return sum(1 for request_id in queue["entries"] if request_id.startswith(prefix))
+    return int(queue["requestCounts"].get(function_name, 0) or 0)
 
 
 def write_rewrite_request(
@@ -87,20 +124,22 @@ def write_rewrite_request(
     """Write a pending request; a no-op if one already exists for this candidate."""
 
     request_id = derive_request_id(function_name, candidate_source)
-    queue = read_rewrite_queue(work_dir)
-    if request_id in queue["entries"]:
-        return request_id
-    queue["entries"][request_id] = {
-        "requestId": request_id,
-        "functionName": function_name,
-        "entry": entry,
-        "candidateSource": candidate_source,
-        "mismatchClass": mismatch_class,
-        "mismatchHistogram": mismatch_histogram,
-        "status": STATUS_PENDING,
-        "writtenAt": now(),
-    }
-    atomic_write_json(queue_path(work_dir), queue)
+    with _locked(work_dir):
+        queue = read_rewrite_queue(work_dir)
+        if request_id in queue["entries"]:
+            return request_id
+        queue["entries"][request_id] = {
+            "requestId": request_id,
+            "functionName": function_name,
+            "entry": entry,
+            "candidateSource": candidate_source,
+            "mismatchClass": mismatch_class,
+            "mismatchHistogram": mismatch_histogram,
+            "status": STATUS_PENDING,
+            "writtenAt": now(),
+        }
+        queue["requestCounts"][function_name] = int(queue["requestCounts"].get(function_name, 0) or 0) + 1
+        atomic_write_json(queue_path(work_dir), queue)
     return request_id
 
 
@@ -113,23 +152,24 @@ def claim_pending_entry(
 ) -> bool:
     """Claim a pending (or stale-claimed) entry. Returns whether the claim succeeded."""
 
-    queue = read_rewrite_queue(work_dir)
-    entry = queue["entries"].get(request_id)
-    if not isinstance(entry, dict):
-        return False
-    status = entry.get("status")
-    if status == STATUS_PENDING:
-        pass
-    elif status == STATUS_CLAIMED and _claim_is_stale(entry, staleness_seconds):
-        pass
-    else:
-        return False
-    entry["status"] = STATUS_CLAIMED
-    entry["claimedBy"] = claimant
-    entry["claimedAt"] = now()
-    queue["entries"][request_id] = entry
-    atomic_write_json(queue_path(work_dir), queue)
-    return True
+    with _locked(work_dir):
+        queue = read_rewrite_queue(work_dir)
+        entry = queue["entries"].get(request_id)
+        if not isinstance(entry, dict):
+            return False
+        status = entry.get("status")
+        if status == STATUS_PENDING:
+            pass
+        elif status == STATUS_CLAIMED and _claim_is_stale(entry, staleness_seconds):
+            pass
+        else:
+            return False
+        entry["status"] = STATUS_CLAIMED
+        entry["claimedBy"] = claimant
+        entry["claimedAt"] = now()
+        queue["entries"][request_id] = entry
+        atomic_write_json(queue_path(work_dir), queue)
+        return True
 
 
 def _claim_is_stale(entry: dict[str, Any], staleness_seconds: int) -> bool:
@@ -157,34 +197,40 @@ def write_claimed_result(
 
     if status not in (STATUS_COMPLETED, STATUS_FAILED):
         raise ValueError("status must be completed or failed")
-    queue = read_rewrite_queue(work_dir)
-    entry = queue["entries"].get(request_id)
-    if not isinstance(entry, dict):
-        return False
-    if entry.get("status") != STATUS_CLAIMED or entry.get("claimedBy") != claimant:
-        return False
-    entry["status"] = status
-    entry["resolvedAt"] = now()
-    if source is not None:
-        entry["source"] = source
-    if reason is not None:
-        entry["reason"] = reason
-    queue["entries"][request_id] = entry
-    atomic_write_json(queue_path(work_dir), queue)
-    return True
+    with _locked(work_dir):
+        queue = read_rewrite_queue(work_dir)
+        entry = queue["entries"].get(request_id)
+        if not isinstance(entry, dict):
+            return False
+        if entry.get("status") != STATUS_CLAIMED or entry.get("claimedBy") != claimant:
+            return False
+        entry["status"] = status
+        entry["resolvedAt"] = now()
+        if source is not None:
+            entry["source"] = source
+        if reason is not None:
+            entry["reason"] = reason
+        queue["entries"][request_id] = entry
+        atomic_write_json(queue_path(work_dir), queue)
+        return True
 
 
 def prune_consumed_entries(work_dir: Path, request_ids: list[str]) -> None:
-    """Remove completed/failed entries once a campaign pass has read them."""
+    """Remove completed/failed entries once a campaign pass has read them.
+
+    Never touches requestCounts -- pruning an entry must not free up budget
+    the function has already spent.
+    """
 
     if not request_ids:
         return
-    queue = read_rewrite_queue(work_dir)
-    changed = False
-    for request_id in request_ids:
-        entry = queue["entries"].get(request_id)
-        if isinstance(entry, dict) and entry.get("status") in (STATUS_COMPLETED, STATUS_FAILED):
-            del queue["entries"][request_id]
-            changed = True
-    if changed:
-        atomic_write_json(queue_path(work_dir), queue)
+    with _locked(work_dir):
+        queue = read_rewrite_queue(work_dir)
+        changed = False
+        for request_id in request_ids:
+            entry = queue["entries"].get(request_id)
+            if isinstance(entry, dict) and entry.get("status") in (STATUS_COMPLETED, STATUS_FAILED):
+                del queue["entries"][request_id]
+                changed = True
+        if changed:
+            atomic_write_json(queue_path(work_dir), queue)

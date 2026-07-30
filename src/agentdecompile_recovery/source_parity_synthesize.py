@@ -20336,7 +20336,27 @@ def byte_field_guard_return_self_variants(row: dict[str, Any], candidate: Genera
     ]
 
 
-_REWRITE_CONTENT_DISALLOWED_RE = re.compile(r"^\s*#\s*(pragma|include|import)\b", re.MULTILINE)
+_REWRITE_CONTENT_DISALLOWED_RE = re.compile(
+    r"^\s*#\s*(pragma|include|import|define|undef|ifdef|ifndef|if|elif|else|endif|error|line)\b|_Pragma\s*\(",
+    re.MULTILINE,
+)
+_REWRITE_LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")
+_REWRITE_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_REWRITE_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
+
+
+def _normalize_rewrite_source_for_content_check(source: str) -> str:
+    """Undo the cheap ways a preprocessor directive could be split or hidden
+    before a plain denylist regex ever sees it: backslash-newline
+    continuations and comments. Not a real preprocessor -- just enough to
+    keep the directive check from being trivially defeated by
+    ``#/**/pragma`` or a line-continuation split across ``#\\\\npragma``.
+    """
+
+    normalized = _REWRITE_LINE_CONTINUATION_RE.sub("", source)
+    normalized = _REWRITE_BLOCK_COMMENT_RE.sub(" ", normalized)
+    normalized = _REWRITE_LINE_COMMENT_RE.sub("", normalized)
+    return normalized
 
 
 def pending_rewrite_variant(
@@ -20353,11 +20373,14 @@ def pending_rewrite_variant(
     out-of-process by a Claude Code subagent (dispatched by the
     agentdecompile-rewrite-worker skill under /loop) and handed back via
     src/agentdecompile_recovery/rewrite_queue.py. This function only reads a
-    completed queue entry, applies a minimal content check (single function
-    body only -- no #pragma/#include/linker directives), and returns a variant
-    dict fed into the identical compile+objdiff verification path as every
-    other shape-search variant. Advisory only: this function never claims
-    verified source -- the caller's objdiff gate is the sole proof mechanism.
+    completed queue entry, applies a content check (rejects any preprocessor
+    directive -- #pragma/#include/#define/etc. and _Pragma(), after undoing
+    comment- and line-continuation-based obfuscation of the directive token),
+    and returns a variant dict fed into the identical compile+objdiff
+    verification path as every other shape-search variant. This check is
+    defense-in-depth, not a substitute for the compile sandbox itself --
+    advisory only: this function never claims verified source -- the caller's
+    objdiff gate is the sole proof mechanism.
     """
 
     if queue_result is None or queue_result.get("status") != "completed":
@@ -20365,7 +20388,7 @@ def pending_rewrite_variant(
     source = queue_result.get("source")
     if not isinstance(source, str) or not source.strip():
         return None
-    if _REWRITE_CONTENT_DISALLOWED_RE.search(source):
+    if _REWRITE_CONTENT_DISALLOWED_RE.search(_normalize_rewrite_source_for_content_check(source)):
         return None
     return {"name": "rewrite-request", "source": source, "semanticEquivalent": True}
 
@@ -21385,7 +21408,9 @@ def semantic_equivalent_variants(
         rewrite_variant = pending_rewrite_variant(row, candidate, pending_rewrite_result)
         if rewrite_variant is not None:
             return [rewrite_variant]
-        return []
+        # No usable rewrite yet (still pending/claimed, or rejected/failed) --
+        # fall through to the mechanical stdcall fallback below rather than
+        # short-circuiting to [] and shadowing it.
     if candidate.rule != "stdcall-store-two-stack-args-to-globals":
         return []
     first = candidate.evidence.get("firstAddress")

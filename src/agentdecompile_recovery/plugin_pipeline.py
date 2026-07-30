@@ -28,6 +28,9 @@ PipelineEventHandler = Callable[[dict[str, Any]], None]
 # rewrite-request queue entry hands the work to an out-of-process subagent that
 # may take minutes, so this function's in-process attempt loop must halt here
 # rather than burning its attempt budget retrying synchronously.
+# (No "rewrite-unavailable" terminal: unlike the removed synchronous
+# direct-API mechanism, this async design has no in-process call that can
+# fail fatally -- a failed queue entry is just a normal near-miss fallthrough.)
 AUTONOMY_STOP_ACTIONS = frozenset(
     {
         "stop-budget-exhausted",
@@ -36,7 +39,6 @@ AUTONOMY_STOP_ACTIONS = frozenset(
         "reacquire-or-expand-source-facts",
         "repair-boundary-before-retry",
         "try-rewrite-request",
-        "rewrite-unavailable",
     }
 )
 
@@ -358,7 +360,14 @@ class PluginPipeline:
         )
         action = str(decision.get("action") or "")
         if action == "try-rewrite-request":
-            self._write_rewrite_request(updated, decision)
+            try:
+                self._write_rewrite_request(updated, decision)
+            except OSError as exc:
+                # Queue I/O failure must not crash the whole attempt loop --
+                # this function's attempt still stops cleanly below (the
+                # action is a stop action regardless), it just did not
+                # successfully hand off to the queue this time.
+                self.emit({"type": "rewrite-request-write-failed", "error": str(exc)})
         if action in AUTONOMY_STOP_ACTIONS:
             updated["autonomyStop"] = True
             updated["autonomyStopReason"] = str(decision.get("reason") or action)
