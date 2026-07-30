@@ -420,6 +420,16 @@ pip install -e .
 agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
 ```
 
+### Optional: .NET/IL decompilation support (ilspycmd)
+
+`pipx install agentdecompile[all]` (or `pip install -e .[all]` from source) installs every optional **Python** feature, but .NET/IL assembly decompilation depends on [ILSpy's](https://github.com/icsharpcode/ILSpy) `ilspycmd`, which is a .NET global tool, not a PyPI package — it cannot be expressed as a pip dependency and is not bundled by any extras group. Install it separately:
+
+```bash
+dotnet tool install -g ilspycmd
+```
+
+Requires the [.NET SDK](https://dotnet.microsoft.com/download).
+
 ### Option 3: Docker (run the server)
 
 **Published image (no build required):**

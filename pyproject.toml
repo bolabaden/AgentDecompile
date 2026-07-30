@@ -93,6 +93,13 @@ test = [
     "pytest-sugar>=1.0.0",
   "ghidra-stubs>=12.0.4",
 ]
+# Bundles every pip-installable optional feature. Does NOT include `ilspycmd`
+# (.NET/IL decompilation support) -- that's ILSpy's dotnet global tool, not a
+# PyPI package, and cannot be expressed as a pip dependency. Install it
+# separately with `dotnet tool install -g ilspycmd`; see README.md.
+all = [
+  "agentdecompile[semantic]",
+]
 
 [build-system]
 requires = [
