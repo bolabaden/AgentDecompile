@@ -29,6 +29,7 @@ AUTONOMY_STOP_ACTIONS = frozenset(
         "block-on-compiler-profile-evidence",
         "reacquire-or-expand-source-facts",
         "repair-boundary-before-retry",
+        "llm-unavailable",
     }
 )
 

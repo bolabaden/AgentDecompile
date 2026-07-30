@@ -95,6 +95,7 @@ class SourceCandidateGeneratorPlugin:
             "try-next-generated-candidate",
             "try-nearby-source-shape-or-permuter",
             "regenerate-source-shape",
+            "try-llm-rewrite",
             "",
         }
         if action == "try-nearby-source-shape-or-permuter":
@@ -102,6 +103,12 @@ class SourceCandidateGeneratorPlugin:
             routed = policy.get("routedPlaybook") or routed_playbook_for_class(policy.get("mismatchClass"))
             if routed:
                 updated["routedPlaybook"] = routed
+        if action == "try-llm-rewrite":
+            updated["llmRewriteRequested"] = True
+            updated["llmRewriteMismatchData"] = {
+                "mismatchClass": policy.get("mismatchClass"),
+                "mismatchHistogram": policy.get("mismatchHistogram"),
+            }
         if action in bump_actions:
             updated["sourceCandidateIndex"] = int(updated.get("sourceCandidateIndex") or 0) + 1
         return updated
@@ -135,6 +142,8 @@ class SourceCandidateObjdiffPlugin:
             timeout=int(context.get("timeout") or 120),
             dry_run=bool(context.get("dryRun")),
             source_shape_search=bool(context.get("sourceShapeSearch")),
+            llm_rewrite_requested=bool(context.get("llmRewriteRequested")),
+            llm_mismatch_data=context.get("llmRewriteMismatchData") if isinstance(context.get("llmRewriteMismatchData"), dict) else None,
         )
         enrich_attempt_records(records, row if isinstance(row, dict) else None)
         matches = [
@@ -209,6 +218,7 @@ class SourceCandidateObjdiffPlugin:
                     "primaryMismatchKind": latest_record.get("primaryMismatchKind"),
                     "detailLevel": latest_record.get("detailLevel"),
                     "routedPlaybook": routed_playbook_for_class(latest_record.get("mismatchClass")),
+                    "llmRewriteStatus": (latest_record.get("sourceShapeSearchSummary") or {}).get("llmRewriteStatus"),
                 },
             ),
             updated,

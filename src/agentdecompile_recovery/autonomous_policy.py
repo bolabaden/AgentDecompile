@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .artifact_layout import is_objdiff_zero_accept
-from .autonomy_budget import AutonomyBudget, remaining_attempts
+from .autonomy_budget import AutonomyBudget, remaining_attempts, remaining_llm_calls
 from .proof_tier_router import enrich_policy_with_proof_tier
 from .mismatch_classify import (
     CLASS_BOUNDARY_SUSPECT,
@@ -29,6 +29,23 @@ def choose_next_action(
     resolved = _coerce_budget(budget)
     attempts_seen = len(previous_attempts)
     remaining = remaining_attempts(attempts_seen=attempts_seen, budget=resolved) if resolved else None
+
+    # A fatal LLM error (auth/config, not a per-call transient) means the
+    # environment is broken -- stop the campaign rather than burning the
+    # remaining attempt/LLM budget retrying a call that cannot succeed.
+    if previous_attempts:
+        latest_verifier = previous_attempts[-1].get("source-candidate-objdiff")
+        latest_verifier_data = (latest_verifier.data if latest_verifier else {}) or {}
+        if latest_verifier_data.get("llmRewriteStatus") == "llm-fatal":
+            decision = {
+                "schema": "agentdecompile.autonomous-policy-decision.v1",
+                "action": "llm-unavailable",
+                "reason": "LLM rewrite call failed with a fatal/config error (auth, bad request, or permission denied); not retrying",
+                "attemptsSeen": attempts_seen,
+                "boundaryQuality": None,
+                "claimBoundary": "policy selects the next recovery action; it does not promote source without the verifier gate",
+            }
+            return enrich_policy_with_proof_tier(decision, verifier_error="", generator_error="")
 
     # Budget exhaustion is a typed stop before spending another repair cycle.
     if resolved is not None and remaining == 0 and attempts_seen > 0:
@@ -109,15 +126,26 @@ def choose_next_action(
         action = "try-next-generated-candidate"
         reason = "differenceCount 0 but verifier plugin did not succeed (non-exportable match)"
     elif best_diff is not None and best_diff <= NEAR_MISS_MAX_DIFF:
-        action = "try-nearby-source-shape-or-permuter"
-        if mismatch_class == CLASS_OPERAND:
-            reason = f"operand near-miss with {best_diff} difference(s); permuter-first playbook"
-        elif mismatch_class == CLASS_OPCODE:
-            reason = f"opcode near-miss with {best_diff} difference(s); shape-search playbook"
-        elif mismatch_class == CLASS_INSERT_DELETE:
-            reason = f"insert/delete near-miss with {best_diff} difference(s); branch-shape playbook"
+        shape_search_exhausted = bool(context.get("sourceShapeSearch"))
+        llm_calls_seen = _llm_calls_seen(previous_attempts)
+        llm_remaining = remaining_llm_calls(calls_seen=llm_calls_seen, budget=resolved) if resolved else 0
+        if has_mismatch_evidence and shape_search_exhausted and llm_remaining > 0:
+            action = "try-llm-rewrite"
+            reason = (
+                f"mechanisms 1+2 (compiler-flag exploration, idiom permutation) exhausted with "
+                f"{best_diff} difference(s) remaining; requesting LLM rewrite "
+                f"({llm_remaining} call(s) remaining)"
+            )
         else:
-            reason = f"candidate is close to match with {best_diff} difference(s); near-miss is not promote"
+            action = "try-nearby-source-shape-or-permuter"
+            if mismatch_class == CLASS_OPERAND:
+                reason = f"operand near-miss with {best_diff} difference(s); permuter-first playbook"
+            elif mismatch_class == CLASS_OPCODE:
+                reason = f"opcode near-miss with {best_diff} difference(s); shape-search playbook"
+            elif mismatch_class == CLASS_INSERT_DELETE:
+                reason = f"insert/delete near-miss with {best_diff} difference(s); branch-shape playbook"
+            else:
+                reason = f"candidate is close to match with {best_diff} difference(s); near-miss is not promote"
     elif context.get("compilerProfiles") in (None, [], ()):
         action = "block-on-compiler-profile-evidence"
         reason = "large mismatch without compiler-profile evidence"
@@ -144,6 +172,16 @@ def choose_next_action(
         verifier_error=verifier_error,
         generator_error=generator_error,
     )
+
+
+def _llm_calls_seen(previous_attempts: list[dict[str, Any]]) -> int:
+    count = 0
+    for attempt in previous_attempts:
+        verifier = attempt.get("source-candidate-objdiff")
+        verifier_data = (verifier.data if verifier else {}) or {}
+        if verifier_data.get("llmRewriteStatus") is not None:
+            count += 1
+    return count
 
 
 def _mismatch_evidence(latest: dict[str, Any], verifier_data: dict[str, Any]) -> tuple[str | None, dict[str, int] | None]:
@@ -192,6 +230,9 @@ def _coerce_budget(budget: AutonomyBudget | dict[str, Any] | None) -> AutonomyBu
         ),
         max_campaigns=int(budget.get("max_campaigns") or budget.get("maxCampaigns") or 1),
         stop_on_accept=bool(budget.get("stop_on_accept") or budget.get("stopOnAccept")),
+        max_llm_calls_per_function=int(
+            budget.get("max_llm_calls_per_function") or budget.get("maxLlmCallsPerFunction") or 0
+        ),
     )
 
 
