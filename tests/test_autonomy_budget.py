@@ -10,6 +10,7 @@ import pytest
 from agentdecompile_recovery.autonomy_budget import (
     AutonomyBudget,
     budget_from_args,
+    remaining_llm_calls,
     write_autonomy_budget_receipt,
 )
 from agentdecompile_recovery.mismatch_classify import CLASS_OPERAND, PLAYBOOK_OPERAND
@@ -33,6 +34,7 @@ def test_budget_defaults_and_vacuum_args(tmp_path: Path) -> None:
     assert budget.max_wall_seconds is None
     assert budget.max_campaigns == 1
     assert budget.stop_on_accept is False
+    assert budget.max_llm_calls_per_function == 0
     args = budget.vacuum_bridge_args(queue=tmp_path / "queue.json")
     assert args is not None
     assert args[args.index("--max-functions") + 1] == "1"
@@ -263,6 +265,7 @@ def test_frontdoor_exposes_autonomy_budget_flags() -> None:
     dests = {action.dest for action in build_parser()._actions}
     assert "autonomous_max_functions" in dests
     assert "autonomous_max_attempts" in dests
+    assert "autonomous_max_llm_calls" in dests
     assert "autonomous_max_wall_seconds" in dests
     assert "autonomous_max_campaigns" in dests
     assert "autonomous_stop_on_accept" in dests
@@ -271,6 +274,7 @@ def test_frontdoor_exposes_autonomy_budget_flags() -> None:
         autonomous=True,
         autonomous_max_functions=0,
         autonomous_max_attempts=5,
+        autonomous_max_llm_calls=2,
         autonomous_max_wall_seconds=120,
         autonomous_max_campaigns=3,
         autonomous_stop_on_accept=True,
@@ -278,6 +282,33 @@ def test_frontdoor_exposes_autonomy_budget_flags() -> None:
     assert ns.autonomous is True
     assert ns.autonomous_max_functions == 0
     assert ns.autonomous_max_attempts == 5
+    assert ns.autonomous_max_llm_calls == 2
     assert ns.autonomous_max_wall_seconds == 120
     assert ns.autonomous_max_campaigns == 3
     assert ns.autonomous_stop_on_accept is True
+
+
+def test_budget_accepts_llm_call_field() -> None:
+    budget = AutonomyBudget(max_llm_calls_per_function=3)
+    assert budget.max_llm_calls_per_function == 3
+    payload = budget.to_json()
+    assert payload["max_llm_calls_per_function"] == 3
+
+
+def test_budget_rejects_negative_llm_calls() -> None:
+    with pytest.raises(ValueError):
+        AutonomyBudget(max_llm_calls_per_function=-1)
+
+
+def test_remaining_llm_calls() -> None:
+    budget = AutonomyBudget(max_llm_calls_per_function=2)
+    assert remaining_llm_calls(calls_seen=0, budget=budget) == 2
+    assert remaining_llm_calls(calls_seen=2, budget=budget) == 0
+    assert remaining_llm_calls(calls_seen=5, budget=budget) == 0
+
+
+def test_budget_from_args_default_llm_calls_is_zero() -> None:
+    budget = budget_from_args(max_llm_calls_per_function=None)
+    assert budget.max_llm_calls_per_function == 0
+    budget = budget_from_args(max_llm_calls_per_function=4)
+    assert budget.max_llm_calls_per_function == 4
