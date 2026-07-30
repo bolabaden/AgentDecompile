@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from .artifact_layout import is_objdiff_zero_accept
-from .autonomy_budget import AutonomyBudget, remaining_attempts
+from .autonomy_budget import AutonomyBudget, remaining_attempts, remaining_rewrite_requests
 from .proof_tier_router import enrich_policy_with_proof_tier
 from .mismatch_classify import (
     CLASS_BOUNDARY_SUSPECT,
@@ -14,6 +15,7 @@ from .mismatch_classify import (
     CLASS_OPERAND,
     routed_playbook_for_class,
 )
+from . import rewrite_queue
 
 NEAR_MISS_MAX_DIFF = 8
 
@@ -109,15 +111,34 @@ def choose_next_action(
         action = "try-next-generated-candidate"
         reason = "differenceCount 0 but verifier plugin did not succeed (non-exportable match)"
     elif best_diff is not None and best_diff <= NEAR_MISS_MAX_DIFF:
-        action = "try-nearby-source-shape-or-permuter"
-        if mismatch_class == CLASS_OPERAND:
-            reason = f"operand near-miss with {best_diff} difference(s); permuter-first playbook"
-        elif mismatch_class == CLASS_OPCODE:
-            reason = f"opcode near-miss with {best_diff} difference(s); shape-search playbook"
-        elif mismatch_class == CLASS_INSERT_DELETE:
-            reason = f"insert/delete near-miss with {best_diff} difference(s); branch-shape playbook"
+        shape_search_exhausted = bool(context.get("sourceShapeSearch"))
+        function_name = str(row.get("name") or "") if isinstance(row, dict) else ""
+        work_dir_value = context.get("workDir")
+        requests_seen = (
+            rewrite_queue.count_requests_for_function(Path(str(work_dir_value)), function_name)
+            if work_dir_value and function_name
+            else 0
+        )
+        rewrite_remaining = (
+            remaining_rewrite_requests(requests_seen=requests_seen, budget=resolved) if resolved else 0
+        )
+        if has_mismatch_evidence and shape_search_exhausted and rewrite_remaining > 0:
+            action = "try-rewrite-request"
+            reason = (
+                f"mechanisms 1+2 (compiler-flag exploration, idiom permutation) exhausted with "
+                f"{best_diff} difference(s) remaining; writing a rewrite-request queue entry "
+                f"({rewrite_remaining} request(s) remaining in budget)"
+            )
         else:
-            reason = f"candidate is close to match with {best_diff} difference(s); near-miss is not promote"
+            action = "try-nearby-source-shape-or-permuter"
+            if mismatch_class == CLASS_OPERAND:
+                reason = f"operand near-miss with {best_diff} difference(s); permuter-first playbook"
+            elif mismatch_class == CLASS_OPCODE:
+                reason = f"opcode near-miss with {best_diff} difference(s); shape-search playbook"
+            elif mismatch_class == CLASS_INSERT_DELETE:
+                reason = f"insert/delete near-miss with {best_diff} difference(s); branch-shape playbook"
+            else:
+                reason = f"candidate is close to match with {best_diff} difference(s); near-miss is not promote"
     elif context.get("compilerProfiles") in (None, [], ()):
         action = "block-on-compiler-profile-evidence"
         reason = "large mismatch without compiler-profile evidence"
@@ -192,6 +213,11 @@ def _coerce_budget(budget: AutonomyBudget | dict[str, Any] | None) -> AutonomyBu
         ),
         max_campaigns=int(budget.get("max_campaigns") or budget.get("maxCampaigns") or 1),
         stop_on_accept=bool(budget.get("stop_on_accept") or budget.get("stopOnAccept")),
+        max_rewrite_requests_per_function=int(
+            budget.get("max_rewrite_requests_per_function")
+            or budget.get("maxRewriteRequestsPerFunction")
+            or 0
+        ),
     )
 
 

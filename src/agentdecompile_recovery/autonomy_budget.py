@@ -18,6 +18,7 @@ SCHEMA = "agentdecompile.autonomy-budget.v1"
 DEFAULT_MAX_FUNCTIONS = 1
 DEFAULT_MAX_ATTEMPTS_PER_FUNCTION = 3
 DEFAULT_MAX_CAMPAIGNS = 1
+DEFAULT_MAX_REWRITE_REQUESTS_PER_FUNCTION = 0
 CLAIM_BOUNDARY = (
     "autonomy budget bounds repair/vacuum loops only; it does not establish "
     "objdiff-verified-semantic recovery"
@@ -33,6 +34,7 @@ class AutonomyBudget:
     max_wall_seconds: int | None = None
     max_campaigns: int = DEFAULT_MAX_CAMPAIGNS
     stop_on_accept: bool = False
+    max_rewrite_requests_per_function: int = DEFAULT_MAX_REWRITE_REQUESTS_PER_FUNCTION
 
     def __post_init__(self) -> None:
         if self.max_functions < 0:
@@ -43,6 +45,8 @@ class AutonomyBudget:
             raise ValueError("max_wall_seconds must be >= 1 when set")
         if self.max_campaigns < 1:
             raise ValueError("max_campaigns must be >= 1")
+        if self.max_rewrite_requests_per_function < 0:
+            raise ValueError("max_rewrite_requests_per_function must be >= 0")
 
     def to_json(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -153,6 +157,7 @@ def budget_from_args(
     max_wall_seconds: int | None = None,
     max_campaigns: int | None = None,
     stop_on_accept: bool = False,
+    max_rewrite_requests_per_function: int | None = None,
 ) -> AutonomyBudget:
     return AutonomyBudget(
         max_functions=DEFAULT_MAX_FUNCTIONS if max_functions is None else max_functions,
@@ -164,6 +169,11 @@ def budget_from_args(
         max_wall_seconds=max_wall_seconds,
         max_campaigns=DEFAULT_MAX_CAMPAIGNS if max_campaigns is None else max_campaigns,
         stop_on_accept=bool(stop_on_accept),
+        max_rewrite_requests_per_function=(
+            DEFAULT_MAX_REWRITE_REQUESTS_PER_FUNCTION
+            if max_rewrite_requests_per_function is None
+            else max_rewrite_requests_per_function
+        ),
     )
 
 
@@ -198,3 +208,7 @@ def write_autonomy_budget_receipt(
 
 def remaining_attempts(*, attempts_seen: int, budget: AutonomyBudget) -> int:
     return max(0, budget.max_attempts_per_function - max(0, attempts_seen))
+
+
+def remaining_rewrite_requests(*, requests_seen: int, budget: AutonomyBudget) -> int:
+    return max(0, budget.max_rewrite_requests_per_function - max(0, requests_seen))

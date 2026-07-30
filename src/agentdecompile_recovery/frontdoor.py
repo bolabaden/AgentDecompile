@@ -143,6 +143,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Autonomy budget: maximum repair attempts per function (default: 3).",
     )
     parser.add_argument(
+        "--autonomous-max-rewrite-requests",
+        type=int,
+        default=0,
+        help=(
+            "Autonomy budget: maximum subagent-fulfilled rewrite-queue requests per "
+            "function (default: 0, disabled). Opt-in; requires a live Claude Code "
+            "session running /loop against the agentdecompile-rewrite-worker skill "
+            "to fulfill requests."
+        ),
+    )
+    parser.add_argument(
         "--autonomous-max-wall-seconds",
         type=int,
         default=None,
@@ -502,6 +513,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
             max_wall_seconds=getattr(args, "autonomous_max_wall_seconds", None),
             max_campaigns=getattr(args, "autonomous_max_campaigns", None),
             stop_on_accept=bool(getattr(args, "autonomous_stop_on_accept", False)),
+            max_rewrite_requests_per_function=getattr(args, "autonomous_max_rewrite_requests", None),
         )
         if not args.json:
             print(
@@ -525,6 +537,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
             max_wall_seconds=getattr(args, "autonomous_max_wall_seconds", None),
             max_campaigns=getattr(args, "autonomous_max_campaigns", None),
             stop_on_accept=bool(getattr(args, "autonomous_stop_on_accept", False)),
+            max_rewrite_requests_per_function=getattr(args, "autonomous_max_rewrite_requests", None),
         )
         if not getattr(args, "skip_closure_executors", False):
             from .agent_closure import run_agent_closure_stages
@@ -757,6 +770,7 @@ def build_reconstruct_namespace(
     autonomous: bool = False,
     autonomous_max_functions: int = 1,
     autonomous_max_attempts: int = 3,
+    autonomous_max_rewrite_requests: int = 0,
     autonomous_max_wall_seconds: int | None = None,
     autonomous_max_campaigns: int = 1,
     autonomous_stop_on_accept: bool = False,
@@ -782,6 +796,8 @@ def build_reconstruct_namespace(
         argv.append("--autonomous")
     argv.extend(["--autonomous-max-functions", str(autonomous_max_functions)])
     argv.extend(["--autonomous-max-attempts", str(autonomous_max_attempts)])
+    if autonomous_max_rewrite_requests:
+        argv.extend(["--autonomous-max-rewrite-requests", str(autonomous_max_rewrite_requests)])
     if autonomous_max_wall_seconds is not None:
         argv.extend(["--autonomous-max-wall-seconds", str(autonomous_max_wall_seconds)])
     if autonomous_max_campaigns != 1:
@@ -807,6 +823,7 @@ def run_reconstruct_job(
     autonomous: bool = False,
     autonomous_max_functions: int = 1,
     autonomous_max_attempts: int = 3,
+    autonomous_max_rewrite_requests: int = 0,
     autonomous_max_wall_seconds: int | None = None,
     autonomous_max_campaigns: int = 1,
     autonomous_stop_on_accept: bool = False,
@@ -829,6 +846,7 @@ def run_reconstruct_job(
         autonomous=autonomous,
         autonomous_max_functions=autonomous_max_functions,
         autonomous_max_attempts=autonomous_max_attempts,
+        autonomous_max_rewrite_requests=autonomous_max_rewrite_requests,
         autonomous_max_wall_seconds=autonomous_max_wall_seconds,
         autonomous_max_campaigns=autonomous_max_campaigns,
         autonomous_stop_on_accept=autonomous_stop_on_accept,
@@ -853,6 +871,7 @@ def run_reconstruct_job(
         max_wall_seconds=autonomous_max_wall_seconds,
         max_campaigns=autonomous_max_campaigns,
         stop_on_accept=autonomous_stop_on_accept,
+        max_rewrite_requests_per_function=autonomous_max_rewrite_requests,
     )
     return {
         "tool": "reconstruct",

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from . import rewrite_queue
 from .mismatch_classify import enrich_attempt_records, routed_playbook_for_class, write_mismatch_class_last
 from .plugin_pipeline import PluginResult, now_ms
 from .source_export import export_recovered_source
@@ -121,6 +122,14 @@ class SourceCandidateObjdiffPlugin:
         if candidate is None:
             return failure(self, start, "selectedSourceCandidate missing from context"), context
         out_dir = Path(str(context.get("outDir") or "target/plugin-source-pipeline"))
+        work_dir_value = context.get("workDir")
+        pending_rewrite_result: dict[str, Any] | None = None
+        rewrite_request_id: str | None = None
+        if work_dir_value:
+            rewrite_request_id = rewrite_queue.derive_request_id(
+                str(row.get("name") or ""), str(getattr(candidate, "source", "") or "")
+            )
+            pending_rewrite_result = rewrite_queue.find_entry(Path(str(work_dir_value)), rewrite_request_id)
         records = attempt_candidate(
             row,
             candidate,
@@ -135,7 +144,18 @@ class SourceCandidateObjdiffPlugin:
             timeout=int(context.get("timeout") or 120),
             dry_run=bool(context.get("dryRun")),
             source_shape_search=bool(context.get("sourceShapeSearch")),
+            pending_rewrite_result=pending_rewrite_result,
         )
+        if (
+            work_dir_value
+            and rewrite_request_id
+            and pending_rewrite_result is not None
+            and pending_rewrite_result.get("status") in {"completed", "failed"}
+        ):
+            # Consumed this pass (whether it produced a match or not) -- prune so a
+            # later pass doesn't re-read a stale completed/failed entry. Never prune
+            # pending/claimed entries -- the worker may still be in flight.
+            rewrite_queue.prune_consumed_entries(Path(str(work_dir_value)), [rewrite_request_id])
         enrich_attempt_records(records, row if isinstance(row, dict) else None)
         matches = [
             record
@@ -163,7 +183,6 @@ class SourceCandidateObjdiffPlugin:
             for record in records:
                 fh.write(json.dumps(record, sort_keys=True) + "\n")
         if latest_record.get("mismatchClass"):
-            work_dir_value = context.get("workDir")
             if work_dir_value:
                 write_mismatch_class_last(
                     Path(str(work_dir_value)),

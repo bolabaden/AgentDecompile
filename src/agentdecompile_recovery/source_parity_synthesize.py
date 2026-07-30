@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .package_verify import build_shim, compile_with_msvc
+from .state import now
 
 ROOT = Path.cwd()
 DEFAULT_VC_ROOT: Path | None = None
@@ -19392,6 +19393,7 @@ def attempt_candidate(
     timeout: int,
     dry_run: bool,
     source_shape_search: bool = False,
+    pending_rewrite_result: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     case_dir = out_dir / "cases" / candidate_id(row, candidate)
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -19474,6 +19476,7 @@ def attempt_candidate(
             wineprefix=wineprefix,
             timeout=timeout,
             source_shape_search=source_shape_search,
+            pending_rewrite_result=pending_rewrite_result,
         )
 
     slice_proc = run(
@@ -19679,6 +19682,7 @@ def attempt_candidate_with_msvc_synthetic_slice(
     wineprefix: Path | None,
     timeout: int,
     source_shape_search: bool = False,
+    pending_rewrite_result: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     data = parse_bytes(row)
     if not data:
@@ -19779,6 +19783,10 @@ def attempt_candidate_with_msvc_synthetic_slice(
         if status == "code-slice-matched":
             break
     has_code_slice_match = any(item.get("status") == "code-slice-matched" and int(item.get("differences", -1)) == 0 for item in attempts)
+    # Mechanism-1/2-only probe for gating purposes. A completed rewrite-queue
+    # result (pending_rewrite_result) is a plain dict lookup, not a live call,
+    # so it's safe to check here; it just widens this gate. The actual variant
+    # is built in run_msvc_source_shape_search below.
     shape_variants = semantic_equivalent_variants(row, candidate)
     should_run_promotion_search = (
         has_code_slice_match
@@ -19789,7 +19797,7 @@ def attempt_candidate_with_msvc_synthetic_slice(
         source_shape_search
         and attempts
         and candidate.semantic_source
-        and bool(shape_variants)
+        and bool(shape_variants or pending_rewrite_result)
         and (
             candidate.source_suffix != ".c"
             or not has_code_slice_match
@@ -19807,6 +19815,7 @@ def attempt_candidate_with_msvc_synthetic_slice(
             wine=wine,
             wineprefix=wineprefix,
             timeout=timeout,
+            pending_rewrite_result=pending_rewrite_result,
         )
         if search is not None:
             for attempt in attempts:
@@ -20142,8 +20151,13 @@ def run_msvc_source_shape_search(
     wine: str,
     wineprefix: Path | None,
     timeout: int,
+    pending_rewrite_result: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    variants = semantic_equivalent_variants(row, candidate)
+    variants = semantic_equivalent_variants(
+        row,
+        candidate,
+        pending_rewrite_result=pending_rewrite_result,
+    )
     if not variants:
         return None
     compare_data = source_shape_compare_bytes(candidate, data)
@@ -20226,6 +20240,8 @@ def run_msvc_source_shape_search(
         else None,
         "claimBoundary": "source-shape search ranks semantic-equivalent C spellings for compiler-profile work; it is not accepted source unless the verifier reports objdiff zero",
     }
+    if pending_rewrite_result is not None:
+        report["rewriteRequestId"] = pending_rewrite_result.get("requestId")
     path = search_dir / "summary.json"
     write_json(path, report)
     return {
@@ -20320,7 +20336,69 @@ def byte_field_guard_return_self_variants(row: dict[str, Any], candidate: Genera
     ]
 
 
-def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandidate) -> list[dict[str, Any]]:
+_REWRITE_CONTENT_DISALLOWED_RE = re.compile(
+    r"^\s*#\s*(pragma|include|import|define|undef|ifdef|ifndef|if|elif|else|endif|error|line)\b|_Pragma\s*\(",
+    re.MULTILINE,
+)
+_REWRITE_LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")
+_REWRITE_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_REWRITE_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
+
+
+def _normalize_rewrite_source_for_content_check(source: str) -> str:
+    """Undo the cheap ways a preprocessor directive could be split or hidden
+    before a plain denylist regex ever sees it: backslash-newline
+    continuations and comments. Not a real preprocessor -- just enough to
+    keep the directive check from being trivially defeated by
+    ``#/**/pragma`` or a line-continuation split across ``#\\\\npragma``.
+    """
+
+    normalized = _REWRITE_LINE_CONTINUATION_RE.sub("", source)
+    normalized = _REWRITE_BLOCK_COMMENT_RE.sub(" ", normalized)
+    normalized = _REWRITE_LINE_COMMENT_RE.sub("", normalized)
+    return normalized
+
+
+def pending_rewrite_variant(
+    row: dict[str, Any],
+    candidate: GeneratedCandidate,
+    queue_result: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Turn a completed rewrite-queue result into a shape-search variant (challenger-lane mechanism 3).
+
+    Unlike byte_field_guard_return_self_variants above (a narrow, evidence-grounded
+    mechanical rule), this covers real near-miss functions with no matching
+    byte-pattern template and no idiom-permutable shape -- most functions with
+    actual control flow. Never invokes anything itself: the rewrite is produced
+    out-of-process by a Claude Code subagent (dispatched by the
+    agentdecompile-rewrite-worker skill under /loop) and handed back via
+    src/agentdecompile_recovery/rewrite_queue.py. This function only reads a
+    completed queue entry, applies a content check (rejects any preprocessor
+    directive -- #pragma/#include/#define/etc. and _Pragma(), after undoing
+    comment- and line-continuation-based obfuscation of the directive token),
+    and returns a variant dict fed into the identical compile+objdiff
+    verification path as every other shape-search variant. This check is
+    defense-in-depth, not a substitute for the compile sandbox itself --
+    advisory only: this function never claims verified source -- the caller's
+    objdiff gate is the sole proof mechanism.
+    """
+
+    if queue_result is None or queue_result.get("status") != "completed":
+        return None
+    source = queue_result.get("source")
+    if not isinstance(source, str) or not source.strip():
+        return None
+    if _REWRITE_CONTENT_DISALLOWED_RE.search(_normalize_rewrite_source_for_content_check(source)):
+        return None
+    return {"name": "rewrite-request", "source": source, "semanticEquivalent": True}
+
+
+def semantic_equivalent_variants(
+    row: dict[str, Any],
+    candidate: GeneratedCandidate,
+    *,
+    pending_rewrite_result: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     if candidate.rule == "bink-buffer-set-scale-forwarder":
         global_width = optional_int(candidate.evidence.get("globalWidthFallbackAddress"))
         global_height = optional_int(candidate.evidence.get("globalHeightFallbackAddress"))
@@ -21326,6 +21404,13 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
     generic_variants = byte_field_guard_return_self_variants(row, candidate)
     if generic_variants:
         return generic_variants
+    if pending_rewrite_result is not None:
+        rewrite_variant = pending_rewrite_variant(row, candidate, pending_rewrite_result)
+        if rewrite_variant is not None:
+            return [rewrite_variant]
+        # No usable rewrite yet (still pending/claimed, or rejected/failed) --
+        # fall through to the mechanical stdcall fallback below rather than
+        # short-circuiting to [] and shadowing it.
     if candidate.rule != "stdcall-store-two-stack-args-to-globals":
         return []
     first = candidate.evidence.get("firstAddress")
