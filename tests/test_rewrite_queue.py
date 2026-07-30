@@ -29,16 +29,17 @@ def _write_request_worker(work_dir: str, name: str) -> None:
     )
 
 
-# macOS defaults multiprocessing to the "spawn" start method, which re-imports
-# the target function in a fresh interpreter rather than fork()ing the
-# already-loaded parent. Under pytest, the test module isn't reliably
-# importable by that fresh interpreter (no guaranteed `tests` package on
-# sys.path), so spawn-based Process creation fails here with
-# ModuleNotFoundError/AttributeError on macOS CI even though the exact same
-# code passes on Linux (which defaults to fork). Force fork explicitly --
-# available on both Linux and macOS (the only two CI platforms) -- since
-# these tests only need process-level isolation, not spawn's clean-slate
-# import behavior.
+# macOS has always defaulted multiprocessing to the "spawn" start method
+# (vs "fork" on Linux); Python 3.14 additionally changed the default away
+# from fork on Linux too (deprecated as unsafe in multi-threaded processes --
+# see PEP 734 / the multiprocessing docs). Spawn re-imports the target
+# function in a fresh interpreter rather than fork()ing the already-loaded
+# parent, which fails for a locally-nested function with a PicklingError
+# ("Can't pickle local object"), and can also fail to re-import the test
+# module at all depending on how the fresh interpreter's sys.path is set up.
+# Force fork explicitly -- available on both Linux and macOS (the only two
+# CI platforms) -- since these tests only need process-level isolation, not
+# spawn's clean-slate import behavior.
 _FORK_CONTEXT = multiprocessing.get_context("fork")
 
 

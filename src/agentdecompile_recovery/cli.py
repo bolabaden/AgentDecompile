@@ -329,6 +329,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cleanup_package.add_argument("--package", type=Path, required=True, help="Recovered-source package directory.")
     cleanup_package.add_argument("--out-dir", type=Path, required=True, help="Output directory for the cleaned package.")
+
+    unity_export = sub.add_parser(
+        "unity-export",
+        help="Export textures/sprites/audio/text/fonts from a Unity game install (requires agentdecompile[unity]).",
+    )
+    unity_export.add_argument("--install-root", type=Path, required=True, help="Unity game install directory (containing a *_Data folder).")
+    unity_export.add_argument("--out-dir", type=Path, required=True, help="Output directory for exported assets.")
     return parser
 
 
@@ -816,6 +823,18 @@ def run_source_cleanup_package(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_unity_export(args: argparse.Namespace) -> int:
+    from .unity_assets import export_primary_content
+
+    try:
+        receipt = export_primary_content(install_root=args.install_root, output_dir=args.out_dir)
+    except ImportError as exc:
+        print(json.dumps({"schema": "agentdecompile.unity-primary-content-export.v1", "status": "error", "reason": str(exc)}, indent=2, sort_keys=True))
+        return 1
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0 if receipt.get("status") == "complete" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
@@ -851,6 +870,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_source_cleanup(args)
     if args.command == "source-cleanup-package":
         return run_source_cleanup_package(args)
+    if args.command == "unity-export":
+        return run_unity_export(args)
     parser.print_help()
     return 2
 
