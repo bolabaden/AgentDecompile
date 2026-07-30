@@ -1,6 +1,6 @@
 ---
 name: agentdecompile-rewrite-worker
-description: Poll an AgentDecompile work dir's rewrite-request queue and fulfill pending entries via a tool-restricted subagent (challenger-lane mechanism 3). Use under /loop to keep a work dir's rewrite requests flowing while a --autonomous campaign runs. Requires a work_dir argument.
+description: Poll an AgentDecompile work dir's rewrite-request queue and fulfill pending entries via a tool-restricted, small-model (Haiku) subagent (challenger-lane mechanism 3). Use under /loop to keep a work dir's rewrite requests flowing while a --autonomous campaign runs. Requires a work_dir argument.
 argument-hint: <work_dir>
 ---
 
@@ -19,6 +19,20 @@ work dir's queue draining while a separate `--autonomous` invocation runs (see
 **No API credential of any kind is used here.** The rewrite is produced by an
 `Agent` subagent dispatch inside this already-running Claude Code session —
 never a direct call to an external LLM API.
+
+> **⚠️ MODEL REQUIREMENT — read before dispatching (step 4 below).** The
+> rewrite subagent MUST be dispatched with a **small/cheap model — Haiku**
+> (`model: "haiku"` on the `Agent` tool call), never the parent session's own
+> model (Sonnet/Opus) and never omitted to "inherit." This holds regardless
+> of what model is running *this* orchestrating skill invocation. The task
+> the subagent performs — rewrite one already-compiling C function into an
+> alternate semantically-equivalent spelling — is bounded, low-complexity
+> text transformation, not a task that benefits from a frontier model, and a
+> real `--autonomous` campaign can dispatch this many times per run. Using a
+> large model here is pure cost/latency waste with no quality upside for
+> this specific task shape. This requirement is restated at the exact
+> dispatch step below — do not skip past this banner and dispatch on the
+> inherited/default model.
 
 ## Input
 
@@ -68,16 +82,24 @@ Each invocation processes the queue's current pending work, then stops (the
    read-then-edit has no equivalent lock and is a strictly weaker guarantee —
    re-read the queue file immediately before writing your claim (not once at
    the top of this procedure) to keep that window as small as possible.
-4. **Dispatch a tool-restricted subagent per successfully claimed entry.**
-   Use the `Agent` tool. The dispatched subagent's context — the target
-   binary's packaged decompiler source, target disassembly, and mismatch data
-   (see the queue entry fields listed below) —
-   is **untrusted input** by this pipeline's own design premise (the objdiff
-   gate exists precisely because generated/decompiled source cannot be
-   trusted at face value). Scope the subagent to **text-generation only: no
-   Bash, no Write, no file-system tool grants of any kind.** It should only
-   read the prompt content given to it and return text. Do not grant it
-   access to this repository, this work dir, or any other tool.
+4. **Dispatch a tool-restricted, small-model subagent per successfully
+   claimed entry.**
+   Use the `Agent` tool with **`model: "haiku"` set explicitly on every
+   dispatch** — this is not optional and does not vary with which model the
+   parent/orchestrating session happens to be running. Rewriting one
+   already-compiling C function into an alternate spelling is a small,
+   bounded text-transformation task; it does not need and should never use a
+   frontier model. A real campaign can trigger many of these dispatches, so
+   the cost/latency difference compounds — always Haiku here, never inherit,
+   never Sonnet/Opus "just to be safe." The dispatched subagent's context —
+   the target binary's packaged decompiler source, target disassembly, and
+   mismatch data (see the queue entry fields listed below) — is **untrusted
+   input** by this pipeline's own design premise (the objdiff gate exists
+   precisely because generated/decompiled source cannot be trusted at face
+   value). Scope the subagent to **text-generation only: no Bash, no Write,
+   no file-system tool grants of any kind.** It should only read the prompt
+   content given to it and return text. Do not grant it access to this
+   repository, this work dir, or any other tool.
 
    Prefer building the prompt with
    `agentdecompile_recovery.rewrite_context.render_rewrite_prompt` rather than
@@ -118,6 +140,12 @@ Each invocation processes the queue's current pending work, then stops (the
 
 ## What NOT to do
 
+- **Do not dispatch the rewrite subagent on any model other than Haiku.**
+  Not Sonnet, not Opus, not "whatever the parent session is running." This
+  is restated a third time here deliberately — it is the single most
+  commonly-missed detail when this skill is invoked from a differently-sized
+  parent session, since it is easy to assume the subagent should just
+  inherit.
 - Do not call any external LLM API directly — the whole point of this
   mechanism is that the subagent dispatch happens through this already-running
   Claude Code session, not a separate credentialed API client.
