@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agentdecompile",
+  "description": "PyGhidra-based MCP server and recovery tooling for objdiff-verified decompilation",
+  "owner": {
+    "name": "AgentDecompile",
+    "url": "https://github.com/bolabaden/AgentDecompile"
+  },
+  "plugins": [
+    {
+      "name": "agentdecompile",
+      "description": "PyGhidra-based MCP server for objdiff-verified decompilation recovery",
+      "source": "./",
+      "category": "development-tools"
+    }
+  ]
+}

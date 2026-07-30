@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "agentdecompile",
+  "version": "0.1.0",
+  "description": "PyGhidra-based MCP server for objdiff-verified decompilation recovery",
+  "author": {
+    "name": "AgentDecompile",
+    "url": "https://github.com/bolabaden/AgentDecompile"
+  },
+  "homepage": "https://github.com/bolabaden/AgentDecompile",
+  "repository": "https://github.com/bolabaden/AgentDecompile",
+  "license": "AGPL-3.0-only",
+  "mcpServers": {
+    "agentdecompile": {
+      "command": "uv",
+      "args": ["run", "--project", "${CLAUDE_PLUGIN_ROOT}", "mcp-agentdecompile"]
+    }
+  }
+}
