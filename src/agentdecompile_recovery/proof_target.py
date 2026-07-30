@@ -332,6 +332,37 @@ def load_near_miss_maps(work_dir: Path) -> NearMissMaps:
     return NearMissMaps(by_name, by_entry, class_by_name, class_by_entry)
 
 
+def near_miss_difference(row: dict[str, Any]) -> int | None:
+    """How far a mismatched row sits from the target, in instructions.
+
+    `differences` is a status flag from ``parse_objdiff_report`` -- 0 matched,
+    1 mismatched, -1 error -- and never a magnitude. Ranking near-misses by it
+    collapsed every mismatch to 1, which is inside ``NEAR_MISS_MAX_DIFF``, so
+    every mismatched function qualified as a near miss and every one drew the
+    maximum tight-band score bonus. A function 200 instructions away ranked
+    identically to one a single instruction away.
+
+    ``instructionMismatchCount`` is the real magnitude and was already being
+    computed from the objdiff histogram.
+
+    Returns None when the row is a match or an error -- neither is a near miss.
+    """
+
+    try:
+        differences = int(row.get("differences", -1))
+    except (TypeError, ValueError):
+        differences = -1
+    if differences <= 0:
+        return None
+    try:
+        count = int(row.get("instructionMismatchCount"))
+    except (TypeError, ValueError):
+        count = 0
+    # A mismatched row reporting no instruction diffs is inconsistent (usually a
+    # scalar-only report); fall back to the flag rather than read it as a match.
+    return count if count > 0 else differences
+
+
 def _ingest_near_miss_row(
     row: dict[str, Any],
     by_name: dict[str, int],
@@ -340,10 +371,7 @@ def _ingest_near_miss_row(
     class_by_entry: dict[str, str],
 ) -> None:
     status = str(row.get("status") or "")
-    try:
-        differences = int(row.get("differences", -1))
-    except (TypeError, ValueError):
-        differences = -1
+    magnitude = near_miss_difference(row)
     name = str(row.get("name") or "").strip()
     entry = row.get("entry") or row.get("address")
     entry_hex = normalize_entry_hex(entry) if entry is not None else None
@@ -353,12 +381,12 @@ def _ingest_near_miss_row(
             class_by_name[name] = str(mismatch_class)
         if entry_hex:
             class_by_entry[entry_hex] = str(mismatch_class)
-    if status not in {"mismatched", "matched"} or differences <= 0:
+    if status not in {"mismatched", "matched"} or magnitude is None:
         return
     if name:
-        by_name[name] = differences if name not in by_name else min(by_name[name], differences)
+        by_name[name] = magnitude if name not in by_name else min(by_name[name], magnitude)
     if entry_hex:
-        by_entry[entry_hex] = differences if entry_hex not in by_entry else min(by_entry[entry_hex], differences)
+        by_entry[entry_hex] = magnitude if entry_hex not in by_entry else min(by_entry[entry_hex], magnitude)
 
 
 def near_miss_score_bonus(best_difference: int | None) -> int:
