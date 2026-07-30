@@ -208,6 +208,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--vc-root", type=Path, default=None, help="MSVC/VC Toolkit root used for compile verification.")
     parser.add_argument("--wineprefix", type=Path, default=None, help="Wine prefix used for MSVC compile verification.")
+    parser.add_argument(
+        "--source-shape-search",
+        action="store_true",
+        help=(
+            "Enable mechanism-2 source-shape search. Also the precondition for "
+            "mechanism 3: autonomous_policy gates try-rewrite-request on this "
+            "flag, so without it the rewrite lane is unreachable."
+        ),
+    )
     return parser
 
 
@@ -221,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         max_attempts=args.max_attempts,
         vc_root=args.vc_root,
         wineprefix=args.wineprefix,
+        source_shape_search=args.source_shape_search,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return int(result.get("exitCode") or 2)

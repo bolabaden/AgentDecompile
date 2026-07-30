@@ -204,6 +204,11 @@ def run_single_proof_campaign(
             max_attempts=budget.max_attempts_per_function,
             vc_root=vc_root,
             wineprefix=wineprefix,
+            # Mechanism 2 escalation, and the precondition for mechanism 3.
+            # A campaign carrying rewrite budget that never enables shape search
+            # can never spend it -- choose_next_action reads this same flag off
+            # the attempt context to decide try-rewrite-request.
+            source_shape_search=budget.max_rewrite_requests_per_function > 0,
         ),
     )
     if bridge_args is None:
