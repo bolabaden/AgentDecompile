@@ -20,10 +20,11 @@ def test_histogram_counts_instruction_mismatches() -> None:
             "kind": "SYMBOL_FUNCTION",
             "match_percent": 80.0,
             "instructions": [
-                {"kind": "ARGUMENT_MISMATCH"},
-                {"kind": "ARGUMENT_MISMATCH"},
-                {"kind": "ARGUMENT_MISMATCH"},
-                {"kind": "OPCODE_MISMATCH"},
+                {"diff_kind": "DIFF_ARG_MISMATCH"},
+                {"diff_kind": "DIFF_ARG_MISMATCH"},
+                {"diff_kind": "DIFF_ARG_MISMATCH"},
+                {"diff_kind": "DIFF_OP_MISMATCH"},
+                {"diff_kind": "DIFF_NONE"},
             ],
         }
     )

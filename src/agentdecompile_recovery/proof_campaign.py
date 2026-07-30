@@ -147,6 +147,8 @@ def run_single_proof_campaign(
     budget: AutonomyBudget,
     *,
     run_decomp_cli_bridge: Callable[[list[str]], int],
+    vc_root: Path | None = None,
+    wineprefix: Path | None = None,
 ) -> ProofCampaignResult:
     """Seed proof targets and bridge vacuum for one autonomous campaign iteration."""
 
@@ -169,6 +171,8 @@ def run_single_proof_campaign(
         runner_command=reconstruct_vacuum_runner_command(
             work_dir,
             max_attempts=budget.max_attempts_per_function,
+            vc_root=vc_root,
+            wineprefix=wineprefix,
         ),
     )
     if bridge_args is None:
@@ -317,6 +321,8 @@ def run_proof_campaign_loop(
     budget: AutonomyBudget,
     *,
     run_decomp_cli_bridge: Callable[[list[str]], int],
+    vc_root: Path | None = None,
+    wineprefix: Path | None = None,
 ) -> dict[str, Any]:
     """Run one or more proof campaigns until a typed stop or budget exhaustion."""
 
@@ -343,7 +349,13 @@ def run_proof_campaign_loop(
             terminal_status = "accepted" if total_accepts > 0 else "complete"
             break
 
-        result = run_single_proof_campaign(work_dir, budget, run_decomp_cli_bridge=run_decomp_cli_bridge)
+        result = run_single_proof_campaign(
+            work_dir,
+            budget,
+            run_decomp_cli_bridge=run_decomp_cli_bridge,
+            vc_root=vc_root,
+            wineprefix=wineprefix,
+        )
         append_campaign_history(work_dir, iteration=index + 1, result=result)
         iteration_summary = {
             "iteration": index + 1,

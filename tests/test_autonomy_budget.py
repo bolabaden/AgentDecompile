@@ -219,6 +219,46 @@ def test_policy_boundary_suspect_class_preempts_near_miss() -> None:
     assert decision["action"] == "repair-boundary-before-retry"
 
 
+def test_policy_operand_evidence_outranks_boundary_suspect_flag() -> None:
+    """A classified operand/opcode/insert-delete mismatch is direct evidence the
+    candidate compiled to something comparable, so it outranks a raw
+    boundary-suspect flag on the target slice -- otherwise real near-misses on
+    non-PE-export functions (the common case for internal sub_* functions)
+    never reach shape-search."""
+    decision = choose_next_action(
+        {"sourceParityRow": {"targetSlice": {"boundaryQuality": {"status": "suspect"}}}},
+        [
+            {
+                "source-candidate-generator": _Step(),
+                "source-candidate-objdiff": _Step(
+                    data={
+                        "differenceCount": 3,
+                        "status": "mismatched",
+                        "mismatchClass": CLASS_OPERAND,
+                        "mismatchHistogram": {"ARGUMENT_MISMATCH": 2},
+                    }
+                ),
+                "mismatchClass": CLASS_OPERAND,
+            }
+        ],
+    )
+    assert decision["action"] == "try-nearby-source-shape-or-permuter"
+    assert decision["routedPlaybook"] == PLAYBOOK_OPERAND
+
+
+def test_policy_boundary_suspect_flag_still_gates_without_mismatch_evidence() -> None:
+    decision = choose_next_action(
+        {"sourceParityRow": {"targetSlice": {"boundaryQuality": {"status": "suspect"}}}},
+        [
+            {
+                "source-candidate-generator": _Step(),
+                "source-candidate-objdiff": _Step(data={"differenceCount": 4, "status": "mismatched"}),
+            }
+        ],
+    )
+    assert decision["action"] == "repair-boundary-before-retry"
+
+
 def test_frontdoor_exposes_autonomy_budget_flags() -> None:
     dests = {action.dest for action in build_parser()._actions}
     assert "autonomous_max_functions" in dests

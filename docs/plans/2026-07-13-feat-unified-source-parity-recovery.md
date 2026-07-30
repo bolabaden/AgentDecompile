@@ -1,11 +1,13 @@
 ---
 title: "feat: Unified AgentDecompile source-parity recovery"
 type: feat
-status: in-progress
+status: completed
 date: 2026-07-13
+completed: 2026-07-30
 origin: STRATEGY.md + ReconstructKit donor merge
 phase0: complete (branched from origin/master; anonymization gate; donor delta mapped)
-phase1: in-progress (acquisition modules ported into agentdecompile_recovery; reconstruct --context wired)
+phase1: complete (acquisition modules ported into agentdecompile_recovery; reconstruct --context wired)
+phase2-6: complete -- carried forward by later dated plans (2026-07-17 phase5/phase6, 2026-07-24 perf, 2026-07-25 ladder-scale-up/mismatch-class-routing/proof-campaign-loop), which superseded this umbrella plan's own phase tracking. Anonymization checklist below is fully checked off.
 ---
 
 # feat: Unified AgentDecompile source-parity recovery

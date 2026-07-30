@@ -129,8 +129,33 @@ def test_run_vacuum_prompt_uses_plugin_pipeline(monkeypatch: pytest.MonkeyPatch,
         "agentdecompile_recovery.vacuum_runner.run_source_plugin_pipeline",
         fake_pipeline,
     )
-    result = run_vacuum_prompt(work_dir=work, name="alpha", max_attempts=2)
+    result = run_vacuum_prompt(
+        work_dir=work,
+        name="alpha",
+        max_attempts=2,
+        vc_root=Path("/opt/msvc8"),
+        wineprefix=Path("/opt/wine-smoke-prefix"),
+    )
     assert result["exitCode"] == 0
     assert result["status"] == "matched"
     assert calls and calls[0].max_retries >= 2
+    assert calls[0].vc_root == Path("/opt/msvc8")
+    assert calls[0].wineprefix == Path("/opt/wine-smoke-prefix")
     assert any(path.name.endswith(".c") for path in (work / "verified").iterdir())
+
+
+def test_reconstruct_vacuum_runner_command_includes_vc_root_and_wineprefix(tmp_path: Path) -> None:
+    cmd = reconstruct_vacuum_runner_command(
+        tmp_path,
+        max_attempts=3,
+        vc_root=Path("/opt/msvc8"),
+        wineprefix=Path("/opt/wine-smoke-prefix"),
+    )
+    assert "--vc-root /opt/msvc8" in cmd
+    assert "--wineprefix /opt/wine-smoke-prefix" in cmd
+
+
+def test_reconstruct_vacuum_runner_command_omits_flags_when_unset(tmp_path: Path) -> None:
+    cmd = reconstruct_vacuum_runner_command(tmp_path, max_attempts=3)
+    assert "--vc-root" not in cmd
+    assert "--wineprefix" not in cmd

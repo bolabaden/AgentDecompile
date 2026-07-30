@@ -21,6 +21,8 @@ from agentdecompile_recovery.source_export import (
 from agentdecompile_recovery.source_parity_synthesize import record_with_source_text
 from agentdecompile_recovery.verify_pool import map_parallel, resolve_workers
 
+pytestmark = pytest.mark.unit
+
 
 def test_match_cache_roundtrip(tmp_path: Path) -> None:
     cache = MatchCache()
@@ -52,7 +54,11 @@ def test_match_cache_roundtrip(tmp_path: Path) -> None:
 
 
 def test_cache_key_stable() -> None:
-    assert cache_key(entry="a", source_sha="b", target_sha="d", compiler_profile="c") == "d|a|b|c"
+    assert cache_key(entry="a", source_sha="b", target_sha="d", compiler_profile="e") == "d|a|b|e|c"
+    assert (
+        cache_key(entry="a", source_sha="b", target_sha="d", compiler_profile="e", compiler_lane="cxx")
+        == "d|a|b|e|cxx"
+    )
 
 
 def test_resolve_match_source_text_prefers_embedded_and_checks_hash(tmp_path: Path) -> None:
@@ -289,8 +295,17 @@ def test_dump_excludes_byte_emitter_from_verified(tmp_path: Path) -> None:
 
 
 def test_module_banding() -> None:
-    assert module_for_entry("00410000", None) == "game/swmain"
-    assert module_for_entry("00490000", "thunk") == "libsource/recovered"
+    # No va_bands supplied and no assert-string/RTTI/call-graph evidence: falls
+    # back to the unmapped module rather than any hardcoded product banding --
+    # module_resolver.ModuleResolver is deliberately never hardcoded to a
+    # particular product (see its docstring).
+    assert module_for_entry("00410000", None) == "recovered/unmapped"
+    assert module_for_entry("00490000", "thunk") == "recovered/unmapped"
+
+    # Operator-supplied va_bands (legacy PE banding) still resolve correctly.
+    va_bands = [(0x420000, "game/swmain"), (0x4a0000, "libsource/recovered")]
+    assert module_for_entry("00410000", None, va_bands=va_bands) == "game/swmain"
+    assert module_for_entry("00490000", "thunk", va_bands=va_bands) == "libsource/recovered"
 
 
 def test_dump_source_tree_layers_and_format_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -332,18 +347,24 @@ def test_dump_source_tree_layers_and_format_once(tmp_path: Path, monkeypatch: py
         encoding="utf-8",
     )
 
+    # A "FUN_"-prefixed name with no module-resolution evidence would fail the
+    # readability gate (see passes_readability_gate) and be excluded from
+    # Port/CODE and the manifest's function listing, even though its raw
+    # advisory .c file is still written -- give this row a named function and
+    # module-resolution evidence so it exercises the counted (non-excluded)
+    # path, matching the test's intent of checking manifest counts.
     facts = tmp_path / "facts.jsonl"
     facts.write_text(
         json.dumps(
             {
-                "name": "FUN_00500000",
+                "name": "RecoveredHelper",
                 "entry": "00500000",
                 "entryOffset": "00500000",
-                "decompiled": "void FUN_00500000(void) {\n    return;\n}\n",
+                "decompiled": "void RecoveredHelper(void) {\n    return;\n}\n",
                 "decompilationStatus": "complete",
                 "entityKind": "function",
                 "bodyBytes": 1,
-                "prototype": "void FUN_00500000(void)",
+                "prototype": "void RecoveredHelper(void)",
                 "tool": "ghidra",
             }
         )
@@ -357,6 +378,7 @@ def test_dump_source_tree_layers_and_format_once(tmp_path: Path, monkeypatch: py
         summaries=[summary],
         ghidra_facts=facts,
         reference_root=tmp_path,
+        module_hints={"00500000": {"module": "game/somemodule", "moduleProvenance": "assert-string"}},
     )
 
     verified = list((out_dir / "verified").glob("**/*.c"))
@@ -365,7 +387,7 @@ def test_dump_source_tree_layers_and_format_once(tmp_path: Path, monkeypatch: py
     port_h = list((out_dir / "Port" / "CODE").rglob("*.h"))
 
     assert any("CleanFn" in p.name for p in verified)
-    assert any("FUN_00500000" in p.name for p in advisory)
+    assert any("RecoveredHelper" in p.name for p in advisory)
     assert port_cpp, "expected Port/CODE module .cpp files"
     assert port_h, "expected Port/CODE module .h files"
     assert (out_dir / "MANIFEST.json").is_file()

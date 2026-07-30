@@ -98,7 +98,13 @@ class AutonomyBudget:
         return args
 
 
-def reconstruct_vacuum_runner_command(work_dir: Path, *, max_attempts: int = 3) -> str:
+def reconstruct_vacuum_runner_command(
+    work_dir: Path,
+    *,
+    max_attempts: int = 3,
+    vc_root: Path | None = None,
+    wineprefix: Path | None = None,
+) -> str:
     """Shell command template for vacuum.sh --runner-command placeholders.
 
     Placeholders stay quoted so vacuum's {{name}}/{{promptDir}} substitution remains
@@ -106,13 +112,18 @@ def reconstruct_vacuum_runner_command(work_dir: Path, *, max_attempts: int = 3) 
     """
 
     work = str(work_dir.resolve())
-    return (
+    command = (
         f"{shlex.quote(sys.executable)} -m agentdecompile_recovery.vacuum_runner "
         f"--work-dir {shlex.quote(work)} "
         f"--name {shlex.quote('{{name}}')} "
         f"--prompt-dir {shlex.quote('{{promptDir}}')} "
         f"--max-attempts {int(max_attempts)}"
     )
+    if vc_root is not None:
+        command += f" --vc-root {shlex.quote(str(vc_root))}"
+    if wineprefix is not None:
+        command += f" --wineprefix {shlex.quote(str(wineprefix))}"
+    return command
 
 
 def ensure_vacuum_queue(queue: Path) -> Path:

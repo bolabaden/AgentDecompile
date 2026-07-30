@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from .package_verify import compile_with_msvc
+from .package_verify import build_shim, compile_with_msvc
 
 ROOT = Path.cwd()
 DEFAULT_VC_ROOT: Path | None = None
@@ -50,6 +50,27 @@ DEFAULT_PROFILES: list[tuple[str, list[str]]] = [
     ("O2_Oy_GSminus", ["/O2", "/Oy", "/GS-"]),
     ("O1_Gz_Oy_GSminus", ["/O1", "/Gz", "/Oy", "/GS-"]),
     ("Od_Oyminus_GSminus", ["/Od", "/Oy-", "/GS-"]),
+]
+
+# Broader MSVC flag-combination search used only when source_shape_search is
+# requested and no row hint/explicit profile pins the search: packaged-source
+# candidates (raw decompiler output, no alternate C idiom available) have no
+# other lever for matching the original compiler's exact codegen shape --
+# inlining, frame-pointer omission, and intrinsics decisions are flag-driven,
+# not source-driven, for many near-miss mismatches (e.g. branch vs branchless
+# mask-arithmetic codegen). Superset of DEFAULT_PROFILES; the attempt loop
+# breaks on first code-slice match, so the extra entries only cost compiles
+# when the default 4 profiles all miss.
+EXTENDED_PROFILES: list[tuple[str, list[str]]] = [
+    *DEFAULT_PROFILES,
+    ("O2_Gz_Oy_Ob1_GSminus", ["/O2", "/Gz", "/Oy", "/Ob1", "/GS-"]),
+    ("O2_Gz_Oy_Ob2_GSminus", ["/O2", "/Gz", "/Oy", "/Ob2", "/GS-"]),
+    ("O2_Gd_Oy_GSminus", ["/O2", "/Gd", "/Oy", "/GS-"]),
+    ("O1_Oy_GSminus", ["/O1", "/Oy", "/GS-"]),
+    ("O2_Gz_Oyminus_GSminus", ["/O2", "/Gz", "/Oy-", "/GS-"]),
+    ("Ox_Gz_Oy_GSminus", ["/Ox", "/Gz", "/Oy", "/GS-"]),
+    ("O2_Gz_Oy_Oi_GSminus", ["/O2", "/Gz", "/Oy", "/Oi", "/GS-"]),
+    ("Od_Gz_Oyminus_GSminus", ["/Od", "/Gz", "/Oy-", "/GS-"]),
 ]
 
 DEFAULT_CLANG_PROFILES: list[tuple[str, list[str]]] = [
@@ -175,13 +196,16 @@ def resolve_profiles(
     row: dict[str, Any],
     cli_profiles: list[tuple[str, list[str]]],
     compiler: str = "msvc",
+    *,
+    source_shape_search: bool = False,
 ) -> list[tuple[str, list[str]]]:
     if cli_profiles:
         return cli_profiles
     hint_args = extract_row_compiler_profile_hints(row, compiler)
     if hint_args:
         profiles = [("row-hint", hint_args)]
-        for name, args in default_profile_set(compiler):
+        base = EXTENDED_PROFILES if (source_shape_search and compiler == "msvc") else default_profile_set(compiler)
+        for name, args in base:
             if args != hint_args:
                 profiles.append((name, args))
         return profiles
@@ -191,6 +215,8 @@ def resolve_profiles(
         return list(DEFAULT_CLANG_CXX_PROFILES)
     if compiler == "clang-cl":
         return DEFAULT_CLANG_CL_PROFILES
+    if source_shape_search:
+        return EXTENDED_PROFILES
     return DEFAULT_PROFILES
 
 
@@ -19104,12 +19130,16 @@ def packaged_source_candidate(row: dict[str, Any]) -> GeneratedCandidate | None:
         return None
     automatic_generator = row.get("automaticGenerator") if isinstance(row.get("automaticGenerator"), dict) else {}
     c_name = infer_packaged_c_name(row, source)
+    # Packaged .c sources are raw decompiler output (e.g. Ghidra's undefined4/code/byte
+    # pseudo-types) with no typedefs of their own; without the shim MSVC/clang fail to
+    # even parse the file, so nothing downstream ever reaches objdiff.
+    compile_source = build_shim(source) + "\n\n" + source if suffix == ".c" else source
     return GeneratedCandidate(
         rule=str(automatic_generator.get("rule") or "packaged-source"),
         variant="packaged-source",
         c_name=c_name,
         symbol=infer_packaged_symbol(row, source, c_name, suffix),
-        source=source,
+        source=compile_source,
         callconv=infer_packaged_callconv(source, suffix),
         return_type="unknown",
         extra_flags=tuple(),
@@ -19663,7 +19693,7 @@ def attempt_candidate_with_msvc_synthetic_slice(
             }
         ]
     attempts: list[dict[str, Any]] = []
-    resolved_profiles = resolve_profiles(row, compiler_profiles, "msvc")
+    resolved_profiles = resolve_profiles(row, compiler_profiles, "msvc", source_shape_search=source_shape_search)
     seen_merged_flags: set[tuple[str, ...]] = set()
     attempt_timeout = min(timeout, 30)
     for profile_index, (profile_name, profile_args) in enumerate(resolved_profiles):
@@ -20206,6 +20236,88 @@ def run_msvc_source_shape_search(
             "best": report["best"],
         },
     }
+
+
+BYTE_FIELD_GUARD_RETURN_SELF_RE = re.compile(
+    r"void\s*\*\s*__(?P<callconv>fastcall|stdcall|cdecl)\s+(?P<name>\w+)\s*"
+    r"\(\s*void\s*\*\s*(?P<param>\w+)\s*\)\s*\{\s*"
+    r"if\s*\(\s*\*\s*\(\s*unsigned\s+char\s*\*\s*\)\s*"
+    r"\(\s*\(\s*char\s*\*\s*\)\s*(?P=param)\s*\+\s*(?P<offset>0x[0-9a-fA-F]+)\s*\)\s*"
+    r"==\s*(?P<value>0x[0-9a-fA-F]+)\s*\)\s*\{\s*"
+    r"return\s+(?P=param)\s*;\s*\}\s*"
+    r"return\s+(?:0|NULL)\s*;\s*\}",
+)
+
+
+def byte_field_guard_return_self_variants(row: dict[str, Any], candidate: GeneratedCandidate) -> list[dict[str, Any]]:
+    """Alternate C idioms for the "if (byte field == const) return self; return 0;" shape.
+
+    This is a rule-agnostic fallback (unlike every other branch in
+    semantic_equivalent_variants, which is gated to one specific named byte-
+    pattern generator): packaged-source candidates -- raw decompiler output
+    with no matching template rule, the common case for real functions --
+    never reach any of those named branches and always got zero shape-search
+    variants. Observed live on swkotor.exe's sub_78650: the target compiler
+    produced branchless mask-arithmetic codegen (sub/neg/sbb/not/and) for
+    exactly this source shape, while the naive if-statement phrasing compiled
+    to a setne/dec/and sequence -- same semantics, different bytes. Only
+    applies to this one specific, narrow, evidence-grounded pattern; it is not
+    a general C-to-C rewriter.
+    """
+    if candidate.source_suffix != ".c" or not candidate.semantic_source:
+        return []
+    match = BYTE_FIELD_GUARD_RETURN_SELF_RE.search(candidate.source)
+    if not match:
+        return []
+    callconv = match.group("callconv")
+    name = match.group("name")
+    param = match.group("param")
+    offset = match.group("offset")
+    value = match.group("value")
+    return [
+        {
+            "name": "byte-field-guard-mask-arithmetic-ternary",
+            "source": header("source-shape-byte-field-guard-mask-ternary", row)
+            + "\n".join(
+                [
+                    f"void *__{callconv} {name}(void *{param}) {{",
+                    f"    unsigned char field = *(unsigned char *)((char *){param} + {offset});",
+                    f"    return (void *)(-(int)(field == {value}) & (int){param});",
+                    "}",
+                    "",
+                ]
+            ),
+        },
+        {
+            "name": "byte-field-guard-mask-arithmetic-local",
+            "source": header("source-shape-byte-field-guard-mask-local", row)
+            + "\n".join(
+                [
+                    f"void *__{callconv} {name}(void *{param}) {{",
+                    f"    unsigned char field = *(unsigned char *)((char *){param} + {offset});",
+                    f"    int mask = -(int)(field == {value});",
+                    f"    return (void *)(mask & (int){param});",
+                    "}",
+                    "",
+                ]
+            ),
+        },
+        {
+            "name": "byte-field-guard-not-equal-flip",
+            "source": header("source-shape-byte-field-guard-not-equal-flip", row)
+            + "\n".join(
+                [
+                    f"void *__{callconv} {name}(void *{param}) {{",
+                    f"    if (*(unsigned char *)((char *){param} + {offset}) != {value}) {{",
+                    "        return 0;",
+                    "    }",
+                    f"    return {param};",
+                    "}",
+                    "",
+                ]
+            ),
+        },
+    ]
 
 
 def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandidate) -> list[dict[str, Any]]:
@@ -21211,6 +21323,9 @@ def semantic_equivalent_variants(row: dict[str, Any], candidate: GeneratedCandid
                 ),
             },
         ]
+    generic_variants = byte_field_guard_return_self_variants(row, candidate)
+    if generic_variants:
+        return generic_variants
     if candidate.rule != "stdcall-store-two-stack-args-to-globals":
         return []
     first = candidate.evidence.get("firstAddress")

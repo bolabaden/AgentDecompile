@@ -64,6 +64,30 @@ Fixes shipped to unblock the readability MCP executor:
 - `numeratorDelta` 0 matches `verified/` count (no new objdiff-zero accepts).
 - Near-miss queue metadata (`nearMissRetryCount: 17`) did not promote to numerator.
 
+## Run4b (2026-07-25) — readability fixed, still 0/15 accepts
+
+Approach A landed (readability decoupled from proof campaigns). Re-ran the documented smoke recipe: 3 campaigns × 5 functions, all iterations `status: bridged` (no longer `readability-blocked`). Result: **`totalAccepts: 0`, `totalAttempted: 15`, `numeratorDelta: 0`**. `mismatch-class-last.json` classified `sub_78650` as `boundary-suspect` → routed to `boundary-repair` playbook.
+
+**Root cause found later (2026-07-29, see below):** `extract_mismatch_histogram()` read the wrong objdiff JSON field (`kind` instead of `diff_kind`, and bare category names instead of the real `DIFF_`-prefixed values), so the histogram was silently *always empty* — confirmed by grepping the whole work tree: 166/166 `detailLevel` occurrences were `scalar-only`, 0 were `instruction`, despite 148 real `diff_kind` entries present in raw objdiff output. This forced every mismatch through `boundary-repair`/`scalar-default`, both of which have `sourceShapeSearch: False` — the repair loop never tried alternate C source idioms, so near-misses like `sub_78650` (a branchless-mask-arithmetic-vs-if-statement codegen mismatch — exactly what shape search exists to fix) could never convert to accepts.
+
+## Run5–Run8 (2026-07-29) — fixing the pipeline, still 0 accepts
+
+Debugging session (`fix/mismatch-histogram-diff-kind` branch) found and fixed **two real bugs**, plus discovered one environmental factor and one new bug:
+
+1. **Fixed: histogram field-name bug** (`src/agentdecompile_recovery/objdiff_verification.py`). `extract_mismatch_histogram()` now reads `diff_kind` with a `DIFF_*` → category mapping. Regression test built from a real captured `sub_78650` verify.json confirms it now classifies as `operand`/`opcode` (routes to `permuter-operand`/`permuter-opcode`, shape search on) instead of `boundary-suspect`/`unclassified`.
+2. **Fixed: vacuum-loop wineprefix wiring gap** (`vacuum_runner.py`, `autonomy_budget.py`, `proof_campaign.py`, `frontdoor.py`). The autonomous `--autonomous` vacuum/repair loop never threaded `--vc-root`/`--source-synthesis-wineprefix` into its per-function compile subprocess — it silently fell back through the `WINEPREFIX` env var to a hardcoded, usually-nonexistent path, causing every compile in Run5/Run6/Run7 to fail or hang. Confirmed fixed in Run8: subprocess log now shows the flags passed explicitly, and compiles complete in ~1-2s instead of 30s-17min.
+3. **Environmental, not a bug:** the 30s-17min per-function compile times in Run6/Run7 (before the wiring fix landed) were disk I/O on `/run/media/brunner56/MyBook`, a spinning SATA HDD (`lsblk` confirms `ROTA=1`, `WDC WD30EZRX`) — not lock contention (verified `scripts/vacuum.sh` runs strictly sequentially, no parallelism). This matches the already-known, deferred **G16** backlog item (SSD work-dir guidance) in `docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md`. An NVMe SSD (`nvme0n1`) is available on this machine if G16 is picked up.
+4. **New bug found, not yet fixed** (tracked separately): Run8's 10 attempted functions all hit fast, real MSVC compile errors (e.g. `sub_1130`: `error C2146: syntax error before param_1`) — `source_parity_synthesize.py` is emitting invalid C for some function shapes in the swkotor-parity proof-target queue. This is a distinct, lower-priority candidate-generation bug, unrelated to the histogram/wineprefix fixes above.
+
+**Net result:** both original bugs are fixed and confirmed working end-to-end (fast compiles, correct flag wiring; the histogram fix is unit-tested against real captured data). Run8 still landed 0 accepts, but for a *different* reason than Run4b/5/6/7 — it hit the new candidate-generation syntax-error bug (#4) before it could exercise shape-search routing live on a real near-miss. The pipeline mechanics that were broken are now provably working; the next blocker to a real accept is candidate-generation quality.
+
+## Follow-up (still outstanding)
+
+1. Investigate the candidate-generation syntax errors (#4 above) — likely needs a source_parity_synthesize.py fix before any accept is reachable on this queue.
+2. Re-run the smoke with a larger budget once #4 is fixed, to see whether shape-search now actually converts a near-miss to an objdiff-zero accept.
+3. Full canonical `agentdecompile-reconstruct --resume --stop-after report` run: **now done** — Run5/Run8 both ran the complete 15-stage pipeline including `report`, not a manually-built queue.
+4. Consider picking up G16 (SSD work-dir guidance) if compile wall-time on this machine becomes the bottleneck again.
+
 ## Driver
 
 `scripts/run-proof-scale-smoke.py` — bounded `run_proof_campaign_loop` with `max_functions=5`, `max_campaigns=3`, `max_wall_seconds=7200`.

@@ -1,0 +1,563 @@
+{
+  "left": {
+    "sections": [
+      {
+        "name": ".text",
+        "kind": "SECTION_CODE",
+        "size": "15",
+        "match_percent": 65.0
+      },
+      {
+        "name": ".data",
+        "kind": "SECTION_DATA",
+        "match_percent": 0.0,
+        "data_diff": [
+          {}
+        ]
+      },
+      {
+        "name": ".bss",
+        "kind": "SECTION_BSS",
+        "match_percent": 0.0
+      }
+    ],
+    "symbols": [
+      {
+        "name": "[.text]",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_SECTION"
+      },
+      {
+        "name": "@sub_78650@4",
+        "size": "15",
+        "flags": {
+          "global": true,
+          "size_inferred": true
+        },
+        "kind": "SYMBOL_OBJECT",
+        "target_symbol": 3,
+        "match_percent": 65.0,
+        "instructions": [
+          {
+            "diff_kind": "DIFF_ARG_MISMATCH",
+            "instruction": {
+              "size": 3,
+              "formatted": "mov dl, [ecx+0x55]",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "mov",
+                    "opcode": 414
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "dl"
+                  }
+                },
+                {
+                  "basic": ","
+                },
+                {
+                  "basic": " "
+                },
+                {
+                  "basic": "["
+                },
+                {
+                  "arg": {
+                    "opaque": "ecx"
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "+"
+                  }
+                },
+                {
+                  "arg": {
+                    "signed": "85"
+                  }
+                },
+                {
+                  "basic": "]"
+                }
+              ]
+            },
+            "arg_diff": [
+              {
+                "diff_index": 0
+              },
+              {},
+              {},
+              {}
+            ]
+          },
+          {
+            "diff_kind": "DIFF_REPLACE",
+            "instruction": {
+              "address": "3",
+              "size": 2,
+              "formatted": "xor eax, eax",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "xor",
+                    "opcode": 1518
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "eax"
+                  }
+                },
+                {
+                  "basic": ","
+                },
+                {
+                  "basic": " "
+                },
+                {
+                  "arg": {
+                    "opaque": "eax"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "diff_kind": "DIFF_REPLACE",
+            "instruction": {
+              "address": "5",
+              "size": 3,
+              "formatted": "cmp dl, 0x1",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "cmp",
+                    "opcode": 93
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "dl"
+                  }
+                },
+                {
+                  "basic": ","
+                },
+                {
+                  "basic": " "
+                },
+                {
+                  "arg": {
+                    "unsigned": "1"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "diff_kind": "DIFF_REPLACE",
+            "instruction": {
+              "address": "8",
+              "size": 3,
+              "formatted": "setne al",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "setne",
+                    "opcode": 695
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "al"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "diff_kind": "DIFF_REPLACE",
+            "instruction": {
+              "address": "11",
+              "size": 1,
+              "formatted": "dec eax",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "dec",
+                    "opcode": 137
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "eax"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "instruction": {
+              "address": "12",
+              "size": 2,
+              "formatted": "and eax, ecx",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "and",
+                    "opcode": 21
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "eax"
+                  }
+                },
+                {
+                  "basic": ","
+                },
+                {
+                  "basic": " "
+                },
+                {
+                  "arg": {
+                    "opaque": "ecx"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "instruction": {
+              "address": "14",
+              "size": 1,
+              "formatted": "ret ",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "ret",
+                    "opcode": 662
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "[.data]",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_SECTION"
+      },
+      {
+        "name": "[.bss]",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_SECTION"
+      },
+      {
+        "name": "[.data-0]",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_SECTION"
+      }
+    ]
+  },
+  "right": {
+    "sections": [
+      {
+        "name": ".drectve",
+        "size": "47"
+      },
+      {
+        "name": ".debug$S",
+        "size": "118"
+      },
+      {
+        "name": ".text",
+        "kind": "SECTION_CODE",
+        "size": "14"
+      },
+      {
+        "name": ".debug$F",
+        "size": "16"
+      }
+    ],
+    "symbols": [
+      {
+        "name": "[.drectve]",
+        "size": "47",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_SECTION"
+      },
+      {
+        "name": "[.debug$S]",
+        "size": "118",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_SECTION"
+      },
+      {
+        "name": "[.text]",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_SECTION"
+      },
+      {
+        "name": "@sub_78650@4",
+        "size": "14",
+        "flags": {
+          "global": true,
+          "size_inferred": true
+        },
+        "kind": "SYMBOL_FUNCTION",
+        "target_symbol": 1,
+        "match_percent": 65.0,
+        "instructions": [
+          {
+            "diff_kind": "DIFF_ARG_MISMATCH",
+            "instruction": {
+              "size": 3,
+              "formatted": "mov al, [ecx+0x55]",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "mov",
+                    "opcode": 414
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "al"
+                  }
+                },
+                {
+                  "basic": ","
+                },
+                {
+                  "basic": " "
+                },
+                {
+                  "basic": "["
+                },
+                {
+                  "arg": {
+                    "opaque": "ecx"
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "+"
+                  }
+                },
+                {
+                  "arg": {
+                    "signed": "85"
+                  }
+                },
+                {
+                  "basic": "]"
+                }
+              ]
+            },
+            "arg_diff": [
+              {
+                "diff_index": 0
+              },
+              {},
+              {},
+              {}
+            ]
+          },
+          {
+            "diff_kind": "DIFF_REPLACE",
+            "instruction": {
+              "address": "3",
+              "size": 2,
+              "formatted": "sub al, 0x1",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "sub",
+                    "opcode": 740
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "al"
+                  }
+                },
+                {
+                  "basic": ","
+                },
+                {
+                  "basic": " "
+                },
+                {
+                  "arg": {
+                    "unsigned": "1"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "diff_kind": "DIFF_REPLACE",
+            "instruction": {
+              "address": "5",
+              "size": 2,
+              "formatted": "neg al",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "neg",
+                    "opcode": 464
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "al"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "diff_kind": "DIFF_REPLACE",
+            "instruction": {
+              "address": "7",
+              "size": 2,
+              "formatted": "sbb eax, eax",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "sbb",
+                    "opcode": 681
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "eax"
+                  }
+                },
+                {
+                  "basic": ","
+                },
+                {
+                  "basic": " "
+                },
+                {
+                  "arg": {
+                    "opaque": "eax"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "diff_kind": "DIFF_REPLACE",
+            "instruction": {
+              "address": "9",
+              "size": 2,
+              "formatted": "not eax",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "not",
+                    "opcode": 466
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "eax"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "instruction": {
+              "address": "11",
+              "size": 2,
+              "formatted": "and eax, ecx",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "and",
+                    "opcode": 21
+                  }
+                },
+                {
+                  "arg": {
+                    "opaque": "eax"
+                  }
+                },
+                {
+                  "basic": ","
+                },
+                {
+                  "basic": " "
+                },
+                {
+                  "arg": {
+                    "opaque": "ecx"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "instruction": {
+              "address": "13",
+              "size": 1,
+              "formatted": "ret ",
+              "parts": [
+                {
+                  "opcode": {
+                    "mnemonic": "ret",
+                    "opcode": 662
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "[.debug$F]",
+        "size": "16",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_SECTION"
+      },
+      {
+        "name": "@comp.id",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_OBJECT"
+      },
+      {
+        "name": "@feat.00",
+        "flags": {
+          "local": true
+        },
+        "kind": "SYMBOL_OBJECT"
+      }
+    ]
+  }
+}

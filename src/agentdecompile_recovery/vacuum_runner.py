@@ -68,6 +68,8 @@ def run_vacuum_prompt(
     max_attempts: int = 3,
     source_shape_search: bool = False,
     routed_playbook: str | None = None,
+    vc_root: Path | None = None,
+    wineprefix: Path | None = None,
 ) -> dict[str, Any]:
     """Run bounded plugin synthesis for one vacuum queue entry."""
 
@@ -135,6 +137,8 @@ def run_vacuum_prompt(
         work_dir=work_dir,
         routed_playbook=routed_playbook,
         inventory=work_dir / "binary-inventory.json",
+        vc_root=vc_root,
+        wineprefix=wineprefix,
     )
     config = apply_playbook_to_run_config(base_config, routed_playbook, force_shape_search=source_shape_search)
     summary = run_source_plugin_pipeline(config)
@@ -202,6 +206,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt-dir", type=Path, default=None)
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--vc-root", type=Path, default=None, help="MSVC/VC Toolkit root used for compile verification.")
+    parser.add_argument("--wineprefix", type=Path, default=None, help="Wine prefix used for MSVC compile verification.")
     return parser
 
 
@@ -213,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
         prompt_dir=args.prompt_dir,
         dry_run=args.dry_run,
         max_attempts=args.max_attempts,
+        vc_root=args.vc_root,
+        wineprefix=args.wineprefix,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return int(result.get("exitCode") or 2)

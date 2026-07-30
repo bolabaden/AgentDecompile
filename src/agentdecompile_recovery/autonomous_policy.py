@@ -83,10 +83,19 @@ def choose_next_action(
     verifier_ok = getattr(verifier, "status", None) == "success"
     mismatch_class, mismatch_histogram = _mismatch_evidence(latest, verifier_data)
 
+    # A classified mismatch (operand/opcode/insert-delete) is direct evidence the
+    # candidate compiled to something comparable to the target slice, which
+    # outranks the boundary-suspect heuristic -- same precedence as
+    # mismatch_classify.classify_mismatch(). Only gate on boundary-suspect when
+    # there's no such evidence to route from instead.
+    has_mismatch_evidence = mismatch_class in {CLASS_OPERAND, CLASS_OPCODE, CLASS_INSERT_DELETE}
+
     if generator and generator.status == "failure" and "no source candidate" in generator_error:
         action = "reacquire-or-expand-source-facts"
         reason = "candidate generator exhausted compatible source shapes"
-    elif boundary_quality.get("status") == "suspect" or mismatch_class == CLASS_BOUNDARY_SUSPECT:
+    elif not has_mismatch_evidence and (
+        boundary_quality.get("status") == "suspect" or mismatch_class == CLASS_BOUNDARY_SUSPECT
+    ):
         action = "repair-boundary-before-retry"
         reason = "target slice boundary is suspect"
     elif "compile" in verifier_error.lower() or "syntax" in verifier_error.lower():

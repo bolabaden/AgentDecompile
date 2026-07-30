@@ -13,15 +13,16 @@ from typing import Any, Iterable
 
 SCHEMA = "agentdecompile.verify-objdiff.v1"
 
-INSTRUCTION_MISMATCH_KINDS = frozenset(
-    {
-        "INSERTION",
-        "DELETION",
-        "REPLACEMENT",
-        "OPCODE_MISMATCH",
-        "ARGUMENT_MISMATCH",
-    }
-)
+# objdiff tags each instruction with "diff_kind" using these DIFF_-prefixed
+# values (not the bare category names, and not the "kind" field, which
+# earlier code mistakenly matched against).
+DIFF_KIND_TO_CATEGORY = {
+    "DIFF_INSERT": "INSERTION",
+    "DIFF_DELETE": "DELETION",
+    "DIFF_REPLACE": "REPLACEMENT",
+    "DIFF_OP_MISMATCH": "OPCODE_MISMATCH",
+    "DIFF_ARG_MISMATCH": "ARGUMENT_MISMATCH",
+}
 
 
 def iter_json_objects(value: Any) -> Iterable[dict[str, Any]]:
@@ -126,8 +127,9 @@ def extract_mismatch_histogram(parsed: Any) -> dict[str, int]:
 
     histogram: dict[str, int] = {}
     for item in iter_json_objects(parsed):
-        kind = item.get("kind")
-        if kind not in INSTRUCTION_MISMATCH_KINDS:
+        diff_kind = item.get("diff_kind")
+        category = DIFF_KIND_TO_CATEGORY.get(str(diff_kind))
+        if category is None:
             continue
-        histogram[str(kind)] = histogram.get(str(kind), 0) + 1
+        histogram[category] = histogram.get(category, 0) + 1
     return histogram

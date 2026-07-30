@@ -527,6 +527,8 @@ def run_one_shot(args: argparse.Namespace) -> int:
             work_dir,
             budget,
             run_decomp_cli_bridge=run_decomp_cli_bridge,
+            vc_root=args.source_synthesis_vc_root,
+            wineprefix=args.source_synthesis_wineprefix,
         )
         if int(loop_result.get("returncode") or 0) != 0:
             rc = int(loop_result["returncode"])
