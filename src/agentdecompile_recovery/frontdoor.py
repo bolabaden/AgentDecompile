@@ -27,6 +27,7 @@ from .cli import main as legacy_main
 from .pipeline import RecoveryConfig, RecoveryRunner
 from .targets import identify_binary
 from .tools import inspect_capabilities, resolve_script_asset
+from .work_dir_diagnostics import rotational_disk_warning
 
 
 LEGACY_COMMANDS = {
@@ -345,6 +346,14 @@ def run_one_shot(args: argparse.Namespace) -> int:
         args.source_synthesis_vc_root = args.vc_root
     work_dir = args.work_dir or default_work_dir(args.input, args.preferred_name)
     work_dir.mkdir(parents=True, exist_ok=True)
+    if getattr(args, "autonomous", False):
+        # G16: per-function compile/objdiff cycles are I/O-bound; a spinning
+        # disk turned a ~1-2s cycle into 30s-17min in a real smoke run (see
+        # docs/solutions/workflow-learnings/2026-07-25-proof-scale-smoke-swkotor.md).
+        # Advisory only -- never blocks the run.
+        disk_warning = rotational_disk_warning(work_dir)
+        if disk_warning:
+            print(f"agentdecompile-reconstruct: warning: {disk_warning}", file=sys.stderr)
 
     if getattr(args, "dump_source_only", False):
         if not getattr(args, "dump_source", None):
