@@ -14,6 +14,11 @@ CLAIM_BOUNDARY = (
     "it does not promote source without objdiff-zero verification"
 )
 
+# Per signature, not global. Signatures here are coarse (a few mismatch classes
+# times a few fix shapes), so a global cap would let one busy class evict every
+# exemplar of a rare one.
+MAX_PATTERNS_PER_SIGNATURE = 25
+
 
 def memory_path(work_dir: Path) -> Path:
     return work_dir.resolve() / "facts" / "pattern-memory.json"
@@ -55,8 +60,21 @@ def store_verified_pattern(
     fix_shape: str | None = None,
     function_name: str | None = None,
     entry: str | None = None,
+    source_before: str | None = None,
+    source_after: str | None = None,
 ) -> dict[str, Any]:
-    """Record a verified accept pattern for later retrieval."""
+    """Record a verified accept pattern for later retrieval.
+
+    Patterns accumulate within a signature rather than replacing it. The
+    signature space here is coarse -- a handful of mismatch classes times a
+    handful of fix shapes -- so replacing on collision meant the store held
+    about one row per class and every accept erased the previous exemplar for
+    its class, which is the opposite of memory.
+
+    ``source_before``/``source_after`` are the part a later prompt can actually
+    use. A row of labels says a transformation happened; only the pair says
+    what it was.
+    """
 
     work_dir = work_dir.resolve()
     payload = load_pattern_memory(work_dir)
@@ -70,15 +88,38 @@ def store_verified_pattern(
         "fixShape": fix_shape,
         "functionName": function_name,
         "entry": entry,
+        "sourceBefore": source_before,
+        "sourceAfter": source_after,
         "storedAt": now(),
         "claimBoundary": CLAIM_BOUNDARY,
     }
-    patterns = [existing for existing in patterns if existing.get("signature") != sig]
-    patterns.append(row)
-    payload["patterns"] = patterns[-500:]
+
+    # Deduplicate on the transformation itself, not the signature: the same
+    # before/after pair re-observed on another function teaches nothing new,
+    # but a different pair in the same class is exactly what we want to keep.
+    identity = (sig, source_before, source_after, None if source_after else function_name)
+    kept = [existing for existing in patterns if _identity(existing) != identity]
+
+    same_signature = [existing for existing in kept if existing.get("signature") == sig]
+    if len(same_signature) >= MAX_PATTERNS_PER_SIGNATURE:
+        oldest = same_signature[0]
+        kept = [existing for existing in kept if existing is not oldest]
+
+    kept.append(row)
+    payload["patterns"] = kept
     payload["writtenAt"] = now()
     atomic_write_json(memory_path(work_dir), payload)
     return row
+
+
+def _identity(row: dict[str, Any]) -> tuple[Any, ...]:
+    after = row.get("sourceAfter")
+    return (
+        row.get("signature"),
+        row.get("sourceBefore"),
+        after,
+        None if after else row.get("functionName"),
+    )
 
 
 def retrieve_patterns(
@@ -87,7 +128,15 @@ def retrieve_patterns(
     compiler: str = "msvc",
     arch: str = "x86",
     mismatch_class: str | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
+    """Exemplars for this mismatch class, most useful first.
+
+    Rows carrying an actual before/after transformation rank ahead of
+    label-only rows: a prompt can copy a transformation, but learns nothing
+    from a bare class name. Newest wins within each group.
+    """
+
     payload = load_pattern_memory(work_dir)
     matches: list[dict[str, Any]] = []
     for row in payload.get("patterns") or []:
@@ -100,7 +149,11 @@ def retrieve_patterns(
         if mismatch_class and row.get("mismatchClass") not in {mismatch_class, None, ""}:
             continue
         matches.append(row)
-    return matches
+    # Stored in append order, so reversing gives newest-first; the sort below is
+    # stable, so that ordering survives inside each rank.
+    matches.reverse()
+    matches.sort(key=lambda row: 0 if (row.get("sourceBefore") and row.get("sourceAfter")) else 1)
+    return matches[:limit] if limit is not None and limit >= 0 else matches
 
 
 def ingest_verified_directory(work_dir: Path) -> dict[str, Any]:

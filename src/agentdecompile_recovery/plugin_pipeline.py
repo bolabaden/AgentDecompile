@@ -477,16 +477,29 @@ class PluginPipeline:
 
         if str(context.get("rewriteFulfillment") or "cli") != "cli":
             return
+        from .pattern_memory import retrieve_patterns
         from .rewrite_context import build_context_pack
+
+        mismatch_class = decision.get("mismatchClass")
+        try:
+            exemplars = retrieve_patterns(
+                work_dir,
+                mismatch_class=str(mismatch_class) if mismatch_class else None,
+                limit=5,
+            )
+        except OSError:
+            # Memory is an optimization; a prompt without exemplars still works.
+            exemplars = []
 
         pack = build_context_pack(
             function_name=function_name,
             entry=str(row.get("entry") or ""),
             candidate_source=candidate_source,
             aligned_diff=aligned_diff,
-            mismatch_class=decision.get("mismatchClass"),
+            mismatch_class=mismatch_class,
             mismatch_histogram=decision.get("mismatchHistogram"),
             compiler_profile=compiler_profile,
+            exemplars=exemplars,
         )
         self._fulfill_rewrite_in_process(work_dir, request_id, pack)
 

@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .rewrite_queue import coerce_histogram
+
 SCHEMA = "agentdecompile.rewrite-context-pack.v1"
 CLAIM_BOUNDARY = (
     "a rewrite context pack is advisory input only; compile + objdiff zero "
@@ -70,7 +72,7 @@ def build_context_pack(
         "candidateSource": candidate_source,
         "alignedDiff": list(aligned_diff or []),
         "mismatchClass": mismatch_class,
-        "mismatchHistogram": dict(mismatch_histogram or {}),
+        "mismatchHistogram": coerce_histogram(mismatch_histogram),
         "compilerProfile": compiler_profile,
         "priorAttempts": list(prior_attempts or []),
         "exemplars": list(exemplars or []),
