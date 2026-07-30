@@ -242,6 +242,68 @@ change converted the cheat into the intended answer.
 
 679 unit tests pass; ruff clean.
 
+## Funnel measurement (added after implementation)
+
+Fixing the rewrite loop exposed that it was not the binding constraint. Measured
+against the pre-fix work dir:
+
+| Stage | Count | Share of inventory |
+|---|---|---|
+| Inventoried functions | 12,845 | 100% |
+| Source tasks generated | 415 | 3.2% |
+| Synthesis attempts | 97 | 0.76% |
+| Code-slice matches | 3 | 0.02% |
+| Promoted to `verified/` | 0 | 0% |
+
+Two upstream defects account for nearly all of that loss.
+
+### F9 — the compiler lane did not match the target (P0)
+
+`--source-synthesis` defaulted to `clang` for every target. swkotor.exe is an
+MSVC-built PE, so candidates were compiled with clang and diffed against
+MSVC-generated target slices. That comparison diverges on calling convention,
+prologue shape, and register allocation before any source-shape question is
+reached, so the accept rate was capped near zero independently of candidate
+quality.
+
+The misconfiguration was easy to miss because selecting the MSVC *toolchain*
+(`--source-synthesis-vc-root`) and selecting the MSVC *lane*
+(`--source-synthesis msvc`) are separate flags. The prior swkotor campaigns
+passed the first and not the second: a full MSVC toolchain was configured and
+then never used.
+
+Fixed in `a90b816`; the lane now derives from target format.
+
+### F10 — inventory truncation was silent (P1)
+
+`--source-task-limit` defaults to 500, so a whole-binary request quietly became
+a request for the first 500 candidates, and the run still reported success. The
+counts were already in the summary; nothing drew the conclusion. Fixed in
+`cf1a587`.
+
+Raising the limit to 6,000 took source tasks from 415 to **5,119** — a 12×
+widening of the funnel top from one flag.
+
+### Revised expectations
+
+The near-miss band the rewrite lane operates on held only 42 functions
+pre-fix, and 24 of those were `boundary-suspect`, which routes to boundary
+repair rather than mechanism 3. Roughly a dozen functions could reach the
+rewrite lane at all. That is why the loop rework alone could not have moved the
+ladder: **the lane was starved, not merely broken.**
+
+Order of leverage, largest first:
+
+1. Compiler lane matching the target (F9) — gates every accept.
+2. Funnel width (F10) — gates how many functions are even attempted.
+3. Throughput (F8) — per-function compile+objdiff on a rotational disk is
+   30s–17min; at 2,000 tasks this is the wall-clock constraint.
+4. The rewrite loop (F1–F5) — converts near-misses once functions actually
+   reach that band.
+
+The 1% rung is 129 functions. With 5,119 tasks in the MSVC lane the population
+is finally large enough for that to be reachable; before these fixes it was not.
+
 ## Open items
 
 - **F7** — `source_parity_synthesize.py` at 23,118 lines. Recorded, not
