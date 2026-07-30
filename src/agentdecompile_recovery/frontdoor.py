@@ -24,7 +24,7 @@ from .autonomy_budget import budget_from_args
 from .claim_report import write_claim_report
 from .critical_path import write_critical_path
 from .cli import main as legacy_main
-from .pipeline import RecoveryConfig, RecoveryRunner
+from .pipeline import RecoveryConfig, RecoveryRunner, resolve_source_synthesis_mode
 from .targets import identify_binary
 from .tools import inspect_capabilities, resolve_script_asset
 from .work_dir_diagnostics import rotational_disk_warning
@@ -80,6 +80,20 @@ def run_upstream_command(command: str, argv: list[str]) -> int:
 def default_work_dir(target_path: Path, preferred_name: str | None = None) -> Path:
     identity = identify_binary(target_path, preferred_name)
     return Path("target/agentdecompile-reconstruct") / identity.stable_id
+
+
+def target_format_hint(target_path: Path, preferred_name: str | None = None) -> str | None:
+    """Best-effort container format ("pe"/"elf"/...) for lane selection.
+
+    Advisory: an unidentifiable input just falls back to the generic lane rather
+    than failing the run, since the real format is established later by
+    inventory-binary.
+    """
+
+    try:
+        return identify_binary(target_path, preferred_name).format
+    except (FileNotFoundError, OSError, ValueError):
+        return None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -217,9 +231,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-task-offset", type=int, default=0, help="Skip this many eligible candidates before queueing.")
     parser.add_argument(
         "--source-synthesis",
-        choices=["none", "dry-run", "clang", "clang-cl", "msvc"],
-        default="clang",
-        help="Compiler lane used for bounded generated source verification.",
+        choices=["auto", "none", "dry-run", "clang", "clang-cl", "msvc"],
+        default="auto",
+        help=(
+            "Compiler lane used for bounded generated source verification. "
+            "auto (default) derives the lane from the target format: PE picks "
+            "msvc when a VC root is configured, else clang-cl; everything else "
+            "picks clang. Diffing a clang-built object against an MSVC-built PE "
+            "slice essentially never byte-matches."
+        ),
     )
     parser.add_argument(
         "--source-synthesis-engine",
@@ -453,7 +473,11 @@ def run_one_shot(args: argparse.Namespace) -> int:
         source_task_limit=args.source_task_limit,
         source_task_offset=args.source_task_offset,
         source_synthesis_engine=args.source_synthesis_engine,
-        source_synthesis_mode=args.source_synthesis,
+        source_synthesis_mode=resolve_source_synthesis_mode(
+            args.source_synthesis,
+            target_format=target_format_hint(args.input, args.preferred_name),
+            vc_root_available=bool(args.source_synthesis_vc_root or getattr(args, "vc_root", None)),
+        ),
         source_synthesis_limit=args.source_synthesis_limit,
         source_synthesis_max_variants=args.source_synthesis_max_variants,
         source_synthesis_strategies=parse_csv_string(args.source_synthesis_strategies),
