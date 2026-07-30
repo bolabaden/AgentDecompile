@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from .llm_rewrite_client import LlmRewriteResult, request_llm_rewrite
 from .package_verify import build_shim, compile_with_msvc
 from .state import now
 
@@ -19394,8 +19393,7 @@ def attempt_candidate(
     timeout: int,
     dry_run: bool,
     source_shape_search: bool = False,
-    llm_rewrite_requested: bool = False,
-    llm_mismatch_data: dict[str, Any] | None = None,
+    pending_rewrite_result: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     case_dir = out_dir / "cases" / candidate_id(row, candidate)
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -19478,8 +19476,7 @@ def attempt_candidate(
             wineprefix=wineprefix,
             timeout=timeout,
             source_shape_search=source_shape_search,
-            llm_rewrite_requested=llm_rewrite_requested,
-            llm_mismatch_data=llm_mismatch_data,
+            pending_rewrite_result=pending_rewrite_result,
         )
 
     slice_proc = run(
@@ -19685,8 +19682,7 @@ def attempt_candidate_with_msvc_synthetic_slice(
     wineprefix: Path | None,
     timeout: int,
     source_shape_search: bool = False,
-    llm_rewrite_requested: bool = False,
-    llm_mismatch_data: dict[str, Any] | None = None,
+    pending_rewrite_result: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     data = parse_bytes(row)
     if not data:
@@ -19787,10 +19783,10 @@ def attempt_candidate_with_msvc_synthetic_slice(
         if status == "code-slice-matched":
             break
     has_code_slice_match = any(item.get("status") == "code-slice-matched" and int(item.get("differences", -1)) == 0 for item in attempts)
-    # Cheap, mechanism-1/2-only probe for gating purposes -- must not invoke the
-    # (network-bound, bounded-cost) LLM rewrite here. The real, single LLM call
-    # for this attempt happens inside run_msvc_source_shape_search below, only
-    # once should_search_source_shapes actually decides to run the search.
+    # Mechanism-1/2-only probe for gating purposes. A completed rewrite-queue
+    # result (pending_rewrite_result) is a plain dict lookup, not a live call,
+    # so it's safe to check here; it just widens this gate. The actual variant
+    # is built in run_msvc_source_shape_search below.
     shape_variants = semantic_equivalent_variants(row, candidate)
     should_run_promotion_search = (
         has_code_slice_match
@@ -19801,7 +19797,7 @@ def attempt_candidate_with_msvc_synthetic_slice(
         source_shape_search
         and attempts
         and candidate.semantic_source
-        and bool(shape_variants or llm_rewrite_requested)
+        and bool(shape_variants or pending_rewrite_result)
         and (
             candidate.source_suffix != ".c"
             or not has_code_slice_match
@@ -19819,8 +19815,7 @@ def attempt_candidate_with_msvc_synthetic_slice(
             wine=wine,
             wineprefix=wineprefix,
             timeout=timeout,
-            llm_rewrite_requested=llm_rewrite_requested,
-            llm_mismatch_data=llm_mismatch_data,
+            pending_rewrite_result=pending_rewrite_result,
         )
         if search is not None:
             for attempt in attempts:
@@ -20156,24 +20151,14 @@ def run_msvc_source_shape_search(
     wine: str,
     wineprefix: Path | None,
     timeout: int,
-    llm_rewrite_requested: bool = False,
-    llm_mismatch_data: dict[str, Any] | None = None,
+    pending_rewrite_result: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    llm_status_out: dict[str, Any] = {}
     variants = semantic_equivalent_variants(
         row,
         candidate,
-        llm_rewrite_requested=llm_rewrite_requested,
-        llm_mismatch_data=llm_mismatch_data,
-        llm_status_out=llm_status_out if llm_rewrite_requested else None,
+        pending_rewrite_result=pending_rewrite_result,
     )
-    llm_rewrite_status = llm_status_out.get("status")
     if not variants:
-        if llm_rewrite_status in {"llm-unavailable", "llm-fatal"}:
-            return {
-                "path": None,
-                "summary": {"status": "no-match", "attempts": 0, "best": None, "llmRewriteStatus": llm_rewrite_status},
-            }
         return None
     compare_data = source_shape_compare_bytes(candidate, data)
     profiles = compiler_profiles or default_profile_set("msvc")[:1]
@@ -20255,12 +20240,8 @@ def run_msvc_source_shape_search(
         else None,
         "claimBoundary": "source-shape search ranks semantic-equivalent C spellings for compiler-profile work; it is not accepted source unless the verifier reports objdiff zero",
     }
-    if llm_rewrite_requested:
-        report["llmRewriteStatus"] = llm_rewrite_status
-        report["llmRewriteModel"] = llm_status_out.get("model")
-        report["llmRewriteStopReason"] = llm_status_out.get("stop_reason")
-        report["llmRewriteInputTokens"] = llm_status_out.get("input_tokens")
-        report["llmRewriteOutputTokens"] = llm_status_out.get("output_tokens")
+    if pending_rewrite_result is not None:
+        report["rewriteRequestId"] = pending_rewrite_result.get("requestId")
     path = search_dir / "summary.json"
     write_json(path, report)
     return {
@@ -20269,7 +20250,6 @@ def run_msvc_source_shape_search(
             "status": report["status"],
             "attempts": len(attempts),
             "best": report["best"],
-            "llmRewriteStatus": llm_rewrite_status if llm_rewrite_requested else None,
         },
     }
 
@@ -20356,69 +20336,45 @@ def byte_field_guard_return_self_variants(row: dict[str, Any], candidate: Genera
     ]
 
 
-@dataclass(frozen=True)
-class _LlmRewriteOutcome:
-    variant: dict[str, Any] | None
-    status_fields: dict[str, Any]
+_REWRITE_CONTENT_DISALLOWED_RE = re.compile(r"^\s*#\s*(pragma|include|import)\b", re.MULTILINE)
 
 
-def llm_rewrite_variant(
+def pending_rewrite_variant(
     row: dict[str, Any],
     candidate: GeneratedCandidate,
-    mismatch_data: dict[str, Any],
-) -> _LlmRewriteOutcome:
-    """Single bounded, fail-closed LLM rewrite call (challenger-lane mechanism 3).
+    queue_result: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Turn a completed rewrite-queue result into a shape-search variant (challenger-lane mechanism 3).
 
     Unlike byte_field_guard_return_self_variants above (a narrow, evidence-grounded
     mechanical rule), this covers real near-miss functions with no matching
     byte-pattern template and no idiom-permutable shape -- most functions with
-    actual control flow. One best-effort rewrite per call, grounded in the
-    actual objdiff mismatch evidence (not a bare "write C for these bytes"
-    prompt), fed into the identical compile+objdiff verification path as every
+    actual control flow. Never invokes anything itself: the rewrite is produced
+    out-of-process by a Claude Code subagent (dispatched by the
+    agentdecompile-rewrite-worker skill under /loop) and handed back via
+    src/agentdecompile_recovery/rewrite_queue.py. This function only reads a
+    completed queue entry, applies a minimal content check (single function
+    body only -- no #pragma/#include/linker directives), and returns a variant
+    dict fed into the identical compile+objdiff verification path as every
     other shape-search variant. Advisory only: this function never claims
     verified source -- the caller's objdiff gate is the sole proof mechanism.
     """
 
-    system_prompt = (
-        "You are rewriting decompiler-generated C source into an alternate, "
-        "semantically equivalent C spelling that a target compiler (MSVC) may "
-        "translate to different, closer-matching machine code. Preserve "
-        "behavior exactly -- do not change what the function computes or "
-        "returns. Respond with ONLY the rewritten C function in a single "
-        "fenced code block, no explanation."
-    )
-    histogram = mismatch_data.get("mismatchHistogram") or {}
-    mismatch_class = mismatch_data.get("mismatchClass") or "unclassified"
-    user_prompt = (
-        f"Function name: {row.get('name')}\n"
-        f"Mismatch class: {mismatch_class}\n"
-        f"Mismatch histogram: {json.dumps(histogram, sort_keys=True)}\n\n"
-        "Current C source (compiles, but does not byte-match the target):\n"
-        f"```c\n{candidate.source}\n```\n"
-    )
-    result = request_llm_rewrite(system_prompt, user_prompt)
-    status_fields = {
-        "status": result.status,
-        "model": result.model,
-        "stop_reason": result.stop_reason,
-        "input_tokens": result.input_tokens,
-        "output_tokens": result.output_tokens,
-    }
-    if result.status != "ok" or not result.source:
-        return _LlmRewriteOutcome(variant=None, status_fields=status_fields)
-    return _LlmRewriteOutcome(
-        variant={"name": "llm-rewrite", "source": result.source, "semanticEquivalent": True},
-        status_fields=status_fields,
-    )
+    if queue_result is None or queue_result.get("status") != "completed":
+        return None
+    source = queue_result.get("source")
+    if not isinstance(source, str) or not source.strip():
+        return None
+    if _REWRITE_CONTENT_DISALLOWED_RE.search(source):
+        return None
+    return {"name": "rewrite-request", "source": source, "semanticEquivalent": True}
 
 
 def semantic_equivalent_variants(
     row: dict[str, Any],
     candidate: GeneratedCandidate,
     *,
-    llm_rewrite_requested: bool = False,
-    llm_mismatch_data: dict[str, Any] | None = None,
-    llm_status_out: dict[str, Any] | None = None,
+    pending_rewrite_result: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if candidate.rule == "bink-buffer-set-scale-forwarder":
         global_width = optional_int(candidate.evidence.get("globalWidthFallbackAddress"))
@@ -21425,12 +21381,10 @@ def semantic_equivalent_variants(
     generic_variants = byte_field_guard_return_self_variants(row, candidate)
     if generic_variants:
         return generic_variants
-    if llm_rewrite_requested:
-        llm_variant = llm_rewrite_variant(row, candidate, llm_mismatch_data or {})
-        if llm_status_out is not None:
-            llm_status_out.update(llm_variant.status_fields)
-        if llm_variant.variant is not None:
-            return [llm_variant.variant]
+    if pending_rewrite_result is not None:
+        rewrite_variant = pending_rewrite_variant(row, candidate, pending_rewrite_result)
+        if rewrite_variant is not None:
+            return [rewrite_variant]
         return []
     if candidate.rule != "stdcall-store-two-stack-args-to-globals":
         return []

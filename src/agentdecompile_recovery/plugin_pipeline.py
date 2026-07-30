@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from .autonomous_policy import choose_next_action
 from .dual_agent_advisory import evaluate_checker_gate
+from . import rewrite_queue
 
 
 PluginStatus = str
@@ -22,6 +24,10 @@ PipelineEventHandler = Callable[[dict[str, Any]], None]
 
 # Typed stops: do not burn remaining retries after policy decides.
 # promote-or-export is intentionally omitted — prepare_retry only runs after failures.
+# try-rewrite-request is a stop action, not a retry-in-place action: writing a
+# rewrite-request queue entry hands the work to an out-of-process subagent that
+# may take minutes, so this function's in-process attempt loop must halt here
+# rather than burning its attempt budget retrying synchronously.
 AUTONOMY_STOP_ACTIONS = frozenset(
     {
         "stop-budget-exhausted",
@@ -29,7 +35,8 @@ AUTONOMY_STOP_ACTIONS = frozenset(
         "block-on-compiler-profile-evidence",
         "reacquire-or-expand-source-facts",
         "repair-boundary-before-retry",
-        "llm-unavailable",
+        "try-rewrite-request",
+        "rewrite-unavailable",
     }
 )
 
@@ -350,6 +357,8 @@ class PluginPipeline:
             }
         )
         action = str(decision.get("action") or "")
+        if action == "try-rewrite-request":
+            self._write_rewrite_request(updated, decision)
         if action in AUTONOMY_STOP_ACTIONS:
             updated["autonomyStop"] = True
             updated["autonomyStopReason"] = str(decision.get("reason") or action)
@@ -359,6 +368,21 @@ class PluginPipeline:
             if prepare is not None:
                 updated = prepare(updated, previous_attempts)
         return updated
+
+    def _write_rewrite_request(self, context: dict[str, Any], decision: dict[str, Any]) -> None:
+        row = context.get("sourceParityRow")
+        candidate = context.get("selectedSourceCandidate")
+        work_dir_value = context.get("workDir")
+        if not isinstance(row, dict) or candidate is None or not work_dir_value:
+            return
+        rewrite_queue.write_rewrite_request(
+            Path(str(work_dir_value)),
+            function_name=str(row.get("name") or ""),
+            entry=str(row.get("entry") or ""),
+            candidate_source=str(getattr(candidate, "source", "") or ""),
+            mismatch_class=decision.get("mismatchClass"),
+            mismatch_histogram=decision.get("mismatchHistogram"),
+        )
 
     def run_post_match(self, context: dict[str, Any]) -> AttemptResult | None:
         if not self.post_match_plugins:

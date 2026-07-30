@@ -1,6 +1,7 @@
 ---
 title: "feat: LLM-based candidate rewriting (challenger lane, mechanism 3)"
-status: draft
+status: superseded
+superseded_by: docs/plans/2026-07-29-002-feat-subagent-rewrite-and-plugin-install-plan.md
 origin: docs/brainstorms/2026-07-29-llm-candidate-rewriting-requirements.md
 ---
 
