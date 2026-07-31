@@ -251,3 +251,32 @@ coverage. Nothing in the per-function loop matters until they exist.
 - The user's Ghidra project is read-only, always.
 - `readable/` is never claimed as byte-proven.
 - Coverage numbers are reported as measured, never extrapolated.
+
+## 7. Known reader defect: trailing fill in curated names (found 2026-07-31)
+
+213 of 24,060 curated names read from the K1 database (`k1_win_gog_swkotor.exe.gzf`)
+carry trailing garbage after an otherwise-valid ASCII name, e.g.
+`CSWSVirtualMachineCommands::ExecuteCommandActionCloseDoor` followed by a long run
+of `控制`.
+
+Evidence narrowing the cause:
+
+- The garbage is **always the same repeating 6-byte constant**: `e6 8e a7 e5 88 b6`.
+- Across all 213 affected names the non-ASCII character set is exactly `{控, 制}` —
+  nothing else ever appears.
+- The ASCII prefix is always a well-formed name; corruption is purely a suffix.
+- Longest affected value reaches 177 characters, enough to overflow the
+  filesystem's 255-byte path-component limit once an address prefix and suffix
+  are added (this is how it was found — `OSError: [Errno 36]`).
+
+A random over-read would produce varied garbage. A single repeating constant
+means the string length prefix is being read too long and the surplus comes from
+a region filled with a fixed pattern. The defect is therefore in the `.gbf`
+string field length handling (`ghidra_db/fields.py`, `STRING_TYPE` branch) or in
+the chained-buffer assembly feeding it — not in the UTF-8 decode itself.
+
+Mitigated at the emit layer (`source_dump.is_usable_curated_name` rejects
+non-ASCII/oversized names, `safe_file_stem` bounds path components), so output is
+correct today and 99.1% of curated names are unaffected. The reader itself is
+**not** fixed; root-causing it needs byte-level inspection of an affected record,
+which has not been done.

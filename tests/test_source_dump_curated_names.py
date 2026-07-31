@@ -18,9 +18,55 @@ from agentdecompile_recovery.source_dump import (
     apply_curated_renames,
     build_curated_rename_map,
     dump_source_tree,
+    is_usable_curated_name,
+    safe_file_stem,
 )
 
 pytestmark = pytest.mark.unit
+
+
+# -- corrupt-name rejection ----------------------------------------------------
+#
+# Measured on the real K1 database: 271 of 24,060 curated names carry trailing
+# garbage from a bad string read (a valid name followed by repeated CJK bytes).
+# Splicing those into generated C produces un-compilable identifiers, and the
+# longest of them overflowed the filesystem's 255-byte component limit outright.
+
+
+def test_usable_name_accepts_ordinary_cpp_identifiers() -> None:
+    assert is_usable_curated_name("GetObjectTableManager")
+    assert is_usable_curated_name("CServer::CreateModule")
+    assert is_usable_curated_name("~CSWReentrantServerStats")
+    assert is_usable_curated_name("operator!=")
+
+
+def test_usable_name_rejects_non_ascii_corruption() -> None:
+    assert not is_usable_curated_name("CExoArrayList_SetSize控制")
+
+
+def test_usable_name_rejects_absurd_length() -> None:
+    assert not is_usable_curated_name("A" + "控" * 200)
+    assert not is_usable_curated_name("A" * 500)
+
+
+def test_usable_name_rejects_empty_and_digit_initial() -> None:
+    assert not is_usable_curated_name("")
+    assert not is_usable_curated_name("9lives")
+
+
+def test_corrupt_curated_name_is_never_substituted() -> None:
+    rows = [{"entry": "00401060", "name": "sub_1060"}]
+    renames = build_curated_rename_map(rows, {"00401060": "Bad控制"})
+    assert renames == {}
+
+
+def test_safe_file_stem_bounds_length_for_the_filesystem() -> None:
+    stem = safe_file_stem("0053a680_" + "X" * 400)
+    assert len(stem.encode("utf-8")) <= 180
+
+
+def test_safe_file_stem_leaves_ordinary_stems_alone() -> None:
+    assert safe_file_stem("00401060_GetObjectTableManager") == "00401060_GetObjectTableManager"
 
 
 # -- build_curated_rename_map -------------------------------------------------

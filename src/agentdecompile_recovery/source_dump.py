@@ -421,6 +421,43 @@ _GENERATED_NAME_RE = re.compile(
 )
 
 
+# Longest curated name accepted as a C identifier. Real MSVC-mangled C++ names
+# stay well under this; anything longer is corruption, not a name.
+_MAX_CURATED_NAME_LEN = 120
+# Filesystem limit is 255 bytes per component; leave room for the entry prefix
+# and the suffix.
+_MAX_FILE_STEM_LEN = 180
+
+
+def is_usable_curated_name(name: str) -> bool:
+    """Whether a curated name is safe to substitute into emitted C.
+
+    Rejects non-ASCII outright: real C/C++ identifiers and MSVC-mangled names
+    are ASCII, so non-ASCII indicates a corrupt read rather than an exotic
+    name. Measured on the K1 database, 271 of 24,060 curated names carry
+    trailing garbage of this kind (e.g. a valid `CExoArrayList_SetSize`
+    followed by repeated CJK bytes), which would otherwise be spliced into
+    generated source as an un-compilable identifier and, in the worst case,
+    produce a path over the filesystem's 255-byte component limit.
+    """
+
+    if not name or len(name) > _MAX_CURATED_NAME_LEN:
+        return False
+    if not name.isascii() or not name.isprintable():
+        return False
+    return name[0].isalpha() or name[0] in "_~"
+
+
+def safe_file_stem(stem: str) -> str:
+    """Bound a generated filename component so writing it cannot raise ENAMETOOLONG."""
+
+    cleaned = "".join(c for c in stem if c.isprintable() and c not in '/\\\0')
+    if len(cleaned.encode("utf-8")) <= _MAX_FILE_STEM_LEN:
+        return cleaned
+    truncated = cleaned.encode("utf-8")[:_MAX_FILE_STEM_LEN].decode("utf-8", "ignore")
+    return truncated
+
+
 def build_curated_rename_map(
     rows: Iterable[dict[str, Any]],
     curated_names: dict[str, str],
@@ -442,7 +479,7 @@ def build_curated_rename_map(
         if not entry:
             continue
         curated = curated_names.get(entry)
-        if not curated:
+        if not curated or not is_usable_curated_name(curated):
             continue
         current = str(row.get("name") or "").strip()
         if not current or current == curated:
@@ -642,11 +679,11 @@ def dump_source_tree(
         # Per-function verified shard (objdiff 0 full-object only).
         if write_verified and authority == "objdiff-matched":
             verified_count += 1
-            shard = verified_dir / f"{entry}_{row.get('name')}.c"
+            shard = verified_dir / (safe_file_stem(f"{entry}_{row.get('name')}") + ".c")
             pending.add(shard, body)
         elif write_verified and authority == "code-slice-matched":
             code_slice_count += 1
-            shard = verified_dir / "code-slice" / f"{entry}_{row.get('name')}.c"
+            shard = verified_dir / "code-slice" / (safe_file_stem(f"{entry}_{row.get('name')}") + ".c")
             pending.add(shard, body.replace("Authority:", "Authority (code-slice):", 1))
 
     verified_entries = {
@@ -698,7 +735,7 @@ def dump_source_tree(
                 readability_excluded += 1
             else:
                 buckets[(module, stem)].append((row, body))
-        adv_path = advisory_out / f"{entry}_{name}.c"
+        adv_path = advisory_out / (safe_file_stem(f"{entry}_{name}") + ".c")
         pending.add(adv_path, body)
 
     if not write_port:
