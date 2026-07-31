@@ -140,6 +140,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit acquisition-bundle directory (skips rediscovery from target fingerprint).",
     )
     parser.add_argument(
+        "--project",
+        type=Path,
+        help="Existing Ghidra project (.gpr file or .rep directory) to open read-only via ghidra_db for curated names.",
+    )
+    parser.add_argument(
+        "--project-program",
+        help="Program name/path within --project to open when the project holds more than one.",
+    )
+    parser.add_argument(
         "--autonomous",
         action="store_true",
         help="Enable bounded vacuum/repair autonomy after the core recovery stages (advanced).",
@@ -398,8 +407,17 @@ def run_one_shot(args: argparse.Namespace) -> int:
     context_paths = merge_context_paths(getattr(args, "context_positional", None), getattr(args, "context", None))
     args.context = context_paths
 
+    project = getattr(args, "project", None)
+    if project is not None:
+        from .ghidra_context import project_input_error
+
+        problem = project_input_error(project)
+        if problem:
+            print(f"agentdecompile-reconstruct: --project error: {problem}", file=sys.stderr)
+            return 2
+
     acquisition_receipt = None
-    if context_paths:
+    if context_paths or project is not None:
         from .context_pack import materialize_context_seeds, write_placement_summary
 
         acquisition_receipt = acquire_context(
@@ -408,6 +426,8 @@ def run_one_shot(args: argparse.Namespace) -> int:
             out_dir=work_dir / "acquisition",
             preferred_name=args.preferred_name,
             repo_root=repo_root(),
+            project=project,
+            project_program=getattr(args, "project_program", None),
         )
         receipt_path = work_dir / "acquisition" / "acquire.json"
         receipt_path.parent.mkdir(parents=True, exist_ok=True)
