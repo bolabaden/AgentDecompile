@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .match_cache import is_proven_zero
-from .source_cleanup import format_source_text
+from .source_cleanup import clean_source_text, format_source_text
 from .source_export import (
     claim_boundary_for,
     dedupe_best_matches,
@@ -333,7 +333,7 @@ def collect_ghidra(facts: Path | None) -> list[dict[str, Any]]:
     rows = []
     for row in iter_rows(facts):
         if row.get("entityKind") not in {None, "function"} and row.get("kind") not in {None, "function"}:
-            # Accept both agentdecompile and Mizuchi fact shapes.
+            # Accept both agentdecompile and upstream-reference fact shapes.
             if not row.get("decompiled"):
                 continue
         if not row.get("decompiled"):
@@ -425,8 +425,17 @@ def dump_source_tree(
     layers: str | Iterable[str] | None = None,
     profile: str = "binary",
     module_hints: dict[str, dict[str, Any]] | None = None,
+    curated_hints: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Write verified/ + advisory/ghidra/ + Port/CODE + README/MANIFEST/CLAIMS."""
+    """Write verified/ + advisory/ghidra/ + Port/CODE + README/MANIFEST/CLAIMS.
+
+    `curated_hints` is the `{entryHex: {"locals": [...], "plateComment": ...}}`
+    shape from `curated_enrichment.curated_hints_to_json` -- when present for
+    an entry, curated parameter names are substituted for `param_N`-style
+    Ghidra identifiers in that function's emitted body and prototype, and a
+    curated Plate/EOL/Pre comment is added as a header line. Entries with no
+    curated hint are emitted exactly as before.
+    """
 
     from .module_resolver import passes_readability_gate
 
@@ -435,6 +444,7 @@ def dump_source_tree(
     write_port = "port" in selected_layers
     write_advisory = "advisory" in selected_layers
     hints = module_hints or {}
+    curated = curated_hints or {}
 
     matched = collect_matched(summaries)
     ghidra_rows = collect_ghidra(ghidra_facts) if write_advisory else []
@@ -527,15 +537,19 @@ def dump_source_tree(
         module_provenance = str(hint.get("moduleProvenance") or "fallback")
         stem = file_stem_for(kind, authority, rule=str(row.get("rule") or ""))
         styled = style_c_source(source)
-        header = "\n".join(
-            [
-                f"/* {row.get('name')} entry={entry} kind={kind}",
-                f" * Authority: {authority} ({claim_boundary_for(row)}).",
-                f" * ModuleProvenance: {module_provenance}",
-                " */",
-                "",
-            ]
-        )
+        curated_row = curated.get(normalize_entry_hex(entry)) or {}
+        curated_locals = curated_row.get("locals") or []
+        if curated_locals:
+            styled, _ = clean_source_text(styled, {"locals": curated_locals})
+        header_lines = [
+            f"/* {row.get('name')} entry={entry} kind={kind}",
+            f" * Authority: {authority} ({claim_boundary_for(row)}).",
+            f" * ModuleProvenance: {module_provenance}",
+        ]
+        if curated_row.get("plateComment"):
+            header_lines.append(f" * Comment: {curated_row['plateComment']}")
+        header_lines.extend([" */", ""])
+        header = "\n".join(header_lines)
         body = header + styled
         if write_port:
             buckets[(module, stem)].append((row, body))
@@ -568,17 +582,23 @@ def dump_source_tree(
         if module_provenance not in {"fallback", ""} and module != "recovered/unmapped":
             module_resolved_count += 1
         stem = file_stem_for("ghidra", "ghidra-advisory")
-        header = "\n".join(
-            [
-                f"/* {name} entry={entry} bodyBytes={row.get('bodyBytes')}",
-                " * Authority: Ghidra / agentdecompile-cli advisory — NOT objdiff-matched.",
-                f" * Prototype: {row.get('prototype')}",
-                f" * ModuleProvenance: {module_provenance}",
-                " * claimBoundary: readability only.",
-                " */",
-                "",
-            ]
-        )
+        curated_row = curated.get(entry) or {}
+        curated_locals = curated_row.get("locals") or []
+        prototype = row.get("prototype")
+        if curated_locals:
+            decompiled, _ = clean_source_text(decompiled, {"locals": curated_locals})
+            if prototype:
+                prototype, _ = clean_source_text(str(prototype), {"locals": curated_locals})
+        header_lines = [
+            f"/* {name} entry={entry} bodyBytes={row.get('bodyBytes')}",
+            " * Authority: Ghidra / agentdecompile-cli advisory — NOT objdiff-matched.",
+            f" * Prototype: {prototype}",
+            f" * ModuleProvenance: {module_provenance}",
+        ]
+        if curated_row.get("plateComment"):
+            header_lines.append(f" * Comment: {curated_row['plateComment']}")
+        header_lines.extend([" * claimBoundary: readability only.", " */", ""])
+        header = "\n".join(header_lines)
         body = header + decompiled
         if write_port:
             if not passes_readability_gate(
