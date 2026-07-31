@@ -473,6 +473,24 @@ def run_one_shot(args: argparse.Namespace) -> int:
                 )
             )
 
+    if project is not None:
+        from .curated_project import extract_curated_project_data
+
+        curated_receipt = extract_curated_project_data(
+            project=project,
+            work_dir=work_dir,
+            project_program=getattr(args, "project_program", None),
+        )
+        (work_dir / "curated-project-extract.json").write_text(
+            json.dumps(curated_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        if curated_receipt.get("status") != "complete":
+            print(
+                f"agentdecompile-reconstruct: warning: curated project extraction failed "
+                f"(continuing without curated names/hints): {curated_receipt.get('reason')}",
+                file=sys.stderr,
+            )
+
     config = RecoveryConfig(
         input_path=args.input,
         work_dir=work_dir,
@@ -760,6 +778,9 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
             module_hints = dict(payload.get("entries") or {})
         except (OSError, json.JSONDecodeError, TypeError):
             module_hints = {}
+    from .curated_project import load_curated_hints
+
+    curated_hints = load_curated_hints(work_dir)
     manifest = dump_source_tree(
         out_dir=out_dir,
         summaries=unique,
@@ -770,7 +791,13 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         layers=dump_layers,
         profile=profile_slug,
         module_hints=module_hints,
+        curated_hints=curated_hints,
     )
+
+    from .readability_rewrite import rewrite_verified_tree
+
+    readable_receipt = rewrite_verified_tree(out_dir / "verified", out_dir / "readable")
+
     receipt = {
         "schema": "agentdecompile.dump-source.v1",
         "status": manifest.get("status"),
@@ -784,6 +811,8 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         "matchedCount": manifest.get("matchedCount"),
         "codeSliceMatchedCount": manifest.get("codeSliceMatchedCount"),
         "ghidraCount": manifest.get("ghidraCount"),
+        "curatedHintsApplied": len(curated_hints) if curated_hints else 0,
+        "readableRewrite": readable_receipt,
         "claimBoundary": manifest.get("claimBoundary"),
     }
     (work_dir / "dump-source.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")

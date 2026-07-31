@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from agentdecompile_recovery.readability_rewrite import rewrite_source
+from agentdecompile_recovery.readability_rewrite import rewrite_source, rewrite_verified_tree
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # Real captured Ghidra output for sub_108c50_508c50, copied into fixtures/
@@ -360,3 +360,62 @@ def test_real_verified_fixture_typedef_preamble_survives_rewrite() -> None:
             words = line.strip().rstrip(";").split()
             if len(words) >= 3:
                 assert words[-1] != words[-2], f"self-referential typedef: {line!r}"
+
+
+# ---------------------------------------------------------------------------
+# rewrite_verified_tree (U13): distinct readable/ tier, sibling to verified/
+# ---------------------------------------------------------------------------
+
+
+def test_rewrite_verified_tree_skips_cleanly_when_verified_dir_missing(tmp_path: Path) -> None:
+    receipt = rewrite_verified_tree(tmp_path / "verified", tmp_path / "readable")
+
+    assert receipt["status"] == "skipped"
+    assert receipt["reason"] == "no-verified-dir"
+    assert not (tmp_path / "readable").exists()
+
+
+def test_rewrite_verified_tree_skips_cleanly_when_verified_dir_empty(tmp_path: Path) -> None:
+    verified = tmp_path / "verified"
+    verified.mkdir()
+
+    receipt = rewrite_verified_tree(verified, tmp_path / "readable")
+
+    assert receipt["status"] == "skipped"
+    assert receipt["reason"] == "verified-dir-empty"
+    assert not (tmp_path / "readable").exists()
+
+
+def test_rewrite_verified_tree_never_writes_into_verified_dir(tmp_path: Path) -> None:
+    """verified/ is the byte-exact proof tier; readable/ must be a separate sibling."""
+
+    verified = tmp_path / "verified"
+    verified.mkdir()
+    (verified / "sub_1000.c").write_text("undefined4 sub_1000(void) { return 0; }\n", encoding="utf-8")
+    before = (verified / "sub_1000.c").read_text(encoding="utf-8")
+
+    readable = tmp_path / "readable"
+    receipt = rewrite_verified_tree(verified, readable)
+
+    assert receipt["status"] == "complete"
+    assert receipt["fileCount"] == 1
+    # verified/ itself is untouched.
+    assert (verified / "sub_1000.c").read_text(encoding="utf-8") == before
+    # readable/ mirrors the relative path and carries the rewritten content.
+    rewritten = (readable / "sub_1000.c").read_text(encoding="utf-8")
+    assert "uint32_t sub_1000(void)" in rewritten
+    assert rewritten != before
+
+
+def test_rewrite_verified_tree_mirrors_nested_directories(tmp_path: Path) -> None:
+    verified = tmp_path / "verified"
+    (verified / "code-slice").mkdir(parents=True)
+    (verified / "sub_1000.c").write_text("undefined4 sub_1000(void) { return 0; }\n", encoding="utf-8")
+    (verified / "code-slice" / "sub_2000.c").write_text("undefined1 x;\n", encoding="utf-8")
+
+    receipt = rewrite_verified_tree(verified, tmp_path / "readable")
+
+    assert receipt["status"] == "complete"
+    assert receipt["fileCount"] == 2
+    assert (tmp_path / "readable" / "sub_1000.c").is_file()
+    assert (tmp_path / "readable" / "code-slice" / "sub_2000.c").is_file()

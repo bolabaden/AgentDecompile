@@ -14,10 +14,12 @@ import json
 import shutil
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .ghidra_db import ProjectLayoutError, list_programs, open_project_program, resolve_project_root
+from .ghidra_db.program import GhidraProgram
 
 
 def resolve_analyze_headless(configured: Path | None = None) -> Path | None:
@@ -56,6 +58,48 @@ def _is_ghidra_project_path(source: Path) -> bool:
     except ProjectLayoutError:
         return False
     return True
+
+
+@contextmanager
+def resolve_curated_program(
+    *,
+    source: Path,
+    program_name: str | None = None,
+) -> Iterator[GhidraProgram]:
+    """Resolve and open a `.gpr`/`.rep` project's chosen program, read-only.
+
+    Same project-root resolution and multi-program selection as
+    `open_project_names_context` (raises `ValueError` for a bad project path
+    or an ambiguous multi-program project with `program_name` unset) --
+    callers that need direct `GhidraProgram` access, not just the
+    names-only JSONL export that function writes, use this instead of
+    re-deriving the resolution logic.
+    """
+
+    resolved_source = source.expanduser().resolve()
+    try:
+        project_root = resolve_project_root(resolved_source)
+    except ProjectLayoutError as exc:
+        raise ValueError(f"not a Ghidra project: {exc}") from exc
+
+    programs = list_programs(project_root)
+    if not programs:
+        raise ValueError(f"{project_root}: project has no program items")
+
+    chosen_name = program_name
+    if chosen_name is None:
+        if len(programs) > 1:
+            available = ", ".join(entry.project_path for entry in programs)
+            raise ValueError(
+                f"{project_root}: multiple programs in project, pass --project-program to pick one (have: {available})"
+            )
+        chosen_name = programs[0].project_path
+
+    program = open_project_program(project_root, chosen_name)
+    try:
+        yield program
+    finally:
+        program.close()
 
 
 def open_project_names_context(

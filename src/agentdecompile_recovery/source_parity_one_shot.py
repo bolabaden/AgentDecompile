@@ -802,6 +802,7 @@ def stage_enrich_decompile(
     from .ghidra_analysis import resolve_project_name
     from .module_resolver import ModuleResolver
     from .reference_corpus import load_corpus
+    from .curated_project import load_curated_names
     from .pyghidra_enrich import PyGhidraEnrichProgram, build_names_by_entry, run_enrich_pipeline
     from .rtti_recover import RttiClass, rtti_scan_receipt
 
@@ -924,6 +925,7 @@ def stage_enrich_decompile(
             discovered=discovered,
             rtti_classes=rtti_classes,
             corpus=corpus,
+            curated_names=load_curated_names(profile.unpack_dir),
         )
         summary = run_enrich_pipeline(
             boundaries=boundaries,

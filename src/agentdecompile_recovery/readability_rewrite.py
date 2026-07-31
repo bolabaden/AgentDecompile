@@ -78,14 +78,17 @@ ignored.
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 __all__ = [
     "GHIDRA_TYPE_MAP",
     "RewriteStats",
     "rewrite_source",
     "rewrite_file",
+    "rewrite_verified_tree",
 ]
 
 
@@ -351,3 +354,65 @@ def rewrite_file(path: str | Path, *, write: bool = False) -> tuple[str, Rewrite
     if write:
         p.write_text(rewritten, encoding="utf-8")
     return rewritten, stats
+
+
+def rewrite_verified_tree(verified_dir: Path, readable_dir: Path) -> dict[str, Any]:
+    """Write `verified_dir`'s `.c` files into `readable_dir`, rewritten for readability.
+
+    This is a distinct output tier, never an in-place edit of ``verified/``:
+    ``verified/`` is the byte-exact proof tier (objdiff-zero), and
+    ``readable/`` is that same content run through :func:`rewrite_source` for
+    humans. Conflating the two would let a non-proof pass masquerade as
+    proof-tier content, which this project's design explicitly forbids (see
+    ``docs/plans/2026-07-25-readable-recovery-quality.md``, R12-R13).
+
+    Byte-neutral by construction (see module docstring), so this is safe to
+    always run once ``verified/`` exists -- gated on nothing except having
+    something to rewrite. Cleanly no-ops (``status: "skipped"``) when
+    `verified_dir` is missing or has no `.c` files, rather than creating an
+    empty `readable_dir`.
+    """
+
+    if not verified_dir.is_dir():
+        return {
+            "schema": "agentdecompile.readable-rewrite.v1",
+            "status": "skipped",
+            "reason": "no-verified-dir",
+            "fileCount": 0,
+        }
+    c_files = sorted(verified_dir.rglob("*.c"))
+    if not c_files:
+        return {
+            "schema": "agentdecompile.readable-rewrite.v1",
+            "status": "skipped",
+            "reason": "verified-dir-empty",
+            "fileCount": 0,
+        }
+
+    if readable_dir.exists():
+        shutil.rmtree(readable_dir)
+    readable_dir.mkdir(parents=True, exist_ok=True)
+
+    types_replaced = 0
+    artifacts_annotated = 0
+    for path in c_files:
+        rel = path.relative_to(verified_dir)
+        dest = readable_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        rewritten, stats = rewrite_source(path.read_text(encoding="utf-8"))
+        dest.write_text(rewritten, encoding="utf-8")
+        types_replaced += sum(stats.types_replaced.values())
+        artifacts_annotated += len(stats.artifacts_annotated)
+
+    return {
+        "schema": "agentdecompile.readable-rewrite.v1",
+        "status": "complete",
+        "readableDir": str(readable_dir),
+        "fileCount": len(c_files),
+        "typesReplaced": types_replaced,
+        "artifactsAnnotated": artifacts_annotated,
+        "claimBoundary": (
+            "readable/ is a byte-neutral spelling/typing pass over verified/; "
+            "it carries no additional proof beyond verified/'s own objdiff-zero guarantee"
+        ),
+    }
