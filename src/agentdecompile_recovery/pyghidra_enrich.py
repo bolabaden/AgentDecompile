@@ -230,12 +230,18 @@ def build_names_by_entry(
     discovered: list[dict[str, Any]],
     rtti_classes: list[RttiClass] | None = None,
     corpus: ReferenceCorpus | None = None,
+    curated_names: dict[int, str] | None = None,
 ) -> dict[int, tuple[str, str]]:
     """Ranked naming evidence applied before decompile.
 
     Priority (last write wins only within a lower priority; higher wins):
     1. Ghidra non-default symbol names (imports, FLIRT, user labels)
     2. Corpus class methods matched by simple name when RTTI class is present
+    3. Curated names from a real curated Ghidra project database (highest)
+
+    `curated_names` defaults to `None`, in which case this tier is skipped
+    entirely and behavior is identical to before it existed -- callers that
+    do not pass it are unaffected.
     """
 
     names: dict[int, tuple[str, str]] = {}
@@ -249,31 +255,37 @@ def build_names_by_entry(
             continue
         names[entry] = (name, "ghidra-symbol")
 
-    if corpus is None or not rtti_classes:
-        return names
+    if corpus is not None and rtti_classes:
+        class_names = {cls.name for cls in rtti_classes}
+        method_to_qualified: dict[str, str] = {}
+        for class_name, cls in corpus.classes.items():
+            if class_name not in class_names:
+                continue
+            for method in cls.methods:
+                simple = method.split("::")[-1] if "::" in method else method
+                method_to_qualified.setdefault(simple, f"{class_name}::{simple}")
 
-    class_names = {cls.name for cls in rtti_classes}
-    method_to_qualified: dict[str, str] = {}
-    for class_name, cls in corpus.classes.items():
-        if class_name not in class_names:
-            continue
-        for method in cls.methods:
-            simple = method.split("::")[-1] if "::" in method else method
-            method_to_qualified.setdefault(simple, f"{class_name}::{simple}")
+        for row in discovered:
+            try:
+                entry = int(row["entry"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if entry in names:
+                continue
+            name = str(row.get("name") or "").strip()
+            if is_default_ghidra_name(name):
+                continue
+            qualified = method_to_qualified.get(name)
+            if qualified:
+                names[entry] = (qualified, "rtti-corpus")
 
-    for row in discovered:
-        try:
-            entry = int(row["entry"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if entry in names:
-            continue
-        name = str(row.get("name") or "").strip()
-        if is_default_ghidra_name(name):
-            continue
-        qualified = method_to_qualified.get(name)
-        if qualified:
-            names[entry] = (qualified, "rtti-corpus")
+    if curated_names:
+        for entry, name in curated_names.items():
+            text = str(name or "").strip()
+            if is_default_ghidra_name(text):
+                continue
+            names[int(entry)] = (text, "curated-project")
+
     return names
 
 
