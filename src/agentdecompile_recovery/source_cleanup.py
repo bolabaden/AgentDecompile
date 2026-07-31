@@ -68,7 +68,23 @@ def propose_source_cleanup(
     return {**receipt, "receipt": portable_path(receipt_path)}
 
 
-def cleanup_recovered_source_package(*, package_dir: Path, out_dir: Path) -> dict[str, Any]:
+def cleanup_recovered_source_package(
+    *,
+    package_dir: Path,
+    out_dir: Path,
+    curated_hints: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Write a cleaned package, optionally folding in curated parameter names.
+
+    `curated_hints` is the `{entryHex: {"locals": [...], "plateComment": ...}}`
+    shape produced by `curated_enrichment.curated_hints_to_json` -- entries
+    without a matching curated hint (no `entry`/`address` on the function's
+    metadata, or no curated data for that entry) are cleaned exactly as
+    before.
+    """
+
+    from .curated_enrichment import merge_curated_locals_into_fact, normalize_entry_key
+
     manifest_path = package_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     cleaned_package = out_dir
@@ -92,7 +108,12 @@ def cleanup_recovered_source_package(*, package_dir: Path, out_dir: Path) -> dic
             continue
         meta = json.loads(metadata.read_text(encoding="utf-8"))
         cleanup_dir = functions_dir / source.stem
-        cleanup = propose_source_cleanup(source_path=source, out_dir=cleanup_dir, function_fact=meta.get("functionFact") if isinstance(meta.get("functionFact"), dict) else meta)
+        function_fact = meta.get("functionFact") if isinstance(meta.get("functionFact"), dict) else meta
+        if curated_hints:
+            key = normalize_entry_key(meta.get("entry") or meta.get("address") or item.get("entry") or item.get("address"))
+            curated = curated_hints.get(key) if key else None
+            function_fact = merge_curated_locals_into_fact(function_fact, curated)
+        cleanup = propose_source_cleanup(source_path=source, out_dir=cleanup_dir, function_fact=function_fact)
         cleaned_source = Path(str(cleanup["cleanedSource"]))
         cleaned_meta = dict(meta)
         cleaned_meta["source"] = str(cleaned_source)
