@@ -167,15 +167,29 @@ def build_curated_hints(program: GhidraProgram) -> dict[int, CuratedFunctionHint
 def curated_hints_to_json(hints: dict[int, CuratedFunctionHints]) -> dict[str, dict[str, Any]]:
     """Entry-hex-keyed view consumed by `source_dump.dump_source_tree` and
     `source_cleanup.cleanup_recovered_source_package` (`curated_hints=`).
+
+    Keys are built with `normalize_entry_key`, the exact function the lookup
+    call sites use on the other end (`source_dump.normalize_entry_hex` and
+    this module's own `normalize_entry_key` produce identical output for
+    identical input, but are two separately-maintained implementations that
+    could drift). Building both sides from one function removes the
+    possibility of drift entirely, rather than relying on both sides agreeing
+    to zero-pad the same way. A source `entry` was always an int here (from
+    `GhidraProgram.functions()`), so this was never reachable with a
+    non-canonical key -- this closes the gap for any future caller that
+    constructs hints from a differently-typed entry.
     """
 
-    return {
-        f"{entry:08x}": {
+    keyed: dict[str, dict[str, Any]] = {}
+    for entry, hint in hints.items():
+        key = normalize_entry_key(entry)
+        if key is None:
+            continue
+        keyed[key] = {
             "plateComment": hint.header_comment,
             "locals": hint.to_locals_fact(),
         }
-        for entry, hint in hints.items()
-    }
+    return keyed
 
 
 def merge_curated_locals_into_fact(fact: dict[str, Any], curated: dict[str, Any] | None) -> dict[str, Any]:

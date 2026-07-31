@@ -386,6 +386,98 @@ def test_dump_source_tree_unaffected_when_no_curated_hint_for_entry(tmp_path: Pa
     assert "param_1" in text  # left as Ghidra emitted it: no curated data for this entry
 
 
+# -- end-to-end: the matched-rows/objdiff loop has its own, separately-coded --
+# curated lookup (source_dump.py's `for row in matched:` block) from the
+# advisory/ghidra loop tested above -- it must not silently drift out of sync.
+
+
+def test_dump_source_tree_matched_verified_row_gets_curated_param_name(tmp_path: Path) -> None:
+    import json
+
+    entry = "00401000"
+    source_path = tmp_path / "fn.c"
+    source_path.write_text(
+        "void FUN_00401000(int param_1)\n{\n  param_1 = 1;\n}\n", encoding="utf-8"
+    )
+    summary = tmp_path / "summary.jsonl"
+    summary.write_text(
+        json.dumps(
+            {
+                "name": "FUN_00401000",
+                "entry": entry,
+                "status": "matched",
+                "differences": 0,
+                "source": str(source_path),
+                "sourceQuality": "high-level-c",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    curated_hints = {
+        entry: {
+            "plateComment": "Sets the flag.",
+            "locals": [{"name": "flags", "slot": "param_1"}],
+        }
+    }
+
+    dump_source_tree(
+        out_dir=tmp_path / "dump",
+        summaries=[summary],
+        reference_root=tmp_path,
+        curated_hints=curated_hints,
+    )
+
+    verified_files = list((tmp_path / "dump" / "verified").glob("*.c"))
+    assert len(verified_files) == 1
+    text = verified_files[0].read_text(encoding="utf-8")
+
+    assert "Comment: Sets the flag." in text
+    assert "flags" in text
+    assert "param_1" not in text
+
+
+def test_dump_source_tree_matched_verified_row_unaffected_when_no_curated_hint(
+    tmp_path: Path,
+) -> None:
+    import json
+
+    entry = "00402000"
+    source_path = tmp_path / "fn.c"
+    source_path.write_text(
+        "void FUN_00402000(int param_1)\n{\n  param_1 = 1;\n}\n", encoding="utf-8"
+    )
+    summary = tmp_path / "summary.jsonl"
+    summary.write_text(
+        json.dumps(
+            {
+                "name": "FUN_00402000",
+                "entry": entry,
+                "status": "matched",
+                "differences": 0,
+                "source": str(source_path),
+                "sourceQuality": "high-level-c",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    dump_source_tree(
+        out_dir=tmp_path / "dump",
+        summaries=[summary],
+        reference_root=tmp_path,
+        curated_hints={"00401000": {"plateComment": "unrelated", "locals": []}},
+    )
+
+    verified_files = list((tmp_path / "dump" / "verified").glob("*.c"))
+    assert len(verified_files) == 1
+    text = verified_files[0].read_text(encoding="utf-8")
+
+    assert "Comment:" not in text
+    assert "param_1" in text  # left as-is: no curated data for this entry
+
+
 # -- integration: real curated Odyssey database -------------------------------
 
 
