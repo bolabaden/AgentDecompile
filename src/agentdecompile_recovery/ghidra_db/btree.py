@@ -26,7 +26,7 @@ record's length is derived from the *previous* record's offset.
 from __future__ import annotations
 
 import struct
-from typing import Iterator
+from typing import Any, Iterator
 
 from .buffer_file import BufferFile, BufferFileError
 from .chained_buffer import read_chained_buffer
@@ -62,6 +62,17 @@ _VAR_ENTRY_SIZE = 13
 # db.FixedRecNode
 _FIXED_ENTRY_BASE = RECORD_LEAF_HEADER_SIZE
 
+# db.VarKeyNode / db.VarKeyRecordNode / db.VarKeyInteriorNode
+VARKEY_KEY_TYPE_OFFSET = NODE_HEADER_SIZE
+VARKEY_COUNT_OFFSET = VARKEY_KEY_TYPE_OFFSET + 1
+VARKEY_NODE_HEADER_SIZE = NODE_HEADER_SIZE + 1 + 4
+_VARKEY_PREV_LEAF_OFFSET = VARKEY_NODE_HEADER_SIZE
+_VARKEY_NEXT_LEAF_OFFSET = _VARKEY_PREV_LEAF_OFFSET + 4
+_VARKEY_REC_HEADER_SIZE = VARKEY_NODE_HEADER_SIZE + 8
+_VARKEY_REC_ENTRY_SIZE = 5
+_VARKEY_INTERIOR_BASE = VARKEY_NODE_HEADER_SIZE
+_VARKEY_INTERIOR_ENTRY_SIZE = 8
+
 _MAX_DEPTH = 64
 _MAX_LEAVES = 1 << 22
 
@@ -77,7 +88,17 @@ def node_type(node: bytes) -> int:
 
 
 def key_count(node: bytes) -> int:
-    (count,) = struct.unpack_from(">i", node, KEY_COUNT_OFFSET)
+    """Number of entries in a node.
+
+    The count sits at a different offset for var-key nodes: they carry a
+    key-type byte at offset 1, pushing the count to offset 2. Reading the
+    long-key position on a var-key node yields a huge bogus count and a scan
+    that walks off into arbitrary bytes.
+    """
+
+    kind = node_type(node)
+    offset = VARKEY_COUNT_OFFSET if kind in (VARKEY_INTERIOR_NODE, VARKEY_REC_NODE) else KEY_COUNT_OFFSET
+    (count,) = struct.unpack_from(">i", node, offset)
     return count
 
 
@@ -105,16 +126,21 @@ def _leftmost_leaf(buffer_file: BufferFile, root_id: int) -> tuple[int, bytes]:
         kind = node_type(node)
         if kind in (LONGKEY_VAR_REC_NODE, LONGKEY_FIXED_REC_NODE):
             return current_id, node
+        if kind == VARKEY_REC_NODE:
+            return current_id, node
         if kind == LONGKEY_INTERIOR_NODE:
             if key_count(node) <= 0:
                 raise BTreeError(f"interior node {current_id} declares no children")
             (child_id,) = struct.unpack_from(">i", node, _INTERIOR_BASE + 8)
             current_id = child_id
             continue
-        if kind in (VARKEY_INTERIOR_NODE, VARKEY_REC_NODE, FIXEDKEY_INTERIOR_NODE,
-                    FIXEDKEY_VAR_REC_NODE, FIXEDKEY_FIXED_REC_NODE):
+        if kind == VARKEY_INTERIOR_NODE:
+            (child_id,) = struct.unpack_from(">i", node, _VARKEY_INTERIOR_BASE + 4)
+            current_id = child_id
+            continue
+        if kind in (FIXEDKEY_INTERIOR_NODE, FIXEDKEY_VAR_REC_NODE, FIXEDKEY_FIXED_REC_NODE):
             raise BTreeError(
-                f"node {current_id} has type {kind}; only long-key nodes (0-2) are supported"
+                f"node {current_id} has type {kind}; fixed-key nodes (5-7) are not supported"
             )
         raise BTreeError(f"node {current_id} has unrecognized type {kind}")
     raise BTreeError(f"b-tree deeper than {_MAX_DEPTH}; refusing to descend further")
@@ -159,9 +185,42 @@ def _iter_fixed_rec_leaf(node: bytes, record_length: int) -> Iterator[tuple[int,
         yield key, node[entry + 8 : entry + 8 + record_length]
 
 
+def _iter_var_key_leaf(
+    buffer_file: BufferFile, node: bytes, key_type: int
+) -> Iterator[tuple[Any, bytes]]:
+    """Yield `(key, record_bytes)` from a variable-key leaf.
+
+    Key and record share one blob at `keyOffset`, packed backwards from the end
+    of the buffer, so the key must be decoded first to find where the record
+    starts.
+    """
+
+    from .fields import decode_field
+
+    count = key_count(node)
+    previous_offset = len(node)
+    for index in range(count):
+        entry = _VARKEY_REC_HEADER_SIZE + index * _VARKEY_REC_ENTRY_SIZE
+        (key_offset,) = struct.unpack_from(">i", node, entry)
+        indirect = node[entry + 4]
+        if key_offset < 0 or key_offset > len(node):
+            raise BTreeError(f"var-key offset {key_offset} outside node")
+
+        key, after_key = decode_field(node, key_offset, key_type)
+        if indirect:
+            (chained_id,) = struct.unpack_from(">i", node, after_key)
+            yield key, read_chained_buffer(buffer_file, chained_id)
+        else:
+            end = previous_offset
+            if end < after_key:
+                raise BTreeError("var-key entries are not monotonically decreasing")
+            yield key, node[after_key:end]
+        previous_offset = key_offset
+
+
 def iter_table_records(
     buffer_file: BufferFile, root_buffer_id: int, schema: Schema
-) -> Iterator[tuple[int, bytes]]:
+) -> Iterator[tuple[Any, bytes]]:
     """Yield every `(key, record_bytes)` in a table, in key order.
 
     An empty table is signalled by `root_buffer_id == -1` and yields nothing.
@@ -193,10 +252,17 @@ def iter_table_records(
             if record_length is None:
                 record_length = fixed_record_length(schema)
             yield from _iter_fixed_rec_leaf(node, record_length)
+        elif kind == VARKEY_REC_NODE:
+            # Key type is stored in the node itself rather than taken from the
+            # schema: legacy databases can disagree with the declared key type.
+            yield from _iter_var_key_leaf(buffer_file, node, node[1])
         else:
-            raise BTreeError(f"expected a long-key leaf node, found type {kind}")
+            raise BTreeError(f"expected a record leaf node, found type {kind}")
 
-        (next_leaf,) = struct.unpack_from(">i", node, NEXT_LEAF_ID_OFFSET)
+        next_offset = (
+            _VARKEY_NEXT_LEAF_OFFSET if kind == VARKEY_REC_NODE else NEXT_LEAF_ID_OFFSET
+        )
+        (next_leaf,) = struct.unpack_from(">i", node, next_offset)
         if next_leaf < 0:
             return
         try:

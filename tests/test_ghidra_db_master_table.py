@@ -94,7 +94,11 @@ def test_empty_table_yields_nothing() -> None:
 
 
 def test_unsupported_node_type_is_refused(tmp_path: Path) -> None:
-    """Var-key and fixed-key nodes raise rather than being misread as long-key."""
+    """Fixed-key nodes raise rather than being misread as long-key.
+
+    Long-key (0-2) and var-key (3-4) nodes are supported; fixed-key (5-7) are
+    not, and must fail loudly since a misread node decodes without error.
+    """
 
     import struct
 
@@ -110,12 +114,12 @@ def test_unsupported_node_type_is_refused(tmp_path: Path) -> None:
     struct.pack_into(">i", header, 28, 0)
     body = bytearray(block)
     struct.pack_into(">i", body, 1, 0)
-    body[BUFFER_PREFIX_SIZE] = 4  # VARKEY_REC_NODE
+    body[BUFFER_PREFIX_SIZE] = 6  # FIXEDKEY_VAR_REC_NODE
     path = tmp_path / "db.1.gbf"
     path.write_bytes(bytes(header) + bytes(body))
 
     with BufferFile(path) as bf:
-        with pytest.raises(BTreeError, match="only long-key nodes"):
+        with pytest.raises(BTreeError, match="fixed-key nodes"):
             list(iter_table_records(bf, 0, MASTER_TABLE_SCHEMA))
 
 
