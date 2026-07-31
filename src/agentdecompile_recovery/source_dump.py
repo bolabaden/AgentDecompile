@@ -413,6 +413,62 @@ def parse_dump_layers(raw: str | Iterable[str] | None) -> set[str]:
     return selected or allowed
 
 
+# Ghidra's generated function spellings: `FUN_00401060`, `sub_1060`, and the
+# `range_.textU_1000` shape the inventory emits for unclaimed ranges. Only
+# these are eligible for curated renaming.
+_GENERATED_NAME_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:FUN_[0-9a-fA-F]+|sub_[0-9a-fA-F]+|range_[.\w]*)(?![A-Za-z0-9_])"
+)
+
+
+def build_curated_rename_map(
+    rows: Iterable[dict[str, Any]],
+    curated_names: dict[str, str],
+) -> dict[str, str]:
+    """`{generatedName: curatedName}` for rows whose entry has a curated name.
+
+    Keyed by the row's *current* name rather than by address, so call-site
+    substitution needs no knowledge of the image base: the generated
+    spellings (`sub_1060`, `FUN_00401060`) are relative to it, the curated map
+    is absolute, and the rows themselves are the only place both are already
+    joined. Only default-shaped generated names are remapped -- a row that
+    already carries a real name is left alone, so this never overwrites better
+    naming evidence that an earlier enrich stage established.
+    """
+
+    renames: dict[str, str] = {}
+    for row in rows:
+        entry = normalize_entry_hex(row.get("entryOffset") or row.get("entry") or 0)
+        if not entry:
+            continue
+        curated = curated_names.get(entry)
+        if not curated:
+            continue
+        current = str(row.get("name") or "").strip()
+        if not current or current == curated:
+            continue
+        if not _GENERATED_NAME_RE.fullmatch(current):
+            continue
+        renames[current] = curated
+    return renames
+
+
+def apply_curated_renames(text: str, renames: dict[str, str]) -> str:
+    """Substitute generated function names with curated ones, on word boundaries.
+
+    Matches the generated *token shape* once and resolves each hit through
+    `renames`, rather than compiling an alternation of every known name. On a
+    real target that alternation is ~7,700 branches applied across ~12,700
+    bodies, which is quadratic enough to stall the dump outright; this form is
+    a single linear pass per body regardless of how many names are curated.
+    """
+
+    if not renames or not text:
+        return text
+
+    return _GENERATED_NAME_RE.sub(lambda m: renames.get(m.group(0), m.group(0)), text)
+
+
 def dump_source_tree(
     *,
     out_dir: Path,
@@ -426,6 +482,7 @@ def dump_source_tree(
     profile: str = "binary",
     module_hints: dict[str, dict[str, Any]] | None = None,
     curated_hints: dict[str, dict[str, Any]] | None = None,
+    curated_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Write verified/ + advisory/ghidra/ + Port/CODE + README/MANIFEST/CLAIMS.
 
@@ -435,6 +492,17 @@ def dump_source_tree(
     Ghidra identifiers in that function's emitted body and prototype, and a
     curated Plate/EOL/Pre comment is added as a header line. Entries with no
     curated hint are emitted exactly as before.
+
+    `curated_names` is `{entryHex: functionName}` (the on-disk form of
+    `GhidraProgram.names_by_entry()`). It renames functions *at emit time*,
+    which the enrich-stage naming tier
+    (`pyghidra_enrich.build_names_by_entry`) cannot do for an already-built
+    facts file: that tier only runs during a full pyghidra re-analysis, so a
+    dump over existing facts would otherwise keep the generated
+    `sub_1060`/`FUN_00401060` spellings even when the curated project knows
+    the real name. Renaming here also rewrites *call sites*, because the
+    old->new mapping is applied to every emitted body -- which is what turns
+    a call graph of `sub_12abe0(...)` into `CreateServer(...)`.
     """
 
     from .module_resolver import passes_readability_gate
@@ -445,6 +513,7 @@ def dump_source_tree(
     write_advisory = "advisory" in selected_layers
     hints = module_hints or {}
     curated = curated_hints or {}
+    curated_name_map = curated_names or {}
 
     matched = collect_matched(summaries)
     ghidra_rows = collect_ghidra(ghidra_facts) if write_advisory else []
@@ -489,6 +558,15 @@ def dump_source_tree(
         row = {**row, "entry": entry, "entryOffset": entry}
         deduped_ghidra[entry] = row
     ghidra_rows = list(deduped_ghidra.values())
+
+    # One rename map over every row in the dump, so a call site in function A
+    # resolves to a curated name even when the callee B lives in the other
+    # collection (matched vs advisory).
+    curated_renames = (
+        build_curated_rename_map([*matched, *ghidra_rows], curated_name_map)
+        if curated_name_map
+        else {}
+    )
 
     # Build into a sibling temp dir and swap on success, so a mid-build crash
     # never destroys the previous good dump (destroy-before-write hazard).
@@ -537,6 +615,13 @@ def dump_source_tree(
         module_provenance = str(hint.get("moduleProvenance") or "fallback")
         stem = file_stem_for(kind, authority, rule=str(row.get("rule") or ""))
         styled = style_c_source(source)
+        if curated_renames:
+            styled = apply_curated_renames(styled, curated_renames)
+            renamed = curated_renames.get(str(row.get("name") or ""))
+            if renamed:
+                # Rebind a copy so the header, the verified/ shard filename, and
+                # the Port/CODE manifest all agree on the curated spelling.
+                row = {**row, "name": renamed}
         curated_row = curated.get(normalize_entry_hex(entry)) or {}
         curated_locals = curated_row.get("locals") or []
         if curated_locals:
@@ -577,6 +662,10 @@ def dump_source_tree(
         module = str(hint.get("module") or module_for_entry(entry, "ghidra", profile=profile))
         module_provenance = str(hint.get("moduleProvenance") or "fallback")
         name = str(row.get("name") or f"FUN_{entry}")
+        if curated_renames:
+            # Rename this function, then rewrite every call site in its body.
+            name = curated_renames.get(name, name)
+            decompiled = apply_curated_renames(decompiled, curated_renames)
         if not str(name).startswith("FUN_"):
             named_count += 1
         if module_provenance not in {"fallback", ""} and module != "recovered/unmapped":
@@ -585,6 +674,8 @@ def dump_source_tree(
         curated_row = curated.get(entry) or {}
         curated_locals = curated_row.get("locals") or []
         prototype = row.get("prototype")
+        if curated_renames and prototype:
+            prototype = apply_curated_renames(str(prototype), curated_renames)
         if curated_locals:
             decompiled, _ = clean_source_text(decompiled, {"locals": curated_locals})
             if prototype:

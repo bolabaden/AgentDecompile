@@ -195,11 +195,43 @@ The honest headline: **the primary goal (readable, in its entirety) is fully
 achievable; the secondary goal (byte-exact source) is achievable for roughly a
 third of the binary.** That aligns with the stated priority ordering.
 
+## 4a. Hard blocker found 2026-07-31: there is no compiler
+
+Verified on this machine:
+
+```
+/run/media/brunner56/MyBook/Toolchains/msvc8.0-main
+  -> broken symbolic link to
+     /run/media/brunner56/MyBook/MizuchiSource/toolchains/msvc8.0-main   (does not exist)
+```
+
+A `find` for `cl.exe` across the entire workspace drive returns nothing. `wine`
+is installed; the MSVC toolchain it used to run is gone.
+
+Consequences, stated plainly:
+
+- **The objdiff parity gate cannot execute at all.** Every compile attempt fails
+  before it reaches objdiff.
+- **Restarting the parity pipeline in this state would produce exactly zero new
+  verified functions**, at full compute cost. Not "few" — zero, deterministically.
+- **Layer A (CRT calibration) is itself blocked**, because calibration is
+  fundamentally a compile-and-compare procedure.
+- The 6 existing verified functions date from a session when the toolchain was
+  mounted; they are not reproducible today.
+
+This reorders the gap analysis: acquiring an MSVC toolchain is item **#0**, a
+hard prerequisite for every parity-related item below. Nothing in Layers A–D can
+be built, tested, or measured without it.
+
+The readability track (Layer E, the *primary* objective) needs no compiler and
+is unaffected.
+
 ## 5. Gap analysis — what to build, in order
 
 | # | Work | Layer | Status |
 |---|---|---|---|
-| 1 | CRT calibration harness → identify compiler + flags | A | **Not built. Highest leverage.** |
+| 0 | **Acquire an MSVC toolchain** | — | **BLOCKER. Nothing parity-related runs without it.** |
+| 1 | CRT calibration harness → identify compiler + flags | A | Not built. Highest leverage *once #0 lands*. |
 | 2 | Struct-layout validator (`offsetof` vs access sites) | B | Not built |
 | 3 | Escalation path: per-function failure → global work item | D | **Not built. Largest waste today.** |
 | 4 | objdiff difference *classifier* (gradient, not boolean) | D | Not built |

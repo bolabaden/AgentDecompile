@@ -107,6 +107,22 @@ def load_curated_names(work_dir: Path) -> dict[int, str] | None:
     return names or None
 
 
+def load_curated_names_by_entry_hex(work_dir: Path) -> dict[str, str] | None:
+    """`{entryHex8: name}` for `source_dump.dump_source_tree(curated_names=...)`.
+
+    Keys are zero-padded to 8 hex digits via `int`, which is load-bearing: the
+    file stores `hex(entry)` (`"0x401060"`) while facts rows carry
+    `"00401060"`. `source_dump.normalize_entry_hex` strips the `0x` and returns
+    `"401060"` unchanged (it is already valid hex), so keying off the raw
+    string would miss every lookup silently.
+    """
+
+    names = load_curated_names(work_dir)
+    if not names:
+        return None
+    return {f"{entry:08x}": name for entry, name in names.items()}
+
+
 def load_curated_hints(work_dir: Path) -> dict[str, dict[str, Any]] | None:
     """Load `curated-hints.json` from `work_dir` if present and valid, else `None`."""
 
@@ -128,4 +144,5 @@ __all__ = [
     "extract_curated_project_data",
     "load_curated_hints",
     "load_curated_names",
+    "load_curated_names_by_entry_hex",
 ]

@@ -778,9 +778,10 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
             module_hints = dict(payload.get("entries") or {})
         except (OSError, json.JSONDecodeError, TypeError):
             module_hints = {}
-    from .curated_project import load_curated_hints
+    from .curated_project import load_curated_hints, load_curated_names_by_entry_hex
 
     curated_hints = load_curated_hints(work_dir)
+    curated_names = load_curated_names_by_entry_hex(work_dir)
     manifest = dump_source_tree(
         out_dir=out_dir,
         summaries=unique,
@@ -792,6 +793,7 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         profile=profile_slug,
         module_hints=module_hints,
         curated_hints=curated_hints,
+        curated_names=curated_names,
     )
 
     from .readability_rewrite import rewrite_verified_tree
@@ -812,6 +814,7 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         "codeSliceMatchedCount": manifest.get("codeSliceMatchedCount"),
         "ghidraCount": manifest.get("ghidraCount"),
         "curatedHintsApplied": len(curated_hints) if curated_hints else 0,
+        "curatedNamesAvailable": len(curated_names) if curated_names else 0,
         "readableRewrite": readable_receipt,
         "claimBoundary": manifest.get("claimBoundary"),
     }
