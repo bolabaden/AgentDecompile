@@ -28,5 +28,63 @@ module cites the specific class it mirrors.
 from __future__ import annotations
 
 from .buffer_file import BufferFile, BufferFileError, BufferFileHeader
+from .packed import (
+    PackedFileError,
+    PackedItemHeader,
+    extract_database,
+    is_packed_file,
+    open_packed_database,
+    read_packed_header,
+)
+from .program import (
+    CommentSet,
+    CompositeDataType,
+    Function,
+    GhidraProgram,
+    GhidraProgramError,
+    LocalVariable,
+    MemoryBlock,
+    ProgramMetadata,
+    Symbol,
+    SymbolType,
+    open_program,
+)
+from .project import (
+    ProgramEntry,
+    ProjectLayoutError,
+    find_program,
+    iter_program_entries,
+    list_programs,
+    open_project_program,
+    resolve_project_root,
+)
 
-__all__ = ["BufferFile", "BufferFileError", "BufferFileHeader"]
+__all__ = [
+    "BufferFile",
+    "BufferFileError",
+    "BufferFileHeader",
+    "CommentSet",
+    "CompositeDataType",
+    "Function",
+    "GhidraProgram",
+    "GhidraProgramError",
+    "LocalVariable",
+    "MemoryBlock",
+    "PackedFileError",
+    "PackedItemHeader",
+    "ProgramEntry",
+    "ProgramMetadata",
+    "ProjectLayoutError",
+    "Symbol",
+    "SymbolType",
+    "extract_database",
+    "find_program",
+    "is_packed_file",
+    "iter_program_entries",
+    "list_programs",
+    "open_packed_database",
+    "open_program",
+    "open_project_program",
+    "read_packed_header",
+    "resolve_project_root",
+]
