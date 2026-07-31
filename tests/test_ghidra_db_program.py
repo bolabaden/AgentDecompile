@@ -39,7 +39,7 @@ import pytest
 
 from agentdecompile_recovery.ghidra_db.address_map import TYPE_EXTERNAL, TYPE_RELOCATABLE
 from agentdecompile_recovery.ghidra_db.buffer_file import BufferFileError
-from agentdecompile_recovery.ghidra_db.packed import open_packed_database
+from agentdecompile_recovery.ghidra_db.packed import extract_database
 from agentdecompile_recovery.ghidra_db.program import (
     COMMENT_KINDS,
     CommentSet,
@@ -97,9 +97,7 @@ def k1(tmp_path_factory: pytest.TempPathFactory) -> Iterator[GhidraProgram]:
     if not K1_GZF.is_file():
         pytest.skip("k1 packed .gzf fixture unavailable")
     workdir = tmp_path_factory.mktemp("k1-gzf")
-    with open_packed_database(K1_GZF, workdir=workdir):
-        pass
-    extracted = workdir / f"{K1_GZF.stem}.gbf"
+    extracted = extract_database(K1_GZF, workdir / f"{K1_GZF.stem}.gbf")
     with open_program(extracted) as program:
         yield program
 
@@ -526,7 +524,7 @@ def test_k1_function_count_excludes_externals_by_default(k1: GhidraProgram) -> N
 @_needs_k1_gzf
 def test_k1_externals_are_available_but_carry_no_address(k1: GhidraProgram) -> None:
     functions = list(k1.functions(include_external=True))
-    externals = [function for function in functions if function.entry is None]
+    externals = [function for function in functions if function.is_external]
 
     assert len(functions) == K1_FUNCTION_DATA_ROWS
     assert len(externals) == K1_EXTERNAL_FUNCTIONS
@@ -534,10 +532,19 @@ def test_k1_externals_are_available_but_carry_no_address(k1: GhidraProgram) -> N
 
 @_needs_k1_gzf
 def test_k1_curated_function_names_join_to_known_addresses(k1: GhidraProgram) -> None:
+    """Cardinality/range alone would pass a systematic mis-join (e.g. an
+    off-by-one row-shift between Function Data and Symbols) undetected -- pin
+    specific address/name pairs, matching the rigor of the Odyssey sibling
+    test above."""
+
     names = k1.names_by_entry()
 
     assert len(names) == K1_CURATED_NAMES
     assert all(entry >= K1_IMAGE_BASE for entry in names)
+    assert names[0x00401060] == "GetObjectTableManager"
+    assert names[0x00401080] == "DoSaveGameScreenShot"
+    assert names[0x00401160] == "CAppManager"
+    assert names[0x00401280] == "DestroyServer"
 
 
 @_needs_k1_gzf
