@@ -175,6 +175,31 @@ _BITFIELD_EXPLANATION = (
     "value); left unrewritten -- see readability_rewrite.py."
 )
 
+# Matches the target-name identifier of a simple scalar/pointer typedef
+# declaration, e.g. `typedef unsigned char undefined;` or `typedef void
+# *HANDLE;` -- the Ghidra type-header preamble present in effectively every
+# real recovered file consists entirely of this shape. Deliberately narrow:
+# it does not attempt function-pointer or array typedefs (`typedef int
+# code();`), since none of GHIDRA_TYPE_MAP's keys collide with a target name
+# in that shape in this corpus, and a narrow miss here only means a rarer
+# typedef form doesn't get the exclusion, not that a wrong one is excluded.
+#
+# Why this exists: without it, `typedef unsigned char undefined;` rewrites to
+# `typedef unsigned char unsigned char;` -- the substitution can't tell "the
+# name being defined" from "a use of the type" by token text alone, since
+# both are spelled identically. This is a hard C compile failure, not a
+# cosmetic issue, and it was caught only by running the pass against a real
+# file carrying this preamble (the pass's own test fixtures were bare
+# function bodies without it).
+_TYPEDEF_TARGET_RE = re.compile(r"\btypedef\b[^;{}]*?\b([A-Za-z_]\w*)\s*;")
+
+
+def _typedef_target_spans(source: str) -> set[tuple[int, int]]:
+    """Character spans of typedef target-name identifiers to never substitute."""
+
+    return {match.span(1) for match in _TYPEDEF_TARGET_RE.finditer(source)}
+
+
 _COMMENT_TAG = "U11"
 
 
@@ -216,6 +241,7 @@ def rewrite_source(source: str) -> tuple[str, RewriteStats]:
     """
 
     stats = RewriteStats()
+    typedef_target_spans = _typedef_target_spans(source)
     pieces: list[str] = []
     # line index (0-based) -> list of comments to append at end of that line
     pending_comments: dict[int, list[str]] = {}
@@ -240,7 +266,7 @@ def rewrite_source(source: str) -> tuple[str, RewriteStats]:
             pieces.append(text)
             continue
 
-        if text in GHIDRA_TYPE_MAP:
+        if text in GHIDRA_TYPE_MAP and match.span() not in typedef_target_spans:
             replacement = GHIDRA_TYPE_MAP[text]
             pieces.append(replacement)
             stats.types_replaced[text] = stats.types_replaced.get(text, 0) + 1

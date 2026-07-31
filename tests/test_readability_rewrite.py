@@ -277,3 +277,86 @@ def test_real_corpus_function_measured_drop():
     assert stats.comments_added >= len(in_identifiers)
     assert "undefined4" in stats.types_replaced
     assert "undefined1" in stats.types_replaced
+
+
+# -- typedef preamble regression (found in review, reproduced against a real
+# verified/*.c fixture) --------------------------------------------------
+#
+# Every real recovered file carries a Ghidra type-header preamble
+# (`typedef unsigned char undefined;`, `typedef unsigned int uint;`, ...)
+# before any function body. A blanket token substitution that doesn't
+# distinguish "the name being defined" from "a use of the type" rewrites the
+# preamble's own declarations into themselves: `typedef unsigned char
+# undefined;` becomes `typedef unsigned char unsigned char;`, a hard C
+# compile failure. This was missed by every other test in this file because
+# none of their fixtures included the preamble.
+
+_GHIDRA_TYPEDEF_PREAMBLE = """\
+typedef unsigned char byte;
+typedef unsigned char undefined;
+typedef unsigned char undefined1;
+typedef unsigned short undefined2;
+typedef unsigned int undefined4;
+typedef unsigned long long undefined8;
+typedef unsigned int uint;
+typedef unsigned long ulong;
+typedef unsigned short ushort;
+typedef unsigned char bool;
+typedef int code();
+
+"""
+
+
+def test_typedef_preamble_declarations_are_never_rewritten() -> None:
+    rewritten, _stats = rewrite_source(_GHIDRA_TYPEDEF_PREAMBLE)
+
+    assert rewritten == _GHIDRA_TYPEDEF_PREAMBLE
+    assert "unsigned char unsigned char" not in rewritten
+    assert "uint32_t uint32_t" not in rewritten
+
+
+def test_typedef_target_name_is_preserved_while_usages_are_still_rewritten() -> None:
+    """The exclusion must be narrow: only the declaration's own target name is
+    spared -- every real *use* of that type elsewhere still gets rewritten,
+    otherwise the fix would silently disable the whole feature."""
+
+    source = (
+        "typedef unsigned int undefined4;\n"
+        "undefined4 sub_1000(undefined4 param_1)\n"
+        "{\n"
+        "  undefined4 local_4;\n"
+        "  local_4 = param_1;\n"
+        "  return local_4;\n"
+        "}\n"
+    )
+
+    rewritten, stats = rewrite_source(source)
+
+    assert "typedef unsigned int undefined4;" in rewritten
+    assert "uint32_t sub_1000(uint32_t param_1)" in rewritten
+    assert "uint32_t local_4;" in rewritten
+    assert stats.types_replaced["undefined4"] == 3
+
+
+def test_real_verified_fixture_typedef_preamble_survives_rewrite() -> None:
+    """End-to-end reproduction of the exact bug found in review, against the
+    exact real file that exposed it."""
+
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "target/agentdecompile-reconstruct/swkotor-parity/verified/sub_15a0_4015a0.c"
+    )
+    if not fixture.is_file():
+        pytest.skip("real verified/*.c fixture unavailable")
+
+    source = fixture.read_text()
+    rewritten, _stats = rewrite_source(source)
+
+    assert "typedef unsigned char unsigned char;" not in rewritten
+    for line in rewritten.splitlines():
+        if line.strip().startswith("typedef "):
+            # A valid typedef line never has its base type and its own new
+            # name spelled identically.
+            words = line.strip().rstrip(";").split()
+            if len(words) >= 3:
+                assert words[-1] != words[-2], f"self-referential typedef: {line!r}"
