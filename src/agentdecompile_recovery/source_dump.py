@@ -647,7 +647,26 @@ def dump_source_tree(
     pending = PendingWrites()
     source_texts = prefetch_matched_sources(matched)
 
-    buckets: dict[tuple[str, str], list[tuple[dict[str, Any], str]]] = defaultdict(list)
+    def manifest_authority(row: dict[str, Any], fallback: str) -> str:
+        """Authority recorded in MANIFEST.json for a written unit.
+
+        Mirrors the demotions the Port/CODE bucket loop used to apply, so
+        counting every written unit (rather than only the Port-bucketed ones)
+        can never inflate a proof tier.
+        """
+
+        authority = authority_label(row) if row.get("status") else fallback
+        if row.get("decompiled") and not is_exportable_match(row):
+            authority = "ghidra-advisory"
+        return authority
+
+    # One record per unit actually written to disk, created at the point of
+    # write. Port/CODE membership is recorded separately as `portSource`, so
+    # the counters describe the dump rather than the Port tier.
+    unit_records: list[dict[str, Any]] = []
+    buckets: dict[tuple[str, str], list[tuple[dict[str, Any], str, dict[str, Any]]]] = defaultdict(
+        list
+    )
     rejected_emitters = 0
     verified_count = 0
     code_slice_count = 0
@@ -691,18 +710,39 @@ def dump_source_tree(
         header_lines.extend([" */", ""])
         header = "\n".join(header_lines)
         body = header + styled
-        if write_port:
-            buckets[(module, stem)].append((row, body))
 
         # Per-function verified shard (objdiff 0 full-object only).
+        shard_rel: Path | None = None
         if write_verified and authority == "objdiff-matched":
             verified_count += 1
-            shard = verified_dir / (safe_file_stem(f"{entry}_{row.get('name')}") + ".c")
-            pending.add(shard, body)
+            shard_rel = Path("verified") / (safe_file_stem(f"{entry}_{row.get('name')}") + ".c")
+            pending.add(build_dir / shard_rel, body)
         elif write_verified and authority == "code-slice-matched":
             code_slice_count += 1
-            shard = verified_dir / "code-slice" / (safe_file_stem(f"{entry}_{row.get('name')}") + ".c")
-            pending.add(shard, body.replace("Authority:", "Authority (code-slice):", 1))
+            shard_rel = (
+                Path("verified")
+                / "code-slice"
+                / (safe_file_stem(f"{entry}_{row.get('name')}") + ".c")
+            )
+            pending.add(
+                build_dir / shard_rel,
+                body.replace("Authority:", "Authority (code-slice):", 1),
+            )
+
+        if shard_rel is not None or write_port:
+            record: dict[str, Any] = {
+                "name": str(row.get("name")),
+                "entry": entry or f"{int(row.get('entryOffset') or 0):08x}",
+                "module": module,
+                "source": str(shard_rel) if shard_rel is not None else "",
+                "portSource": None,
+                "authority": manifest_authority(row, authority),
+                "kind": row.get("kind") or row.get("rule") or row.get("tool"),
+                "sourceQuality": row.get("sourceQuality"),
+            }
+            unit_records.append(record)
+            if write_port:
+                buckets[(module, stem)].append((row, body, record))
 
     verified_entries = {
         normalize_entry_hex(m.get("entry")) for m in matched if is_proven_zero(m)
@@ -746,53 +786,53 @@ def dump_source_tree(
         header_lines.extend([" * claimBoundary: readability only.", " */", ""])
         header = "\n".join(header_lines)
         body = header + decompiled
+        adv_rel = Path("advisory") / "ghidra" / (safe_file_stem(f"{entry}_{name}") + ".c")
+        pending.add(build_dir / adv_rel, body)
+        record = {
+            "name": name,
+            "entry": entry,
+            "module": module,
+            "source": str(adv_rel),
+            "portSource": None,
+            "authority": manifest_authority(row, "ghidra-advisory"),
+            "kind": row.get("kind") or row.get("rule") or row.get("tool"),
+            "sourceQuality": row.get("sourceQuality"),
+        }
+        unit_records.append(record)
         if write_port:
             if not passes_readability_gate(
                 name=name, module=module, module_provenance=module_provenance
             ):
                 readability_excluded += 1
             else:
-                buckets[(module, stem)].append((row, body))
-        adv_path = advisory_out / (safe_file_stem(f"{entry}_{name}") + ".c")
-        pending.add(adv_path, body)
+                buckets[(module, stem)].append(({**row, "name": name}, body, record))
 
     if not write_port:
         buckets.clear()
 
-    manifest_functions: list[dict[str, Any]] = []
-    written_files: list[str] = []
+    manifest_functions: list[dict[str, Any]] = unit_records
+    port_files: list[str] = []
     for (module, stem), items in sorted(buckets.items()):
         cpp_rel = Path(module) / f"{stem}.cpp"
         hdr_name = f"{stem}.h"
         hdr_rel = Path(module) / "include" / hdr_name
+        # Dump-root-relative spellings, so MANIFEST paths from every tier can be
+        # joined against `outDir` the same way.
+        cpp_root_rel = Path("Port") / "CODE" / cpp_rel
+        hdr_root_rel = Path("Port") / "CODE" / hdr_rel
         prototypes: list[str] = []
         bodies: list[str] = []
-        for row, body in items:
+        for _row, body, record in items:
             bodies.append(body.rstrip() + "\n")
             proto = prototype_from_source(body)
             if proto:
                 prototypes.append(proto)
-            name = str(row.get("name"))
-            entry = str(row.get("entry") or f"{int(row.get('entryOffset') or 0):08x}")
-            authority = authority_label(row) if row.get("status") else "ghidra-advisory"
-            if row.get("decompiled") and not is_exportable_match(row):
-                authority = "ghidra-advisory"
-            manifest_functions.append(
-                {
-                    "name": name,
-                    "entry": entry,
-                    "module": module,
-                    "source": str(cpp_rel),
-                    "authority": authority,
-                    "kind": row.get("kind") or row.get("rule") or row.get("tool"),
-                    "sourceQuality": row.get("sourceQuality"),
-                }
-            )
-        authorities = {
-            mf["authority"]
-            for mf in manifest_functions
-            if mf["module"] == module and Path(mf["source"]).stem == stem
-        }
+            record["portSource"] = str(cpp_root_rel)
+            if not record["source"]:
+                # No verified/advisory shard was written for this unit, so the
+                # Port module is the only file that carries it.
+                record["source"] = str(cpp_root_rel)
+        authorities = {record["authority"] for _row, _body, record in items}
         has_verified = bool(authorities & {"objdiff-matched", "code-slice-matched"})
         has_advisory = "ghidra-advisory" in authorities
         banner = [
@@ -812,7 +852,12 @@ def dump_source_tree(
             code / cpp_rel,
             render_cpp_module(banner, bodies, f"include/{hdr_name}"),
         )
-        written_files.extend([str(cpp_rel), str(hdr_rel)])
+        port_files.extend([str(cpp_root_rel), str(hdr_root_rel)])
+
+    # Every file this dump wrote that carries a function body, dump-root-relative.
+    written_files: list[str] = sorted(
+        {str(r["source"]) for r in unit_records if r["source"]} | set(port_files)
+    )
 
     ref = reference_root
     ghidra_count = sum(1 for f in manifest_functions if f["authority"] == "ghidra-advisory")
@@ -836,6 +881,7 @@ def dump_source_tree(
                 f"- Full-object matched: {matched_count}",
                 f"- Code-slice matched: {slice_count}",
                 f"- Ghidra advisory: {ghidra_count}",
+                f"- Advisory units held out of Port/CODE by the readability gate: {readability_excluded}",
                 f"- Rejected byte-emitters: {rejected_emitters}",
                 f"- Reference tree: `{ref}`",
                 "",
@@ -910,7 +956,10 @@ def dump_source_tree(
             "objdiff-matched units are full-object verified C. "
             "code-slice-matched units reproduce the target function code slice at objdiff zero. "
             "Ghidra units are advisory. This is not whole-program rebuild parity. "
-            "Readability metrics (namedCount / moduleResolvedCount) are advisory and do not inflate proof."
+            "Readability metrics (namedCount / moduleResolvedCount) are advisory and do not inflate proof. "
+            "functions[] / files[] enumerate every unit and file this dump wrote, across all "
+            "enabled layers; functions[].portSource is null for units that were not also "
+            "emitted into Port/CODE. Counting a unit here asserts nothing beyond its own authority."
         ),
     }
     pending.add(
