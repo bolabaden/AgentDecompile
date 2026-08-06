@@ -4,7 +4,7 @@
 pyghidra>=1.0.0
 
 # MCP SDK for proper client communication
-mcp>=1.0.0
+mcp>=1.28.1
 httpx>=0.27.0
 httpx-sse>=0.4.0
 
