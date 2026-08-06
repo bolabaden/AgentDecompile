@@ -223,6 +223,44 @@ This reorders the gap analysis: acquiring an MSVC toolchain is item **#0**, a
 hard prerequisite for every parity-related item below. Nothing in Layers A–D can
 be built, tested, or measured without it.
 
+### 4a.1 Partly resolved 2026-08-05: a compiler exists again, but not the right one
+
+`MizuchiSource` was not moved, it was removed — `AgentDecompileSource` beside it
+is itself a symlink to the same missing path, so both dangle. The old toolchain
+is not recoverable from this disk.
+
+A working compiler has been installed in its place, from Microsoft's own
+Visual Studio distribution channel via `msvc-wine`:
+
+```
+/run/media/brunner56/MyBook/Toolchains/msvc-modern/bin/x86/cl
+  -> Microsoft (R) C/C++ Optimizing Compiler Version 19.51.36252 for x86
+```
+
+Verified by compiling a real translation unit to a valid object file under wine,
+not merely by the binary existing.
+
+**This does not resolve item #0, and must not be treated as though it does.**
+swkotor.exe was built in 2003 with MSVC 7.1/8.0-era codegen. Version 19.51 is
+roughly two decades of optimiser changes later; it will not reproduce the
+original instruction selection, register allocation, or inlining decisions.
+Byte-parity matching against this binary needs the *era-correct* compiler, which
+Microsoft no longer distributes through any official channel.
+
+So the state is:
+
+- **Unblocked:** compilation, syntax and semantic verification, the packaged
+  source sweep, and anything else that needs *a* compiler rather than *the*
+  compiler. `--semantic-sweep-compiler msvc` now has a real backend.
+- **Still blocked:** objdiff byte-parity and Layer A CRT calibration. Both
+  compare against 2003 codegen, so a modern compiler cannot satisfy them.
+
+Deliberately **not** done: pointing `Toolchains/msvc8.0-main` at this install.
+Several scripts default `VC_ROOT` to that path, so aliasing it would let a
+modern compiler silently answer questions posed about MSVC 8.0 and turn every
+downstream parity claim into a false one. The new toolchain is kept under its
+own name, and callers must opt into it explicitly via `--msvc-root`/`VC_ROOT`.
+
 The readability track (Layer E, the *primary* objective) needs no compiler and
 is unaffected.
 
