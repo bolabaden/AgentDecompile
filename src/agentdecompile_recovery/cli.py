@@ -12,6 +12,11 @@ from .acquisition_mcp import main as acquisition_mcp_main
 from .claim_report import build_claim_report, write_claim_report
 from .context_batch import main as context_batch_main
 from .context_export import ExportConfig, export_context
+
+# Module-level on purpose: tests monkeypatch `cli.project_input_error` to prove
+# run_acquire never validates a project that was not asked for. A function-local
+# import (frontdoor.py's pattern) would bypass the patch.
+from .ghidra_context import project_input_error
 from .package_sweep import sweep_recovered_source_package
 from .package_verify import verify_recovered_source_package
 from .pipeline import RecoveryConfig, RecoveryRunner
@@ -50,6 +55,17 @@ def build_parser() -> argparse.ArgumentParser:
     acquire.add_argument("--out-dir", type=Path, required=True, help="Directory for acquisition receipts and bundles.")
     acquire.add_argument("--preferred-name")
     acquire.add_argument("--no-register", action="store_true", help="Do not write the fingerprint registry entry.")
+    # Help text matches agentdecompile-reconstruct's flags verbatim so the two
+    # entrypoints document the same thing.
+    acquire.add_argument(
+        "--project",
+        type=Path,
+        help="Existing Ghidra project (.gpr file or .rep directory) to open read-only via ghidra_db for curated names.",
+    )
+    acquire.add_argument(
+        "--project-program",
+        help="Program name/path within --project to open when the project holds more than one.",
+    )
 
     claim = sub.add_parser("claim-report", help="Emit an honest claim summary for a reconstruct/recover work directory.")
     claim.add_argument("work_dir", type=Path, help="Run directory containing verified/, advisory/, and/or reports.")
@@ -761,12 +777,25 @@ def parse_clang_profiles(values: list[str]) -> list[list[str]]:
 
 def run_acquire(args: argparse.Namespace) -> int:
     context_paths = list(args.context or [])
+
+    # Pre-flight only when --project was actually given: a bad path must fail as
+    # one stderr line, not a traceback out of the Ghidra layer. The project is
+    # opened read-only downstream; nothing here writes to it.
+    project = getattr(args, "project", None)
+    if project is not None:
+        problem = project_input_error(project)
+        if problem:
+            print(f"agentdecompile-recovery: --project error: {problem}", file=sys.stderr)
+            return 2
+
     receipt = acquire_context(
         target_input=args.input,
         context_paths=context_paths,
         out_dir=args.out_dir,
         preferred_name=args.preferred_name,
         repo_root=Path.cwd(),
+        project=project,
+        project_program=getattr(args, "project_program", None),
         register=not args.no_register,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))
