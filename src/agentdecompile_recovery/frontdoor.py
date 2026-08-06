@@ -796,9 +796,14 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         curated_names=curated_names,
     )
 
-    from .readability_rewrite import rewrite_verified_tree
+    from .readability_rewrite import rewrite_advisory_tree, rewrite_verified_tree
 
     readable_receipt = rewrite_verified_tree(out_dir / "verified", out_dir / "readable")
+    # Separate tier, separate directory, separate claimBoundary. The advisory
+    # tier is where ~all of the output actually lives, and it is not parity.
+    readable_advisory_receipt = rewrite_advisory_tree(
+        out_dir / "advisory" / "ghidra", out_dir / "readable-advisory"
+    )
 
     receipt = {
         "schema": "agentdecompile.dump-source.v1",
@@ -816,6 +821,7 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         "curatedHintsApplied": len(curated_hints) if curated_hints else 0,
         "curatedNamesAvailable": len(curated_names) if curated_names else 0,
         "readableRewrite": readable_receipt,
+        "readableAdvisoryRewrite": readable_advisory_receipt,
         "claimBoundary": manifest.get("claimBoundary"),
     }
     (work_dir / "dump-source.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")

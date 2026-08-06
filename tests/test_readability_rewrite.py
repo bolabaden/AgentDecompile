@@ -13,7 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from agentdecompile_recovery.readability_rewrite import rewrite_source, rewrite_verified_tree
+from agentdecompile_recovery.readability_rewrite import (
+    rewrite_advisory_tree,
+    rewrite_source,
+    rewrite_verified_tree,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # Real captured Ghidra output for sub_108c50_508c50, copied into fixtures/
@@ -419,3 +423,153 @@ def test_rewrite_verified_tree_mirrors_nested_directories(tmp_path: Path) -> Non
     assert receipt["fileCount"] == 2
     assert (tmp_path / "readable" / "sub_1000.c").is_file()
     assert (tmp_path / "readable" / "code-slice" / "sub_2000.c").is_file()
+
+
+# ---------------------------------------------------------------------------
+# rewrite_advisory_tree: same byte-neutral pass, strictly separate claim
+# ---------------------------------------------------------------------------
+
+# The banner source_dump writes at the head of every advisory/ghidra/*.c file.
+ADVISORY_BANNER = (
+    "/* FUN_00401060 entry=00401060 bodyBytes=64\n"
+    " * Authority: Ghidra / agentdecompile-cli advisory — NOT objdiff-matched.\n"
+    " * Prototype: undefined4 FUN_00401060(void)\n"
+    " * ModuleProvenance: fallback\n"
+    " * claimBoundary: readability only.\n"
+    " */\n"
+)
+ADVISORY_BODY = ADVISORY_BANNER + "undefined4 FUN_00401060(void)\n{\n  uint uVar3;\n  return 0;\n}\n"
+
+
+def _advisory_tree(root: Path) -> Path:
+    advisory = root / "advisory" / "ghidra"
+    advisory.mkdir(parents=True)
+    (advisory / "00401060_FUN_00401060.c").write_text(ADVISORY_BODY, encoding="utf-8")
+    return advisory
+
+
+def test_rewrite_advisory_tree_skips_cleanly_when_advisory_dir_missing(tmp_path: Path) -> None:
+    receipt = rewrite_advisory_tree(tmp_path / "advisory", tmp_path / "readable-advisory")
+
+    assert receipt["status"] == "skipped"
+    assert receipt["reason"] == "no-advisory-dir"
+    assert not (tmp_path / "readable-advisory").exists()
+
+
+def test_rewrite_advisory_tree_skips_cleanly_when_advisory_dir_empty(tmp_path: Path) -> None:
+    advisory = tmp_path / "advisory"
+    advisory.mkdir()
+
+    receipt = rewrite_advisory_tree(advisory, tmp_path / "readable-advisory")
+
+    assert receipt["status"] == "skipped"
+    assert receipt["reason"] == "advisory-dir-empty"
+    assert not (tmp_path / "readable-advisory").exists()
+
+
+def test_rewrite_advisory_tree_never_writes_into_advisory_dir(tmp_path: Path) -> None:
+    """advisory/ghidra/ is the raw Ghidra output; the readable tier is a sibling."""
+
+    advisory = _advisory_tree(tmp_path)
+    before = (advisory / "00401060_FUN_00401060.c").read_text(encoding="utf-8")
+
+    dest = tmp_path / "readable-advisory"
+    receipt = rewrite_advisory_tree(advisory, dest)
+
+    assert receipt["status"] == "complete"
+    assert receipt["fileCount"] == 1
+    assert (advisory / "00401060_FUN_00401060.c").read_text(encoding="utf-8") == before
+    rewritten = (dest / "00401060_FUN_00401060.c").read_text(encoding="utf-8")
+    assert "uint32_t FUN_00401060(void)" in rewritten
+    assert rewritten != before
+
+
+def test_rewrite_advisory_tree_preserves_the_not_objdiff_matched_banner(tmp_path: Path) -> None:
+    """The strongest guard against advisory output reading as verified output.
+
+    The banner is a block comment, and rewrite_source passes non-identifier
+    token groups through verbatim -- so it must survive byte-for-byte. If a
+    future change to the tokenizer breaks that, advisory files would silently
+    lose the only per-file statement that they are not parity.
+    """
+
+    advisory = _advisory_tree(tmp_path)
+    dest = tmp_path / "readable-advisory"
+    rewrite_advisory_tree(advisory, dest)
+
+    rewritten = (dest / "00401060_FUN_00401060.c").read_text(encoding="utf-8")
+    assert ADVISORY_BANNER in rewritten
+    assert "NOT objdiff-matched" in rewritten
+    assert "claimBoundary: readability only." in rewritten
+    # The banner's own `undefined4` prototype text is inside a comment and must
+    # not have been retyped either.
+    assert " * Prototype: undefined4 FUN_00401060(void)" in rewritten
+
+
+def test_rewrite_advisory_tree_claim_is_distinct_from_the_verified_claim(tmp_path: Path) -> None:
+    """Advisory output must never carry verified/'s objdiff-zero receipt string."""
+
+    advisory = _advisory_tree(tmp_path)
+    advisory_receipt = rewrite_advisory_tree(advisory, tmp_path / "readable-advisory")
+
+    verified = tmp_path / "verified"
+    verified.mkdir()
+    (verified / "sub_1000.c").write_text("undefined4 sub_1000(void) { return 0; }\n", encoding="utf-8")
+    verified_receipt = rewrite_verified_tree(verified, tmp_path / "readable")
+
+    assert advisory_receipt["schema"] == "agentdecompile.readable-advisory-rewrite.v1"
+    assert verified_receipt["schema"] == "agentdecompile.readable-rewrite.v1"
+    assert advisory_receipt["schema"] != verified_receipt["schema"]
+    assert advisory_receipt["claimBoundary"] != verified_receipt["claimBoundary"]
+    assert "objdiff-zero" not in advisory_receipt["claimBoundary"]
+    assert "NOT objdiff-matched" in advisory_receipt["claimBoundary"]
+    # readable/ is reserved for the verified tier.
+    assert "readable-advisory" in advisory_receipt["readableDir"]
+    assert not (tmp_path / "readable" / "00401060_FUN_00401060.c").exists()
+
+
+def test_rewrite_advisory_tree_is_parallel_safe_over_many_files(tmp_path: Path) -> None:
+    """The real tree is ~12,700 files and runs through a thread pool."""
+
+    advisory = tmp_path / "advisory" / "ghidra"
+    (advisory / "nested").mkdir(parents=True)
+    for i in range(64):
+        parent = advisory / "nested" if i % 2 else advisory
+        (parent / f"fn_{i:04d}.c").write_text(
+            ADVISORY_BANNER + f"undefined4 fn_{i:04d}(void)\n{{\n  return 0;\n}}\n",
+            encoding="utf-8",
+        )
+
+    dest = tmp_path / "readable-advisory"
+    receipt = rewrite_advisory_tree(advisory, dest, workers=8)
+
+    assert receipt["status"] == "complete"
+    assert receipt["fileCount"] == 64
+    assert len(list(dest.rglob("*.c"))) == 64
+    for path in dest.rglob("*.c"):
+        text = path.read_text(encoding="utf-8")
+        assert "NOT objdiff-matched" in text
+        assert "uint32_t fn_" in text
+
+
+def test_rewrite_advisory_tree_does_not_rename_locals_or_labels(tmp_path: Path) -> None:
+    """Honest scope: this pass retypes and annotates. It does not rename."""
+
+    advisory = tmp_path / "advisory" / "ghidra"
+    advisory.mkdir(parents=True)
+    (advisory / "fn.c").write_text(
+        "undefined4 fn(void)\n{\n  uint uVar3;\n  int local_38;\n"
+        "  goto LAB_00401234;\nLAB_00401234:\n  return uVar3;\n}\n",
+        encoding="utf-8",
+    )
+
+    rewrite_advisory_tree(advisory, tmp_path / "readable-advisory")
+    text = (tmp_path / "readable-advisory" / "fn.c").read_text(encoding="utf-8")
+
+    # Retyped:
+    assert "uint32_t fn(void)" in text
+    assert "uint32_t uVar3;" in text
+    # NOT renamed -- documented out of scope, asserted so nobody claims otherwise.
+    assert "uVar3" in text
+    assert "local_38" in text
+    assert "LAB_00401234" in text

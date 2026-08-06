@@ -18,12 +18,20 @@ This module rewrites raw Ghidra decompiler output into more readable C
 
 CRITICAL SAFETY CONSTRAINT -- READ BEFORE CALLING THIS FROM A PIPELINE
 ------------------------------------------------------------------------
-This pass is only meaningful to run on source that has *already* been
-verified byte-identical (objdiff-zero) against the target binary. It must
-never be capable of changing program semantics -- only surface spelling and
-typing of identifiers/types, plus comment insertion.
+This pass must never be capable of changing program semantics -- only surface
+spelling and typing of identifiers/types, plus comment insertion. Because it is
+byte-neutral by construction, it is safe to run over *any* tier.
 
-To enforce that structurally:
+That is exactly why it also confers nothing. **Each output tier inherits
+precisely the claim of its input tier and no more.** ``verified/`` ->
+``readable/`` carries verified/'s objdiff-zero guarantee; ``advisory/ghidra/``
+-> ``readable-advisory/`` carries advisory's total absence of one. The two must
+never share an output directory or a receipt string: see
+:func:`rewrite_verified_tree` and :func:`rewrite_advisory_tree`, which take
+their ``schema``/``claimBoundary`` separately for this reason. Readability is
+never parity and is never counted as parity.
+
+To enforce byte-neutrality structurally:
 
     * The rewrite walks the source through :func:`_tokenize`, which
       classifies every span of the input as exactly one of: a block comment,
@@ -79,9 +87,12 @@ from __future__ import annotations
 
 import re
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .verify_pool import resolve_workers
 
 __all__ = [
     "GHIDRA_TYPE_MAP",
@@ -89,6 +100,7 @@ __all__ = [
     "rewrite_source",
     "rewrite_file",
     "rewrite_verified_tree",
+    "rewrite_advisory_tree",
 ]
 
 
@@ -356,63 +368,123 @@ def rewrite_file(path: str | Path, *, write: bool = False) -> tuple[str, Rewrite
     return rewritten, stats
 
 
-def rewrite_verified_tree(verified_dir: Path, readable_dir: Path) -> dict[str, Any]:
-    """Write `verified_dir`'s `.c` files into `readable_dir`, rewritten for readability.
+def _rewrite_tree(
+    src_dir: Path,
+    dest_dir: Path,
+    *,
+    schema: str,
+    claim_boundary: str,
+    missing_reason: str,
+    empty_reason: str,
+    workers: int | None = None,
+) -> dict[str, Any]:
+    """Mirror `src_dir`'s `.c` files into `dest_dir`, rewritten for readability.
 
-    This is a distinct output tier, never an in-place edit of ``verified/``:
-    ``verified/`` is the byte-exact proof tier (objdiff-zero), and
-    ``readable/`` is that same content run through :func:`rewrite_source` for
-    humans. Conflating the two would let a non-proof pass masquerade as
-    proof-tier content, which this project's design explicitly forbids (see
-    ``docs/plans/2026-07-25-readable-recovery-quality.md``, R12-R13).
+    Always a distinct output tier, never an in-place edit of the input: the
+    input tier keeps whatever claim it already had, and the output tier
+    inherits exactly that claim and no more. `schema` and `claim_boundary` are
+    supplied by the caller precisely so two tiers can never share a receipt
+    string (see :func:`rewrite_verified_tree` vs
+    :func:`rewrite_advisory_tree`).
 
-    Byte-neutral by construction (see module docstring), so this is safe to
-    always run once ``verified/`` exists -- gated on nothing except having
-    something to rewrite. Cleanly no-ops (``status: "skipped"``) when
-    `verified_dir` is missing or has no `.c` files, rather than creating an
-    empty `readable_dir`.
+    Cleanly no-ops (``status: "skipped"``) when `src_dir` is missing or has no
+    `.c` files, rather than creating an empty `dest_dir`.
     """
 
-    if not verified_dir.is_dir():
-        return {
-            "schema": "agentdecompile.readable-rewrite.v1",
-            "status": "skipped",
-            "reason": "no-verified-dir",
-            "fileCount": 0,
-        }
-    c_files = sorted(verified_dir.rglob("*.c"))
+    if not src_dir.is_dir():
+        return {"schema": schema, "status": "skipped", "reason": missing_reason, "fileCount": 0}
+    c_files = sorted(src_dir.rglob("*.c"))
     if not c_files:
-        return {
-            "schema": "agentdecompile.readable-rewrite.v1",
-            "status": "skipped",
-            "reason": "verified-dir-empty",
-            "fileCount": 0,
-        }
+        return {"schema": schema, "status": "skipped", "reason": empty_reason, "fileCount": 0}
 
-    if readable_dir.exists():
-        shutil.rmtree(readable_dir)
-    readable_dir.mkdir(parents=True, exist_ok=True)
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    # Create every destination directory up front so the worker threads only
+    # read/rewrite/write -- mkdir races are the one shared-state hazard here.
+    for parent in sorted({(dest_dir / p.relative_to(src_dir)).parent for p in c_files}):
+        parent.mkdir(parents=True, exist_ok=True)
 
-    types_replaced = 0
-    artifacts_annotated = 0
-    for path in c_files:
-        rel = path.relative_to(verified_dir)
-        dest = readable_dir / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
+    def _one(path: Path) -> tuple[int, int]:
+        dest = dest_dir / path.relative_to(src_dir)
         rewritten, stats = rewrite_source(path.read_text(encoding="utf-8"))
         dest.write_text(rewritten, encoding="utf-8")
-        types_replaced += sum(stats.types_replaced.values())
-        artifacts_annotated += len(stats.artifacts_annotated)
+        return sum(stats.types_replaced.values()), len(stats.artifacts_annotated)
+
+    # 12,746 advisory files through a serial read/regex/write loop is minutes of
+    # wall clock; mirror source_dump.PendingWrites.flush's bounded pool.
+    count = resolve_workers(workers)
+    if count == 1 or len(c_files) == 1:
+        results = [_one(p) for p in c_files]
+    else:
+        with ThreadPoolExecutor(max_workers=count) as pool:
+            results = list(pool.map(_one, c_files))
 
     return {
-        "schema": "agentdecompile.readable-rewrite.v1",
+        "schema": schema,
         "status": "complete",
-        "readableDir": str(readable_dir),
+        "readableDir": str(dest_dir),
         "fileCount": len(c_files),
-        "typesReplaced": types_replaced,
-        "artifactsAnnotated": artifacts_annotated,
-        "claimBoundary": (
+        "typesReplaced": sum(r[0] for r in results),
+        "artifactsAnnotated": sum(r[1] for r in results),
+        "claimBoundary": claim_boundary,
+    }
+
+
+def rewrite_verified_tree(
+    verified_dir: Path, readable_dir: Path, *, workers: int | None = None
+) -> dict[str, Any]:
+    """Write `verified_dir`'s `.c` files into `readable_dir`, rewritten for readability.
+
+    ``verified/`` is the byte-exact proof tier (objdiff-zero) and ``readable/``
+    is that same content run through :func:`rewrite_source` for humans.
+    Conflating the two would let a non-proof pass masquerade as proof-tier
+    content, which this project's design explicitly forbids (see
+    ``docs/plans/2026-07-25-readable-recovery-quality.md``, R12-R13).
+
+    ``readable/`` is reserved for the verified tier. Advisory content must go
+    through :func:`rewrite_advisory_tree` into its own directory.
+    """
+
+    return _rewrite_tree(
+        verified_dir,
+        readable_dir,
+        schema="agentdecompile.readable-rewrite.v1",
+        claim_boundary=(
             "readable/ is a byte-neutral spelling/typing pass over verified/; "
             "it carries no additional proof beyond verified/'s own objdiff-zero guarantee"
         ),
-    }
+        missing_reason="no-verified-dir",
+        empty_reason="verified-dir-empty",
+        workers=workers,
+    )
+
+
+def rewrite_advisory_tree(
+    advisory_dir: Path, readable_advisory_dir: Path, *, workers: int | None = None
+) -> dict[str, Any]:
+    """Same pass over the advisory tier, into its own separately-named directory.
+
+    Advisory C is **not** objdiff-matched. This pass is byte-neutral, so it
+    adds no proof whatsoever -- the output is exactly as advisory as the input.
+    The per-file ``Authority: ... NOT objdiff-matched`` banner that
+    ``source_dump`` writes is a block comment and passes through
+    :func:`rewrite_source` verbatim, which is what keeps the output
+    self-labelling; ``tests/test_readability_rewrite.py`` asserts that.
+
+    Never write this into ``readable/`` -- that name is the verified tier's.
+    """
+
+    return _rewrite_tree(
+        advisory_dir,
+        readable_advisory_dir,
+        schema="agentdecompile.readable-advisory-rewrite.v1",
+        claim_boundary=(
+            "readable-advisory/ is a byte-neutral spelling/typing pass over advisory/ghidra/; "
+            "advisory content is NOT objdiff-matched and this pass adds no proof. "
+            "It is not the verified tier and must never be read as parity."
+        ),
+        missing_reason="no-advisory-dir",
+        empty_reason="advisory-dir-empty",
+        workers=workers,
+    )
