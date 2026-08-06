@@ -255,6 +255,17 @@ So the state is:
 - **Still blocked:** objdiff byte-parity and Layer A CRT calibration. Both
   compare against 2003 codegen, so a modern compiler cannot satisfy them.
 
+One integration gap remains, and it is a layout mismatch rather than a missing
+piece. `package_verify` and the profile probe both assume `<msvc-root>/bin/cl.exe`
+is a Windows PE and invoke it as `wine <that path>`. In an msvc-wine install,
+`bin/x86/cl.exe` is a symlink to a bash wrapper that sources `msvcenv.sh` from
+its own directory, so it works when run directly but not when reached through a
+symlinked `bin/`, which rewrites `dirname $0` and mangles the derived paths.
+Wiring this up means teaching the compiler-invocation layer that a root may be
+wrapper-based, not adding another symlink — an attempt at the symlink shim
+produced a root that resolved to a nonexistent path, and it was removed rather
+than left in place looking configured.
+
 Deliberately **not** done: pointing `Toolchains/msvc8.0-main` at this install.
 Several scripts default `VC_ROOT` to that path, so aliasing it would let a
 modern compiler silently answer questions posed about MSVC 8.0 and turn every
