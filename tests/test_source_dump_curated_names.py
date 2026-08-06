@@ -20,17 +20,59 @@ from agentdecompile_recovery.source_dump import (
     dump_source_tree,
     is_usable_curated_name,
     safe_file_stem,
+    sanitize_curated_name,
 )
 
 pytestmark = pytest.mark.unit
 
 
-# -- corrupt-name rejection ----------------------------------------------------
+# -- trailing-suffix recovery --------------------------------------------------
 #
-# Measured on the real K1 database: 271 of 24,060 curated names carry trailing
-# garbage from a bad string read (a valid name followed by repeated CJK bytes).
-# Splicing those into generated C produces un-compilable identifiers, and the
-# longest of them overflowed the filesystem's 255-byte component limit outright.
+# Measured on the real K1 database: 213 of 24,060 curated names are a valid
+# ASCII identifier followed by repetitions of a CJK suffix. The record's
+# declared string length matches the decoded byte length in all 213 cases, so
+# the suffix is genuinely stored upstream rather than mis-read here. Splicing it
+# into generated C would produce an un-compilable identifier, and the longest
+# overflowed the filesystem's 255-byte component limit -- but the ASCII prefix
+# is good, so it is recovered rather than discarded.
+
+
+def test_sanitize_strips_trailing_cjk_suffix() -> None:
+    assert sanitize_curated_name("CExoArrayList_SetSize控制") == "CExoArrayList_SetSize"
+
+
+def test_sanitize_strips_repeated_suffixes() -> None:
+    assert sanitize_curated_name("CExoResMan::GetResObject" + "控制" * 60) == (
+        "CExoResMan::GetResObject"
+    )
+
+
+def test_sanitize_leaves_clean_names_untouched() -> None:
+    assert sanitize_curated_name("GetObjectTableManager") == "GetObjectTableManager"
+
+
+def test_sanitize_removes_an_interior_marker() -> None:
+    """Three real names carry the marker before a suffix rather than at the end;
+    trimming only the tail would leave them unusable."""
+
+    assert sanitize_curated_name("CSWSVirtualMachineCommands::ExecuteCommand控制_MainGate") == (
+        "CSWSVirtualMachineCommands::ExecuteCommand_MainGate"
+    )
+
+
+def test_recovered_name_is_substituted() -> None:
+    rows = [{"entry": "00401060", "name": "sub_1060"}]
+    renames = build_curated_rename_map(rows, {"00401060": "CExoArrayList_SetSize控制"})
+    assert renames == {"sub_1060": "CExoArrayList_SetSize"}
+
+
+def test_decorated_msvc_names_are_still_refused() -> None:
+    """Not every rejected name is corrupt. These two are genuine MSVC decorated
+    names from the K1 project, but neither is a legal C identifier, so they must
+    not be spliced into emitted source."""
+
+    for name in ("@__security_check_cookie@4", "`eh_vector_destructor_iterator'"):
+        assert not is_usable_curated_name(sanitize_curated_name(name))
 
 
 def test_usable_name_accepts_ordinary_cpp_identifiers() -> None:
@@ -54,9 +96,9 @@ def test_usable_name_rejects_empty_and_digit_initial() -> None:
     assert not is_usable_curated_name("9lives")
 
 
-def test_corrupt_curated_name_is_never_substituted() -> None:
+def test_name_that_cannot_be_an_identifier_is_never_substituted() -> None:
     rows = [{"entry": "00401060", "name": "sub_1060"}]
-    renames = build_curated_rename_map(rows, {"00401060": "Bad控制"})
+    renames = build_curated_rename_map(rows, {"00401060": "@__security_check_cookie@4"})
     assert renames == {}
 
 

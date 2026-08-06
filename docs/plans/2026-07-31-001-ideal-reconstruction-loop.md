@@ -252,31 +252,38 @@ coverage. Nothing in the per-function loop matters until they exist.
 - `readable/` is never claimed as byte-proven.
 - Coverage numbers are reported as measured, never extrapolated.
 
-## 7. Known reader defect: trailing fill in curated names (found 2026-07-31)
+## 7. Trailing suffixes in curated names: an upstream data defect, not a reader bug
+
+*(found 2026-07-31; root-caused 2026-08-05, initial diagnosis was wrong)*
 
 213 of 24,060 curated names read from the K1 database (`k1_win_gog_swkotor.exe.gzf`)
-carry trailing garbage after an otherwise-valid ASCII name, e.g.
-`CSWSVirtualMachineCommands::ExecuteCommandActionCloseDoor` followed by a long run
-of `控制`.
+carry a trailing run of `控制` after an otherwise-valid ASCII name, e.g.
+`CSWSVirtualMachineCommands::ExecuteCommandActionCloseDoor`.
 
-Evidence narrowing the cause:
+This was **initially recorded here as a `.gbf` string-reader defect**, on the
+reasoning that a single repeating 6-byte constant (`e6 8e a7 e5 88 b6`) looks like
+a length prefix read too long, with the surplus coming from a pattern-filled
+region. Byte-level inspection of the raw `Symbols` records disproves that:
 
-- The garbage is **always the same repeating 6-byte constant**: `e6 8e a7 e5 88 b6`.
-- Across all 213 affected names the non-ASCII character set is exactly `{控, 制}` —
-  nothing else ever appears.
-- The ASCII prefix is always a well-formed name; corruption is purely a suffix.
-- Longest affected value reaches 177 characters, enough to overflow the
-  filesystem's 255-byte path-component limit once an address prefix and suffix
-  are added (this is how it was found — `OSError: [Errno 36]`).
+- For all 213 affected names, the record's declared string length **exactly equals**
+  the UTF-8 byte length of the decoded name. Zero mismatches. The longest declares
+  417 bytes and decodes to 417.
+- An over-read is definitionally a case where the decoded value extends past what
+  the record header accounts for. That never happens here, so no over-read occurs.
+- The raw record parses cleanly on either side of the name: the `Address` field
+  immediately follows the declared payload at the expected offset.
 
-A random over-read would produce varied garbage. A single repeating constant
-means the string length prefix is being read too long and the surplus comes from
-a region filled with a fixed pattern. The defect is therefore in the `.gbf`
-string field length handling (`ghidra_db/fields.py`, `STRING_TYPE` branch) or in
-the chained-buffer assembly feeding it — not in the UTF-8 decode itself.
+The suffix is therefore genuinely stored in the curated Ghidra project. The
+repetition histogram identifies the upstream mechanism: 98 names carry one copy of
+the suffix, 44 carry two, 16 three, tailing to a handful with 60+. That is a
+rename script that appends a marker, run repeatedly over the same symbols.
 
-Mitigated at the emit layer (`source_dump.is_usable_curated_name` rejects
-non-ASCII/oversized names, `safe_file_stem` bounds path components), so output is
-correct today and 99.1% of curated names are unaffected. The reader itself is
-**not** fixed; root-causing it needs byte-level inspection of an affected record,
-which has not been done.
+The reader is correct and needs no change. Because C identifiers are ASCII, the
+trailing run carries no meaning, so `source_dump.sanitize_curated_name` strips it
+and **recovers the ASCII prefix** — turning 213 discarded symbols into 213 usable
+curated names. Interior non-ASCII is deliberately left alone and still refused by
+`is_usable_curated_name`: that shape has not been characterised, and guessing at it
+would risk inventing a name rather than recovering one.
+
+The emit-layer bounds (`safe_file_stem`) remain, since path-length safety should
+not depend on the name source being well-behaved.

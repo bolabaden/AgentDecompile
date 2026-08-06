@@ -429,16 +429,34 @@ _MAX_CURATED_NAME_LEN = 120
 _MAX_FILE_STEM_LEN = 180
 
 
+def sanitize_curated_name(name: str) -> str:
+    """Drop a non-ASCII marker that the curated project's tooling injected.
+
+    Measured on the K1 database, 213 of 24,060 curated names carry one or more
+    copies of `控制` -- e.g. `CExoArrayList_SetSize控制`. This is *not* a bad
+    read: for all 213, the record's declared string length exactly equals the
+    UTF-8 byte length of the decoded name, so the marker is genuinely stored in
+    the curated project. The repetition histogram (98 names carry one copy, 44
+    two, 16 three, tailing to a handful with 60+) is the signature of a rename
+    script that appends a marker and was run repeatedly over the same symbols.
+
+    Usually the marker lands at the end, but in three cases it sits before a
+    real suffix (`ExecuteCommand控制_MainGate`), so trimming only the tail would
+    leave those unusable. Deleting non-ASCII wherever it appears is safe here
+    and not merely expedient: a C identifier is ASCII by definition, so no
+    non-ASCII code point in one of these names can be load-bearing. The
+    surviving ASCII is the name the project meant to record.
+    """
+
+    return "".join(char for char in name if char.isascii()).strip()
+
+
 def is_usable_curated_name(name: str) -> bool:
     """Whether a curated name is safe to substitute into emitted C.
 
     Rejects non-ASCII outright: real C/C++ identifiers and MSVC-mangled names
-    are ASCII, so non-ASCII indicates a corrupt read rather than an exotic
-    name. Measured on the K1 database, 271 of 24,060 curated names carry
-    trailing garbage of this kind (e.g. a valid `CExoArrayList_SetSize`
-    followed by repeated CJK bytes), which would otherwise be spliced into
-    generated source as an un-compilable identifier and, in the worst case,
-    produce a path over the filesystem's 255-byte component limit.
+    are ASCII. Callers that want the trailing-suffix names recovered rather
+    than discarded pass the name through `sanitize_curated_name` first.
     """
 
     if not name or len(name) > _MAX_CURATED_NAME_LEN:
@@ -478,7 +496,7 @@ def build_curated_rename_map(
         entry = normalize_entry_hex(row.get("entryOffset") or row.get("entry") or 0)
         if not entry:
             continue
-        curated = curated_names.get(entry)
+        curated = sanitize_curated_name(curated_names.get(entry) or "")
         if not curated or not is_usable_curated_name(curated):
             continue
         current = str(row.get("name") or "").strip()
