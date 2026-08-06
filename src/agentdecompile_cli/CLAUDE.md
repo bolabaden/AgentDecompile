@@ -148,3 +148,34 @@ If adding skill/workflow docs in the repo:
 - Keep canonical tool names visible.
 - Optionally include legacy aliases for compatibility.
 - Prefer evidence-first workflows and explicit confidence gates.
+
+## 18) Learned Workspace Facts
+
+- open-project: `analyzeAfterImport` is optional and defaults to true. `open` and `import-binary` always run incremental Ghidra auto-analysis when needed (blocking); other program-scoped tools wait until analysis completes for that program.
+- Load Ghidra from `GHIDRA_INSTALL_DIR` via a top-level repo `.env`; the path must match the real install folder name (for example `ghidra_12.0.4_PUBLIC`—a wrong or stale basename breaks LFG/driver).
+- Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
+- In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
+- For proxy mode set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path; use separate backends and proxy URLs when multiple projects run at once. The CLI persists mcp-session-id per normalized --server-url; without a session header the server may use one default session—send distinct session ids for multi-user or multi-client use. Keep server-side session state on the same logical key as the client-persisted id so it does not split across `default` and `sdk-session:…` buckets.
+- For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
+- Before domain_file.save() or shared versioned checkin-program while a program is open (e.g. sync-project push, check-in all), end the program's active transaction to avoid "Unable to lock due to active transaction". For shared check-in, the DomainFile used must match the open program being edited—repo-style programPath strings and Program.getDomainFile() pathnames may differ only by basename on Windows; mismatched resolution yields "File has not been modified since checkout" despite successful mutations.
+- get-function with an address returns the containing function (not the callee); get-references and list-cross-references accept addressOrSymbol or importName (thunk and IAT supported; .rsrc targets include LoadStringA/LoadStringW as indirect refs).
+- When Ghidra exposes multiple overloads for the same operation (e.g. `Listing.getComment` variants), support both with try/fallback for compatibility across backends.
+- Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols are advertised by default (not in registry _DEFAULT_HIDDEN_TOOLS or CLI curated-only list).
+- Cross-binary match-function uses signature (param count, return type), name, and call graph (caller/callee names) to find the same function in another binary; it does not use byte or instruction-level comparison, so it works when addresses, registers, and stack layout differ across builds.
+- Strict proof sequence `/lfg` is defined in `.cursor/commands/lfg.md` (shared Ghidra Server, MCP restarts, `tool-seq`). For automation, avoid unmodified stock `ghidraSvr.bat console` (separate JVM window and poor terminal logging); use the driver's patched background start or a dedicated Ghidra window per that doc.
+- Setting `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` (or the legacy alias) on the MCP server process can make shared-session bootstrap treat the repository name as a program key; LFG scripting avoids exporting repository into MCP env, and program activation skips treating the repo name as a program when it matches the open shared handle's repository.
+- ContextStream Claude Code hooks should be launched via `scripts/contextstream_claude_hook.ps1` (or a stable copy under `~/.claude/scripts`), resolving the global `@contextstream/mcp-server` install instead of stale `npx` cache paths to `index.js`.
+- For JPype buffers passed to Ghidra `Memory.getBytes`, allocate with `jpype.JArray(jpype.JByte)(length)`; Pyright may need `cast(Any, ...)` around the constructor when stubs disagree.
+- `ProgramInfo` (`context.py`) declares optional `domain_object_consumer` and `domain_file` for shared/versioned program lifecycle; use those typed fields instead of `setattr`.
+
+## 19) Modification Conflicts (Two-Step Flow)
+
+Tools that modify project data (e.g. `manage-symbols` rename, `manage-function` rename/set_prototype, `manage-comments` set, `manage-structures` create/apply, `apply-data-type`, `manage-bookmarks` set) may return a **conflict** when the change would overwrite existing custom data. In that case, the response includes a `conflictId` and a udiff-style summary. Use **`resolve-modification-conflict`** with that `conflictId` and `resolution=overwrite` to apply the change or `resolution=skip` to discard. Do not retry the modifying tool with the same args to force overwrite—only `resolve-modification-conflict` completes the flow.
+
+## 20) Tiered Reverse-Engineering Analysis
+
+Agents should **not default to Ghidra** for every task. Use the **tiered-re-analysis** skill ([.cursor/skills/tiered-re-analysis/SKILL.md](../../.cursor/skills/tiered-re-analysis/SKILL.md)) and knowledge base ([docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md](../../docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md)): Tier 0 shell/static tools → Tier 1 batch `ghidrecomp` → Tier 2 MCP read-only → Tier 3 decompile/mutations. Multi-agent RE agents (`.github/agents/re-*.agent.md`) follow this routing in Planner triage and Worker/Critic verification.
+
+## 21) MCP Server Debugging and Self-Healing
+
+When investigating or fixing MCP server issues (timeouts, schema, GUI/coords, sandbox), use the **mcp-debugging** skill: open [.cursor/skills/mcp-debugging/SKILL.md](../../.cursor/skills/mcp-debugging/SKILL.md) or invoke `/mcp-debugging` in Agent chat. The skill references the meta-debug loop and the five CLIs (MCP Inspector, mcptools, mcp-debug, mcp-trace, FastMCP CLI). Detailed docs: [references/CLIS_AND_META_DEBUG.md](../../.cursor/skills/mcp-debugging/references/CLIS_AND_META_DEBUG.md), [references/WORKFLOWS.md](../../.cursor/skills/mcp-debugging/references/WORKFLOWS.md), [references/CLAUDE_MCP_DEBUG.md](../../.cursor/skills/mcp-debugging/references/CLAUDE_MCP_DEBUG.md).

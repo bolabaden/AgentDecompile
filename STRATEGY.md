@@ -14,7 +14,7 @@ Reverse engineers juggle binaries, Ghidra projects, partial decompilations, note
 
 Recovery is a pipeline: pull in context, treat Ghidra and the binary inventory as ground truth, generate candidate C, and only promote what survives compile + objdiff (or an equivalent hard gate). Exports say what is **verified** (objdiff zero) vs **advisory** (Ghidra decompilation, sketches, etc.).
 
-One product name: **AgentDecompile**. Recovery runs from this repo only — not from the archived Mizuchi tree ([MIZUCHI_ARCHIVE.md](docs/MIZUCHI_ARCHIVE.md)).
+One product name: **AgentDecompile**. Recovery runs from this repo only — not from the archived Mizuchi tree ([UPSTREAM_DONOR_ARCHIVE.md](docs/UPSTREAM_DONOR_ARCHIVE.md)).
 
 ```mermaid
 flowchart LR
