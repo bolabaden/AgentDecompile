@@ -338,8 +338,12 @@ uv.lock
 vendor/
 volumes/
 agentdecompile*/
+!src/agentdecompile_cli/
+!src/agentdecompile_cli/**
 !src/agentdecompile_recovery/
 !src/agentdecompile_recovery/**
+src/agentdecompile_cli/__pycache__/
+src/agentdecompile_cli/**/*.pyc
 src/agentdecompile_recovery/__pycache__/
 src/agentdecompile_recovery/**/*.pyc
 !.claude/skills/agentdecompile*/

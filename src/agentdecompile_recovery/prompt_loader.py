@@ -104,11 +104,13 @@ def _load_prompt_from_dir(prompts_dir: Path, dir_name: str) -> PromptInfo:
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise PromptLoadError(dir_name, f"Failed to run nm on object file: {exc}") from exc
 
-    symbols = completed.stdout.splitlines()
-    function_exists = any(
-        line.strip().split()[-1] == function_name for line in symbols if line.strip().split()
-    )
-    if not function_exists:
+    symbols = {
+        fields[-1]
+        for line in completed.stdout.splitlines()
+        if (fields := line.strip().split())
+    }
+    # Mach-O (and some other ABIs) prefix C symbols with '_'. Accept both.
+    if function_name not in symbols and f"_{function_name}" not in symbols:
         raise PromptLoadError(
             dir_name, f"Function '{function_name}' not found in object file: {target_object_path}"
         )

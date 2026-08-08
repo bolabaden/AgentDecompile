@@ -111,8 +111,10 @@ class Tool(str, Enum):
     CHECKIN_PROGRAM = "checkin-program"
     CHECKOUT_PROGRAM = "checkout-program"
     CHECKOUT_STATUS = "checkout-status"
+    ACQUISITION_QUERY = "acquisition-query"
     CLAIM_REPORT = "claim-report"
     CREATE_LABEL = "create-label"
+    EXPORT_CONTEXT = "export-context"
     DECOMPILE_FUNCTION = "decompile-function"
     DELETE_PROJECT_BINARY = "delete-project-binary"
     SYNC_PROJECT = "sync-project"
@@ -357,8 +359,19 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.CHECKIN_PROGRAM.value: _params("programPath", "comment", "keepCheckedOut"),
     Tool.CHECKOUT_PROGRAM.value: _params("programPath", "exclusive"),
     Tool.CHECKOUT_STATUS.value: _params("programPath"),
+    Tool.ACQUISITION_QUERY.value: _params("bundleDir", "action", "query", "address", "limit"),
     Tool.CLAIM_REPORT.value: _params("workDir", "terminalStatus", "write"),
     Tool.CREATE_LABEL.value: _params("programPath", "addressOrSymbol", "labelName", "setAsPrimary"),
+    Tool.EXPORT_CONTEXT.value: _params(
+        "inputPath",
+        "outDir",
+        "format",
+        "binaryAnalysis",
+        "extractContainers",
+        "includeLowSignalMembers",
+        "maxFiles",
+        "maxDepth",
+    ),
     Tool.DECOMPILE_FUNCTION.value: _params("functionIdentifier", "includeCallees", "includeCallers", "includeComments", "includeDisassembly", "includeIncomingReferences", "includeReferenceContext", "limit", "offset", "programPath", "signatureOnly", "timeout"),
     Tool.DELETE_PROJECT_BINARY.value: _params("programPath", "confirm"),
     Tool.GET_FUNCTION.value: _params(
@@ -1174,7 +1187,9 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
 # Tier 0 MCP tools: static file triage / recovery orchestration without Ghidra.
 _TIER0_TOOLS: frozenset[Tool] = frozenset(
     {
+        Tool.ACQUISITION_QUERY,
         Tool.CLAIM_REPORT,
+        Tool.EXPORT_CONTEXT,
         Tool.RECONSTRUCT,
         Tool.RUN_FILE_TRIAGE,
         Tool.RUN_EXTERNAL_RE_SCAN,

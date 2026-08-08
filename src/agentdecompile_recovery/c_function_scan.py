@@ -10,11 +10,11 @@ degradation when the binary is missing, an injectable command runner.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
+from .ast_grep_cli import resolve_ast_grep_binary
 from .decomp_indexer import CFunctionRecord
 
 CommandRunner = Callable[..., dict[str, Any]]
@@ -23,7 +23,7 @@ _FUNCTION_PATTERN = "$RET $NAME($$$PARAMS) { $$$BODY }"
 
 
 def _resolve_binary() -> str | None:
-    return shutil.which("ast-grep") or shutil.which("sg")
+    return resolve_ast_grep_binary()
 
 
 def _default_run_command(command: list[str], *, cwd: Path) -> dict[str, Any]:

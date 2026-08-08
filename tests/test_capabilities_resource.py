@@ -20,6 +20,8 @@ TIER01_RUN_TOOLS: dict[str, int] = {
     "run-batch-bsim-signatures": 1,
     "run-batch-sast-scan": 1,
     "run-decomp-match": 1,
+    "export-context": 0,
+    "acquisition-query": 0,
 }
 
 
