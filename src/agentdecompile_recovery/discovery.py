@@ -20,6 +20,7 @@ from typing import Any
 KIND_BINARY = "binary"
 KIND_GHIDRA_PROJECT = "ghidra-project"
 KIND_GHIDRA_ARCHIVE = "ghidra-archive"  # .gzf
+KIND_CORPUS_ARCHIVE = "corpus-archive"  # .zip holding a corpus
 KIND_FACTS_JSONL = "facts-jsonl"
 KIND_SOURCE_DUMP = "source-dump"
 KIND_NOTES = "notes"
@@ -125,12 +126,45 @@ def sniff_path(path: Path) -> SniffResult:
     if resolved.is_dir():
         if _looks_like_ghidra_project_dir(resolved):
             return SniffResult(resolved, KIND_GHIDRA_PROJECT, "directory holds Ghidra project state", adapter="ghidra")
+        # Check for a sibling archive that the directory may be an incomplete
+        # extraction of.  A silent "directory, nothing here" is worse than
+        # explaining why it looks empty.
+        from .corpus_archive import check_extraction, find_sibling_archive  # lazy import
+
+        sibling_zip = find_sibling_archive(resolved)
+        if sibling_zip is not None:
+
+            try:
+                report = check_extraction(sibling_zip, resolved)
+                if not report.is_complete:
+                    missing_count = len(report.missing) + len(report.size_mismatch)
+                    detail: dict[str, Any] = {
+                        "siblingArchive": str(sibling_zip),
+                        "extractionStatus": report.status,
+                        "missingCount": missing_count,
+                        "missing": report.missing[:20],
+                    }
+                    if len(report.missing) > 20:
+                        detail["missingTruncated"] = True
+                    return SniffResult(
+                        resolved,
+                        KIND_DIRECTORY,
+                        f"directory is an incomplete extraction of {sibling_zip.name} "
+                        f"({missing_count} file(s) missing or size-mismatched)",
+                        adapter="context-pack",
+                        detail=detail,
+                    )
+            except Exception:
+                pass  # If the ZIP is unreadable, fall through normally.
         return SniffResult(resolved, KIND_DIRECTORY, "directory scanned for context files", adapter="context-pack")
 
     if suffix in _GHIDRA_ARCHIVE_SUFFIXES:
         return SniffResult(resolved, KIND_GHIDRA_ARCHIVE, "Ghidra .gzf archive", adapter="ghidra")
     if suffix in _GHIDRA_PROJECT_SUFFIXES:
         return SniffResult(resolved, KIND_GHIDRA_PROJECT, "Ghidra project file", adapter="ghidra")
+
+    if suffix == ".zip":
+        return SniffResult(resolved, KIND_CORPUS_ARCHIVE, "corpus ZIP archive", adapter="corpus-archive")
 
     if suffix == ".jsonl" and _is_jsonl_facts(resolved):
         return SniffResult(resolved, KIND_FACTS_JSONL, "JSONL fact stream", adapter="context-pack")

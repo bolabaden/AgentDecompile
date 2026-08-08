@@ -474,6 +474,24 @@ def build_parser() -> argparse.ArgumentParser:
     run_pipeline.add_argument("--get-context-script", default="", help="Setup-phase shell script generating context content (e.g. relevant type definitions) on stdout.")
     run_pipeline.add_argument("--integrator-module", type=Path, help="Post-match phase: Python module exporting integrate(function_name, generated_code, project_root, helpers) to insert matched code into the project source tree.")
     run_pipeline.add_argument("--integrator-build-command", help="Command to verify the project still builds after integration.")
+
+    list_archive = sub.add_parser(
+        "list-archive",
+        help="List the contents of a corpus ZIP archive without extracting it.",
+    )
+    list_archive.add_argument("archive", type=Path, help="Path to the .zip corpus archive.")
+    list_archive.add_argument("--json", action="store_true", dest="output_json", help="Emit JSON output.")
+    list_archive.add_argument("--files-only", action="store_true", help="Skip directory entries.")
+
+    check_extraction = sub.add_parser(
+        "check-extraction",
+        help="Compare an extracted directory against its source archive and report missing or size-mismatched files.",
+    )
+    check_extraction.add_argument("archive", type=Path, help="Source .zip archive.")
+    check_extraction.add_argument("directory", type=Path, help="Extracted directory to compare.")
+    check_extraction.add_argument("--no-extra", action="store_true", help="Do not report files in the directory that are absent from the archive.")
+    check_extraction.add_argument("--json", action="store_true", dest="output_json", help="Emit JSON output.")
+
     return parser
 
 
@@ -1149,6 +1167,71 @@ def run_run_pipeline_command(args: argparse.Namespace) -> int:
     return 0 if receipt.get("status") == "complete" else 1
 
 
+def run_list_archive_command(args: argparse.Namespace) -> int:
+    from .corpus_archive import archive_summary, list_archive
+
+    archive: Path = args.archive
+    if not archive.is_file():
+        print(f"error: {archive} is not a file", file=sys.stderr)
+        return 1
+
+    if getattr(args, "output_json", False):
+        summary = archive_summary(archive)
+        entries = [e.to_json() for e in list_archive(archive) if not (args.files_only and e.is_dir)]
+        print(json.dumps({"summary": summary.to_json(), "entries": entries}, indent=2))
+    else:
+        total_files = 0
+        total_uncompressed = 0
+        for entry in list_archive(archive):
+            if entry.is_dir and args.files_only:
+                continue
+            kind_tag = f"  [{entry.ghidra_kind}]" if entry.ghidra_kind else ""
+            if entry.is_dir:
+                print(f"         -  {entry.name}/{kind_tag}")
+            else:
+                print(f"  {entry.file_size:>12,}  {entry.name}{kind_tag}")
+                total_files += 1
+                total_uncompressed += entry.file_size
+        print(f"\n  {total_uncompressed:>12,}  {total_files} files")
+    return 0
+
+
+def run_check_extraction_command(args: argparse.Namespace) -> int:
+    from .corpus_archive import check_extraction
+
+    archive: Path = args.archive
+    directory: Path = args.directory
+    if not archive.is_file():
+        print(f"error: {archive} is not a file", file=sys.stderr)
+        return 1
+    if not directory.is_dir():
+        print(f"error: {directory} is not a directory", file=sys.stderr)
+        return 1
+
+    report = check_extraction(archive, directory, check_extra=not args.no_extra)
+    if getattr(args, "output_json", False):
+        print(json.dumps(report.to_json(), indent=2))
+    else:
+        print(f"archive:   {archive}")
+        print(f"directory: {directory}")
+        print(f"status:    {report.status}")
+        if report.missing:
+            print(f"\nmissing ({len(report.missing)}):")
+            for name in report.missing:
+                print(f"  {name}")
+        if report.size_mismatch:
+            print(f"\nsize mismatch ({len(report.size_mismatch)}):")
+            for item in report.size_mismatch:
+                print(f"  {item['path']}  expected={item['expectedBytes']}  actual={item['actualBytes']}")
+        if report.extra:
+            print(f"\nextra ({len(report.extra)}):")
+            for name in report.extra:
+                print(f"  {name}")
+        if report.is_complete:
+            print("\nExtraction is complete.")
+    return 0 if report.is_complete else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
@@ -1194,6 +1277,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_atlas_serve_command(args)
     if args.command == "run":
         return run_run_pipeline_command(args)
+    if args.command == "list-archive":
+        return run_list_archive_command(args)
+    if args.command == "check-extraction":
+        return run_check_extraction_command(args)
     parser.print_help()
     return 2
 
