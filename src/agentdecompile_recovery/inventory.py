@@ -59,7 +59,10 @@ _KNOWN_MSVC_BUILD_HINTS: dict[int, dict[str, str]] = {
     3052: {"family": "msvc", "version": "7.1", "compilerVersion": "13.10.3052", "profile": "vc71"},
     50727: {"family": "msvc", "version": "8.0", "compilerVersion": "14.00.50727", "profile": "vc80"},
 }
-_MSVC_BUILD_BANDS: tuple[tuple[int, int, str, str], ...] = (
+# Some toolchains and notes report compiler identity in _MSC_VER-like 12xx..16xx
+# space rather than raw Rich build numbers such as 3052/9466/50727. Keep that as
+# an explicit compatibility fallback instead of guessing unknown raw build values.
+_MSVC_COMPAT_BUILD_BANDS: tuple[tuple[int, int, str, str], ...] = (
     (1200, 1300, "5.0", "vc71"),
     (1300, 1400, "6.0", "vc71"),
     (1400, 1500, "7.0", "vc71"),
@@ -69,12 +72,16 @@ _MSVC_BUILD_BANDS: tuple[tuple[int, int, str, str], ...] = (
 
 
 def msvc_version_for_build(build: int) -> dict[str, str] | None:
-    """Return a conservative MSVC hint for a Rich-header build number."""
+    """Return a conservative MSVC hint for a Rich-header build number.
+
+    Exact Rich build numbers win. The fallback 12xx..16xx bands only cover
+    compatibility values already expressed in that older compiler-version space.
+    """
 
     exact = _KNOWN_MSVC_BUILD_HINTS.get(int(build))
     if exact is not None:
         return dict(exact)
-    for start, end, version, profile in _MSVC_BUILD_BANDS:
+    for start, end, version, profile in _MSVC_COMPAT_BUILD_BANDS:
         if start <= int(build) < end:
             return {"family": "msvc", "version": version, "profile": profile}
     return None
