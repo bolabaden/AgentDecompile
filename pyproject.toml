@@ -49,7 +49,9 @@ dependencies = [
     "ghidrecomp>=0.5.9; python_version >= '3.10'",
     "httpx-sse>=0.4.3",
     "httpx>=0.28.1,<1.0",
-    "mcp",
+    # MCP 2.0 removed low-level Server.list_tools/call_tool decorators (on_* ctor kwargs).
+    # Keep 1.x until server.py / bridge.py / stdio_bridge.py are migrated.
+    "mcp>=1.26.0,<2",
     "packaging>=26.1",
     "pip>=26.1.2",
     "psutil>=7.2.2",
@@ -86,12 +88,22 @@ agentdecompile-proxy = "agentdecompile_cli.server:proxy_main"
 semantic = [
   "chromadb",
 ]
+unity = [
+  "UnityPy>=1.25.2",
+]
 test = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "pytest-timeout>=2.0.0",
     "pytest-sugar>=1.0.0",
   "ghidra-stubs>=12.0.4",
+]
+# Bundles every pip-installable optional feature. Does NOT include `ilspycmd`
+# (.NET/IL decompilation support) -- that's ILSpy's dotnet global tool, not a
+# PyPI package, and cannot be expressed as a pip dependency. Install it
+# separately with `dotnet tool install -g ilspycmd`; see README.md.
+all = [
+  "agentdecompile[semantic,unity]",
 ]
 
 [build-system]
@@ -136,7 +148,8 @@ dev = [
 
 [tool.setuptools_scm]
 # Extract version from git tags (e.g., 1.0.0 -> 1.0.0)
-# Fallback to 0.0.0.dev0 if no tags found
+# Fallback to the 2.0.1 release line if no tags are present
+fallback_version = "2.0.1"
 version_file = "src/agentdecompile_cli/_version.py"
 
 

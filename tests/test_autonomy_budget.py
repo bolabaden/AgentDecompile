@@ -34,7 +34,10 @@ def test_budget_defaults_and_vacuum_args(tmp_path: Path) -> None:
     assert budget.max_wall_seconds is None
     assert budget.max_campaigns == 1
     assert budget.stop_on_accept is False
-    assert budget.max_rewrite_requests_per_function == 0
+    # Mechanism 3 is on by default. At 0, choose_next_action could never reach
+    # `try-rewrite-request`, so a default campaign silently ran mechanisms 1+2
+    # only and reported zero accepts without flagging the skipped stage.
+    assert budget.max_rewrite_requests_per_function == 1
     args = budget.vacuum_bridge_args(queue=tmp_path / "queue.json")
     assert args is not None
     assert args[args.index("--max-functions") + 1] == "1"
@@ -307,8 +310,21 @@ def test_remaining_rewrite_requests() -> None:
     assert remaining_rewrite_requests(requests_seen=5, budget=budget) == 0
 
 
-def test_budget_from_args_default_rewrite_requests_is_zero() -> None:
+def test_budget_from_args_enables_rewrite_requests_by_default() -> None:
+    """Mechanism 3 must be reachable without an explicit flag.
+
+    At 0 the policy could never select `try-rewrite-request`, so the only stage
+    that reconstructs C never ran unless an operator remembered to pass
+    --autonomous-max-rewrite-requests.
+    """
+
     budget = budget_from_args(max_rewrite_requests_per_function=None)
-    assert budget.max_rewrite_requests_per_function == 0
+    assert budget.max_rewrite_requests_per_function == 1
     budget = budget_from_args(max_rewrite_requests_per_function=4)
     assert budget.max_rewrite_requests_per_function == 4
+
+
+def test_rewrite_requests_can_still_be_disabled_explicitly() -> None:
+    budget = budget_from_args(max_rewrite_requests_per_function=0)
+    assert budget.max_rewrite_requests_per_function == 0
+    assert remaining_rewrite_requests(requests_seen=0, budget=budget) == 0

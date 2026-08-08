@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .curated_enrichment import msvc_thiscall_to_fastcall
+
 
 def _publish_advisory_candidate(out_dir: Path, task: dict[str, Any], source_path: Path) -> None:
     """Best-effort dual-write into run_dir/advisory/ for claim-visible partial runs."""
@@ -37,6 +39,30 @@ def _publish_advisory_candidate(out_dir: Path, task: dict[str, Any], source_path
         )
     except OSError:
         return
+
+
+def candidate_truncation(*, total: int, offset: int, limit: int) -> dict[str, Any]:
+    """Whether --source-task-limit/--source-task-offset dropped inventory.
+
+    The default limit is 500. On a binary with thousands of functions that
+    queues a small fraction and still reports a complete run, so a request to
+    recover a whole binary silently becomes a request to recover the first few
+    hundred functions of it. The raw counts were already in the summary; this
+    draws the conclusion so callers do not have to.
+    """
+
+    total = max(0, int(total))
+    start = max(0, int(offset))
+    queued = max(0, min(total - start, max(0, int(limit))))
+    skipped = total - queued
+    warning = None
+    if skipped > 0:
+        warning = (
+            f"source-task selection queued {queued} of {total} recoverable candidates "
+            f"({skipped} skipped: --source-task-limit {limit}, --source-task-offset {start}). "
+            "Raise --source-task-limit to cover the whole inventory."
+        )
+    return {"truncated": skipped > 0, "queued": queued, "skipped": skipped, "warning": warning}
 
 
 def generate_source_candidates(
@@ -117,7 +143,11 @@ def generate_source_candidates(
             generated_candidate = generated_candidate_from_target_bytes(task, target_slice_bytes)
             if fact and fact.get("decompiled"):
                 case_dir.mkdir(parents=True, exist_ok=True)
-                source = str(fact["decompiled"]).rstrip() + "\n"
+                # A curated `__thiscall` prototype reaches the decompiler and
+                # comes back as a signature MSVC will not compile in either C or
+                # C++; `__fastcall` with a dead EDX argument is the same 32-bit
+                # ABI and does compile. No-op for every other candidate.
+                source = msvc_thiscall_to_fastcall(str(fact["decompiled"])).rstrip() + "\n"
                 source_path = case_dir / "candidate.c"
                 source_path.write_text(source, encoding="utf-8")
                 source_quality = "high-level-c"
@@ -295,6 +325,7 @@ def generate_source_candidates(
         "candidateOffset": start,
         "candidateLimit": max(limit, 0),
         "candidateTotal": len(all_candidates),
+        "candidateTruncation": candidate_truncation(total=len(all_candidates), offset=start, limit=limit),
         "uniqueCandidateAddresses": len({int(row["address"]) for row in candidates if row.get("address") is not None}),
         "duplicateAddressAliases": alias_artifacts["duplicateAddressAliases"],
         "duplicateAddressScheduledTasks": alias_artifacts["duplicateAddressScheduledTasks"],

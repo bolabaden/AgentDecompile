@@ -1,12 +1,24 @@
 """File-queue handoff for challenger-lane mechanism 3 (subagent-fulfilled candidate rewriting).
 
-The autonomous recovery loop never calls an LLM API directly. When a near-miss
-exhausts mechanisms 1+2 (compiler-flag exploration, idiom permutation) and
-rewrite-request budget remains, it writes a typed pending request here and
-stops (non-blocking). A separate, live Claude Code session -- running /loop
-against the agentdecompile-rewrite-worker skill -- claims pending entries,
-dispatches a tool-restricted Agent subagent, and writes the result back. A
-later --autonomous invocation picks up completed results.
+The autonomous recovery loop never calls a credentialed LLM API directly. When
+a near-miss exhausts mechanisms 1+2 (compiler-flag exploration, idiom
+permutation) and rewrite-request budget remains, it writes a typed pending
+request here. Two fulfillment paths then exist:
+
+- **In-process (default).** The campaign resolves its own request through the
+  local Claude Code CLI (`rewrite_provider.fulfill_rewrite`) before returning.
+  This is the path that makes a campaign self-sufficient.
+- **File queue.** A separate live Claude Code session -- running /loop against
+  the agentdecompile-rewrite-worker skill -- claims pending entries, dispatches
+  a tool-restricted Agent subagent, and writes the result back; a later
+  --autonomous invocation picks up completed results.
+
+The file-queue path was previously the only one, which meant a campaign whose
+operator had not launched a worker session left every request pending forever.
+
+Entries carry `alignedDiff`: the instruction-level target-vs-candidate rows. A
+fulfiller given only `mismatchHistogram` sees a count of differences and cannot
+know what it is matching against.
 
 Lifecycle: pending -> claimed -> completed | failed. Every mutation holds an
 exclusive file lock across its read -> verify-expected-state -> write cycle
@@ -18,6 +30,7 @@ applies.
 
 from __future__ import annotations
 
+import ast
 import fcntl
 import hashlib
 from contextlib import contextmanager
@@ -112,6 +125,31 @@ def count_requests_for_function(work_dir: Path, function_name: str) -> int:
     return int(queue["requestCounts"].get(function_name, 0) or 0)
 
 
+def coerce_histogram(value: Any) -> dict[str, int]:
+    """Normalize a mismatch histogram to JSON-safe ``{str: int}``.
+
+    A live queue entry held the string ``"{'REPLACEMENT': 2}"`` -- Python
+    ``repr`` output that had been stringified somewhere upstream and that no
+    JSON consumer can parse. Accept that shape rather than propagating it.
+    """
+
+    if isinstance(value, dict):
+        counts: dict[str, int] = {}
+        for key, count in value.items():
+            try:
+                counts[str(key)] = int(count)
+            except (TypeError, ValueError):
+                continue
+        return counts
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            return {}
+        return coerce_histogram(parsed) if isinstance(parsed, dict) else {}
+    return {}
+
+
 def write_rewrite_request(
     work_dir: Path,
     *,
@@ -120,8 +158,15 @@ def write_rewrite_request(
     candidate_source: str,
     mismatch_class: str | None,
     mismatch_histogram: dict[str, int] | None,
+    aligned_diff: list[dict[str, Any]] | None = None,
+    compiler_profile: str | None = None,
 ) -> str:
-    """Write a pending request; a no-op if one already exists for this candidate."""
+    """Write a pending request; a no-op if one already exists for this candidate.
+
+    ``aligned_diff`` carries the instruction-level target-vs-candidate rows.
+    Without it a fulfiller sees only a count of differences and cannot know what
+    it is matching against.
+    """
 
     request_id = derive_request_id(function_name, candidate_source)
     with _locked(work_dir):
@@ -134,7 +179,9 @@ def write_rewrite_request(
             "entry": entry,
             "candidateSource": candidate_source,
             "mismatchClass": mismatch_class,
-            "mismatchHistogram": mismatch_histogram,
+            "mismatchHistogram": coerce_histogram(mismatch_histogram),
+            "alignedDiff": list(aligned_diff or []),
+            "compilerProfile": compiler_profile,
             "status": STATUS_PENDING,
             "writtenAt": now(),
         }
@@ -167,6 +214,29 @@ def claim_pending_entry(
         entry["status"] = STATUS_CLAIMED
         entry["claimedBy"] = claimant
         entry["claimedAt"] = now()
+        queue["entries"][request_id] = entry
+        atomic_write_json(queue_path(work_dir), queue)
+        return True
+
+
+def release_claim(work_dir: Path, request_id: str, *, claimant: str) -> bool:
+    """Return a claimed entry to `pending` without recording a verdict.
+
+    Used when a fulfiller crashed rather than decided: the request stays
+    recoverable by any other worker instead of waiting out the staleness
+    window. Only the current claimant may release.
+    """
+
+    with _locked(work_dir):
+        queue = read_rewrite_queue(work_dir)
+        entry = queue["entries"].get(request_id)
+        if not isinstance(entry, dict):
+            return False
+        if entry.get("status") != STATUS_CLAIMED or entry.get("claimedBy") != claimant:
+            return False
+        entry["status"] = STATUS_PENDING
+        entry.pop("claimedBy", None)
+        entry.pop("claimedAt", None)
         queue["entries"][request_id] = entry
         atomic_write_json(queue_path(work_dir), queue)
         return True

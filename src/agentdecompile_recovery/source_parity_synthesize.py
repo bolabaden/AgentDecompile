@@ -573,6 +573,15 @@ def inc_abs_global(row: dict[str, Any], c_name: str, data: bytes) -> list[Genera
     if len(data) != 7 or data[0] != 0xFF or data[1] != 0x05 or data[-1] != 0xC3:
         return []
     addr = u32(data[2:6])
+    global_symbol = f"_DAT_{addr:08x}"
+    absolute_address_relocations = [
+        {
+            "offset": 2,
+            "type": "IMAGE_REL_I386_DIR32",
+            "symbol": global_symbol,
+            "decodedAddress": f"0x{addr:08x}",
+        }
+    ]
     plain_source = header("inc-absolute-global", row) + "\n".join(
         [
             f"void {c_name}(void) {{",
@@ -598,7 +607,10 @@ def inc_abs_global(row: dict[str, Any], c_name: str, data: bytes) -> list[Genera
             source=plain_source,
             callconv="cdecl",
             return_type="void",
-            evidence={"absoluteAddress": f"0x{addr:08x}"},
+            evidence={
+                "absoluteAddress": f"0x{addr:08x}",
+                "absoluteAddressRelocations": absolute_address_relocations,
+            },
         ),
         GeneratedCandidate(
             rule="inc-absolute-global",
@@ -608,8 +620,41 @@ def inc_abs_global(row: dict[str, Any], c_name: str, data: bytes) -> list[Genera
             source=volatile_source,
             callconv="cdecl",
             return_type="void",
-            evidence={"absoluteAddress": f"0x{addr:08x}"},
+            evidence={
+                "absoluteAddress": f"0x{addr:08x}",
+                "absoluteAddressRelocations": absolute_address_relocations,
+            },
         )
+    ]
+
+
+def single_absolute_address_relocation(offset: int, addr: int) -> list[dict[str, Any]]:
+    """Return the absoluteAddressRelocations shape for one absolute-address reference.
+
+    Matches the target-side reconstruction absolute_address_relocations() reads
+    (render_target_coff_for_candidate) -- without this, the synthetic target
+    object renders the address as a raw byte blob instead of a symbol
+    relocation, and a candidate referencing the same global through a
+    compiler-visible symbol can never byte-match it.
+
+    Do NOT call this for a candidate whose generated source only references
+    the address via a literal pointer cast (e.g. `*(unsigned int *)0x...`) --
+    MSVC compiles a literal cast as a bare immediate with no relocation, so
+    there is nothing on the candidate side for this evidence to mirror.
+    Confirmed via real MSVC8/wine + objdiff A/B testing to make matching
+    measurably worse for literal-cast candidates (see
+    docs/plans/2026-07-30-001-fix-generalize-relocation-evidence-plan.md).
+    Only use this when the generated source references the address through a
+    named extern symbol, as bink_buffer_set_direct_draw_forwarder does.
+    """
+
+    return [
+        {
+            "offset": offset,
+            "type": "IMAGE_REL_I386_DIR32",
+            "symbol": f"_DAT_{addr:08x}",
+            "decodedAddress": f"0x{addr:08x}",
+        }
     ]
 
 
@@ -19118,6 +19163,74 @@ def generate(row: dict[str, Any], max_variants: int) -> list[GeneratedCandidate]
     return candidates
 
 
+_CALLEE_CALL_RE = re.compile(r"\b(sub_[0-9a-fA-F]+|FUN_[0-9a-fA-F]+)\s*\(")
+
+
+def _infer_callee_return_type(callee_source: str, callee_name: str) -> str:
+    # Falls back to "int" (not "void") when unparseable: an implicit
+    # pre-C99 declaration defaults to int, and a caller that ignores the
+    # return value still compiles fine against an "int" prototype -- unlike
+    # "void", which is a hard compile error for any caller that consumes it
+    # (e.g. the common Ghidra pattern `iVar1 = calleeName(...)`).
+    match = re.search(rf"(^|\n)([A-Za-z_][A-Za-z0-9_ \*]*?)\s+{re.escape(callee_name)}\s*\(", callee_source)
+    if not match:
+        return "int"
+    # The captured group spans everything before the name, which includes
+    # any calling-convention keyword (e.g. "undefined4 __stdcall") since the
+    # regex must expand past it to reach the required whitespace+name
+    # boundary -- strip those keywords back out, since the prototype already
+    # adds the calling-convention keyword explicitly.
+    rettype = re.sub(r"\b(__stdcall|__fastcall|__cdecl)\b", "", match.group(2)).strip()
+    return rettype or "int"
+
+
+def infer_callee_prototype(callee_name: str, source_generation_root: Path) -> str | None:
+    """Infer a calling-convention-correct extern prototype for a callee by
+    reusing its own packaged-source candidate (a sibling directory under the
+    same source-generation root) and running it through the same
+    infer_packaged_callconv/packaged_stack_bytes inference already used for
+    the caller itself.
+
+    Without this, a call to another sub_XXXX/FUN_XXXX function compiles with
+    an implicit (cdecl) declaration regardless of the callee's real calling
+    convention, so a stdcall/fastcall callee causes the caller to emit a
+    spurious `add esp, N` stack-cleanup instruction that the real compiled
+    binary never has (the real callee already cleaned the stack itself).
+    """
+    matches = sorted(source_generation_root.glob(f"{callee_name}_*/candidate.c"))
+    if not matches:
+        return None
+    callee_source = matches[0].read_text(encoding="utf-8", errors="replace")
+    callconv = infer_packaged_callconv(callee_source, ".c")
+    if callconv not in {"stdcall", "fastcall"}:
+        return None
+    stack_bytes = packaged_stack_bytes({"name": callee_name}, callee_name, source=callee_source)
+    if stack_bytes is None or stack_bytes % 4 != 0:
+        return None
+    sig_match = re.search(rf"\b{re.escape(callee_name)}\s*\(([^)]*)\)", callee_source)
+    if sig_match and _EIGHT_BYTE_PARAM_TYPE_RE.search(sig_match.group(1)):
+        # packaged_stack_bytes only tracks total byte count, not individual
+        # param widths -- an 8-byte param would make stack_bytes // 4 emit
+        # the wrong number of (all 4-byte) params, an arity mismatch against
+        # the real call site. Bail rather than emit a wrong-arity prototype.
+        return None
+    param_count = stack_bytes // 4
+    params = ", ".join(["unsigned int"] * param_count) if param_count else "void"
+    keyword = "__stdcall" if callconv == "stdcall" else "__fastcall"
+    return_type = _infer_callee_return_type(callee_source, callee_name)
+    return f"extern {return_type} {keyword} {callee_name}({params});"
+
+
+def infer_callee_prototypes(source: str, self_name: str, source_generation_root: Path) -> str:
+    names = sorted({name for name in _CALLEE_CALL_RE.findall(source) if name != self_name})
+    prototypes = []
+    for name in names:
+        prototype = infer_callee_prototype(name, source_generation_root)
+        if prototype:
+            prototypes.append(prototype)
+    return "\n".join(prototypes)
+
+
 def packaged_source_candidate(row: dict[str, Any]) -> GeneratedCandidate | None:
     if not row.get("sourceTask"):
         return None
@@ -19133,7 +19246,12 @@ def packaged_source_candidate(row: dict[str, Any]) -> GeneratedCandidate | None:
     # Packaged .c sources are raw decompiler output (e.g. Ghidra's undefined4/code/byte
     # pseudo-types) with no typedefs of their own; without the shim MSVC/clang fail to
     # even parse the file, so nothing downstream ever reaches objdiff.
-    compile_source = build_shim(source) + "\n\n" + source if suffix == ".c" else source
+    callee_prototypes = ""
+    if suffix == ".c":
+        callee_prototypes = infer_callee_prototypes(source, c_name, source_path.parent.parent)
+        compile_source = build_shim(source) + (f"\n{callee_prototypes}\n" if callee_prototypes else "") + "\n" + source
+    else:
+        compile_source = source
     return GeneratedCandidate(
         rule=str(automatic_generator.get("rule") or "packaged-source"),
         variant="packaged-source",
@@ -19150,6 +19268,7 @@ def packaged_source_candidate(row: dict[str, Any]) -> GeneratedCandidate | None:
             "packagedSource": str(source_path),
             "packagedSourceSha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
             "sourceOrigin": row.get("sourceOrigin"),
+            "calleePrototypesInferred": callee_prototypes.splitlines(),
         },
         source_suffix=suffix,
         semantic_source=row.get("semanticSource") is not False,
@@ -19194,7 +19313,7 @@ def infer_packaged_symbol(row: dict[str, Any], source: str, c_name: str, suffix:
             return match.group(1)
         return c_name
     callconv = infer_packaged_callconv(source, suffix)
-    stack_bytes = packaged_stack_bytes(row, c_name)
+    stack_bytes = packaged_stack_bytes(row, c_name, source=source)
     if callconv == "stdcall" and stack_bytes is not None:
         return f"_{c_name}@{stack_bytes}"
     if callconv == "fastcall" and stack_bytes is not None:
@@ -19202,7 +19321,29 @@ def infer_packaged_symbol(row: dict[str, Any], source: str, c_name: str, suffix:
     return cdecl_symbol(c_name)
 
 
-def packaged_stack_bytes(row: dict[str, Any], c_name: str) -> int | None:
+# Pseudo-types (and their real-type equivalents) that occupy 8 bytes on the
+# stack rather than the 4-byte default -- matched against a parameter's type
+# tokens (everything before the parameter name).
+_EIGHT_BYTE_PARAM_TYPE_RE = re.compile(r"\b(undefined8|double|long\s+long|__int64)\b")
+
+
+def _count_stack_bytes_from_parameter_list(params_text: str) -> int:
+    params_text = params_text.strip()
+    if not params_text or params_text == "void":
+        return 0
+    total = 0
+    for param in params_text.split(","):
+        param = param.strip()
+        if not param:
+            continue
+        total += 8 if _EIGHT_BYTE_PARAM_TYPE_RE.search(param) else 4
+    return total
+
+
+_AUTO_DECOMPILER_NAME_RE = re.compile(r"^(?:sub|FUN)_[0-9a-fA-F]+$")
+
+
+def packaged_stack_bytes(row: dict[str, Any], c_name: str, *, source: str | None = None) -> int | None:
     generator = row.get("automaticGenerator") if isinstance(row.get("automaticGenerator"), dict) else {}
     stack_bytes = optional_int(generator.get("stackBytes"))
     if stack_bytes is not None:
@@ -19211,9 +19352,25 @@ def packaged_stack_bytes(row: dict[str, Any], c_name: str) -> int | None:
     match = re.search(r"@(\d+)$", name)
     if match:
         return int(match.group(1))
-    match = re.search(r"_(\d+)$", c_name)
-    if match:
-        return int(match.group(1))
+    # Skip the "_<digits>" suffix heuristic for Ghidra's default auto-named
+    # functions (sub_<hex>/FUN_<hex>) -- when the address happens to be
+    # composed entirely of decimal digits (no a-f), this would misread the
+    # function's own address as a stack-byte annotation (e.g. sub_11240 ->
+    # wrongly inferred as 11240 stack bytes). The suffix is only meaningful
+    # for deliberately-named helpers (e.g. "helper_16" meaning 16 bytes).
+    if not _AUTO_DECOMPILER_NAME_RE.match(c_name):
+        match = re.search(r"_(\d+)$", c_name)
+        if match:
+            return int(match.group(1))
+    if source:
+        # No external metadata carries the stack-byte count (common for a
+        # plain decompiler-named function like sub_1234 with no @N suffix
+        # anywhere) -- count it directly from the parsed function's own
+        # parameter list rather than silently falling back to cdecl naming
+        # for what may genuinely be a stdcall/fastcall function.
+        sig_match = re.search(rf"\b{re.escape(c_name)}\s*\(([^)]*)\)", source)
+        if sig_match:
+            return _count_stack_bytes_from_parameter_list(sig_match.group(1))
     return None
 
 
@@ -20335,8 +20492,21 @@ def byte_field_guard_return_self_variants(row: dict[str, Any], candidate: Genera
     ]
 
 
+# Two distinct concerns share this check.
+#
+# Preprocessor/linker directives are a sandbox concern: a rewrite is untrusted
+# text and must not be able to pull in headers or influence linkage.
+#
+# Inline assembly, naked functions, and byte emission are a *deliverable*
+# concern: they reproduce the target bytes exactly, so they pass the objdiff
+# gate while destroying the readable-C output the pipeline exists to produce.
+# An unconstrained rewrite lane converges on them immediately -- the only
+# completed mechanism-3 result before this clause existed was
+# `__asm { inc dword ptr [DAT_00830540] }`. Word boundaries keep ordinary
+# identifiers that merely contain these letters (plasmaCount) from matching.
 _REWRITE_CONTENT_DISALLOWED_RE = re.compile(
-    r"^\s*#\s*(pragma|include|import|define|undef|ifdef|ifndef|if|elif|else|endif|error|line)\b|_Pragma\s*\(",
+    r"^\s*#\s*(pragma|include|import|define|undef|ifdef|ifndef|if|elif|else|endif|error|line)\b|_Pragma\s*\("
+    r"|\b__asm\b|\b_asm\b|\basm\s*\(|__declspec\s*\(\s*naked|\b__emit\b|\.incbin\b",
     re.MULTILINE,
 )
 _REWRITE_LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")

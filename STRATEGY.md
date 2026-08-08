@@ -1,83 +1,94 @@
 ---
 name: AgentDecompile
-last_updated: 2026-07-24
+last_updated: 2026-08-08
+charter: VISION.md
 active_living_plan: docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md
 ---
 
 # AgentDecompile Strategy
 
+Charter and motif live in [VISION.md](VISION.md). This file is the near-term investment map under that charter — not a second north star.
+
 ## Problem
 
-Reverse engineers juggle binaries, Ghidra projects, partial decompilations, notes, and half-finished source trees. Nothing ties them together with a check you can rebuild against. Format conversions lose detail. "Looks right in the decompiler" is not the same as "compiles to the same object."
+Compiled and packaged software arrives as opaque artifacts. Agents and reverse engineers need that reality as **rich, citeable context** — layouts, sections, resources, analysis state, and (when wanted) rebuildable candidates — without hallucinated identity or a single forced recovery ritual.
 
 ## Approach
 
-Recovery is a pipeline: pull in context, treat Ghidra and the binary inventory as ground truth, generate candidate C, and only promote what survives compile + objdiff (or an equivalent hard gate). Exports say what is **verified** (objdiff zero) vs **advisory** (Ghidra decompilation, sketches, etc.).
-
-One product name: **AgentDecompile**. Recovery runs from this repo only — not from the archived Mizuchi tree ([MIZUCHI_ARCHIVE.md](docs/MIZUCHI_ARCHIVE.md)).
+**Substrate first.** Acquire and dismantle delivery formats into navigable trees and provenance-anchored evidence; expose interactive Ghidra/MCP primitives and optional hard oracles (compile, objdiff) that agents compose. Matching recovery is a **powerful recipe** on top of that substrate, not the product identity.
 
 ```mermaid
-flowchart LR
-  ctx[Context and binary] --> ghidra[Ghidra ground truth]
-  ghidra --> cand[Candidate source]
-  cand --> gate[Compile and objdiff]
-  gate -->|pass| verified[verified/]
-  ghidra -->|read-only| advisory[advisory/]
-  verified --> dump[Layered source dump]
-  advisory --> dump
+flowchart TD
+  raw[Opaque artifacts] --> dismantle[Dismantle and acquire]
+  dismantle --> evidence[Provenance-anchored evidence]
+  evidence --> agent[Human or agent composes]
+  agent --> analysis[Interactive analysis]
+  agent --> verify[Optional compile and objdiff]
+  analysis --> evidence
+  verify --> evidence
+  evidence --> outs[Tiered outs: trees, facts, advisory, verified]
 ```
 
+One product name: **AgentDecompile**. Recovery runs from this repo only — not from the archived donor tree ([UPSTREAM_DONOR_ARCHIVE.md](docs/UPSTREAM_DONOR_ARCHIVE.md)).
 
 ## Users
 
-**Primary:** People doing matching decompilation on Windows/game PEs (and similar ELF/Mach-O targets) who want rebuildable C, not just pseudocode.
+**Primary:** Agents and operators who need binary/package fluency — open installers and images like source trees, follow provenance, and optionally chase rebuildable parity.
 
-**Secondary:** Agent authors wiring MCP into RE workflows — they need stable Ghidra sessions and a recovery loop that fixes candidates instead of dumping unverified text.
+**Secondary:** Matching-decompilation operators on PE/ELF/Mach-O targets who want compile+objdiff honesty when they choose that bar.
 
 ## Metrics
 
 | Metric | What we measure |
 |--------|-----------------|
-| Verified function parity | Share of inventoried functions at objdiff 0; ladder targets **1% → 5% → 20%** (not "90% recovered" as a near-term claim) |
-| Context merge yield | Artifacts from acquisition that actually update labels/data/functions |
-| One-shot slice success | Bounded run produces compilable source with correct claim labels |
-| False-claim rate | Promoted artifacts that fail a stronger audit later — should go down |
-| Agent loop completion | Autonomous repair cycles end in verified match or a named failure, not silence |
-| Stage wall-time | Seconds per stage on a cold full run (`stage-timings.json`); speed must not come from skipping functions or reusing stale receipts |
+| Context yield | Authoritative, agent-usable structure/facts produced from opaque input |
+| Provenance coverage | Share of emitted symbols/facts with intact origin citations |
+| Dismantle fidelity | Navigability of section / package / install / resource layouts |
+| Partial usefulness | Incomplete runs still leave actionable trees and honest claims |
+| Verified function parity | Share of inventoried functions at objdiff 0 when that bar is in play; ladder **1% → 5% → 20%** |
+| False-claim rate | Promoted artifacts failing stronger audit later — should go down |
+| Agent loop completion | Cycles end in a named useful outcome — not hang or silence |
+| Stage wall-time | Cold-run stage seconds when running recovery recipes — without skipping inventory or reusing stale receipts as fresh |
 
 ## Work tracks
 
+### Acquisition and dismantling
+
+Unpackers, section/resource trees, package/install layouts, fingerprint-keyed acquisition bundles — first-class capabilities. MCP peers in this substrate slice: `export-context`, `acquisition-query`. `acquire` remains CLI/recovery until a follow-up elevates it.
+
 ### Context fusion
 
-Single path to merge notes, partial source, Ghidra exports, and project files into the active recovery target.
+Merge notes, partial source, Ghidra exports, and project knowledge by address with conflict retention; propose ≠ apply ([CONTEXT_FUSION.md](docs/CONTEXT_FUSION.md)).
 
 ### Ghidra MCP reliability
 
-Session-stable PyGhidra MCP/CLI with real analysis gates so agents and humans see the same program state.
+Session-stable PyGhidra MCP/CLI with real analysis gates so agents and humans share program state. Prefer primitives on the curated surface; mega-routers optional.
 
-### Matching recovery
+### Matching recovery (recipe track)
 
-Compiler-profile corpus, relocation-aware objects, candidate generation, vacuum/repair loop. Default `agentdecompile-reconstruct` runs **enrich-before-decompile** (names/types/RTTI/module-map via PyGhidra) before source generation; operators can pass `--skip-enrichment` for inventory/match-only runs. Scale with match cache (skip proven zero-diff unless `--force-rematch`) and parallel Wine/MSVC workers. Record stage timings.
+Compiler-profile corpus, relocation-aware objects, candidate generation, vacuum/repair loop. `agentdecompile-reconstruct` remains the operator one-shot recipe (enrich-before-decompile by default; `--skip-enrichment` for inventory/match-only). Scale with match cache and parallel workers. Record stage timings. **Do not treat this track as the only valid use of the product.**
 
 ### Multi-format export
 
-Asm, C/C++, higher-level views, hex packages — each tagged verified or advisory. Default one-shot output: layered dump (`--dump-source`) with `verified/` (objdiff 0 only), `advisory/ghidra/`, and `Port/CODE/` (readability-gated; noise-stripped). Port readability is advisory — never a proof claim.
+Asm, C/C++, higher-level views, hex packages — each tagged verified or advisory; layered dumps with claims documentation.
 
 ### One-shot performance (U1–U5 completed)
 
-Shared Ghidra analysis, higher default decompile threads, digest-gated dump/match, and fail-closed objdiff landed in PR #140. Living plan (completed; backlog G14–G16): [docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md](docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md). Remaining scale work: per-worker Wine prefixes, synth wall-time/compile cache, SSD work-dir guidance — without skipping inventory or reusing stale receipts.
+Shared Ghidra analysis, digest-gated dump/match, fail-closed objdiff (PR #140). Living plan backlog G14–G16: [docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md](docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md).
 
 ## Out of scope
 
 - Calling byte emitters, `.incbin`, or copied target bytes "recovered source"
-- Treating decompiler output or LLM text as proof without compile/objdiff
-- Near-term whole-binary semantic parity claims (e.g. 90% of one game binary in one shot)
-- Second product brands (Mizuchi/ReconKit) or recovery from `~/Workspaces/Mizuchi`
+- Treating decompiler output or LLM text as proof without an explicit hard check when a proof claim is made
+- Forcing every agent task through the reconstruct critical-path ritual
+- Near-term whole-binary semantic parity marketing claims
+- Second product brands or recovery from archived donor checkouts
 - Rematching objdiff-0 functions without `--force-rematch`
-- Presenting last week's match JSONL or dump as today's fresh run when the task was to produce source
+- Presenting stale artifacts as fresh run output when production of new context was requested
+- Hardcoding commercial product identities into generic defaults — profiles derive from format and stem
 
 ## Positioning
 
-**One line:** Binaries and messy RE context in; verified, rebuildable source out — not pretty pseudocode.
+**One line:** Compiled reality as agent-native context — structured, citeable, partially useful immediately, fully honest always.
 
-**Message:** Ghidra-backed ground truth, autonomous matching recovery, and honest labels on every export.
+**Message:** Dismantle and fuse evidence first; compose analysis and optional verification; never blur claim tiers.

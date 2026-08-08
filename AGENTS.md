@@ -6,11 +6,13 @@ See [README.md](README.md) for project overview, [STRATEGY.md](STRATEGY.md) for 
 
 `docs/solutions/` — documented solutions to past problems (MCP/Ghidra integration, analysis gate, CLI agents, workflows), organized by category with YAML frontmatter (`module`, `problem_type`, `component`, `tags`). Relevant when implementing or debugging in those areas; search by module or tag before changing `src/agentdecompile_cli/`.
 
+`CONCEPTS.md` — shared domain vocabulary (entities, named processes, status concepts) for this project. Relevant when orienting to the codebase or discussing domain concepts such as substrate vs matching recovery.
+
 **Agent-native audit (2026-05-24):** [docs/audits/2026-05-24-agent-native-audit.md](docs/audits/2026-05-24-agent-native-audit.md) — scored MCP/CLI/GUI parity review; P1 follow-ups in [docs/residual-review-findings/impl-agent-native-audit-c2bc.md](docs/residual-review-findings/impl-agent-native-audit-c2bc.md). Patterns: [docs/solutions/architecture-patterns/agent-native-mcp-patterns.md](docs/solutions/architecture-patterns/agent-native-mcp-patterns.md).
 
 ## Recovery integration
 
-This repo is the **only** active recovery cwd. Capabilities from the Mizuchi/ReconstructKit donor fold in here; do not keep a parallel product surface. See [docs/MIZUCHI_ARCHIVE.md](docs/MIZUCHI_ARCHIVE.md): Mizuchi is read-only—do not run `source-parity-one-shot` or rematch jobs there.
+This repo is the **only** active recovery cwd. Capabilities from the upstream donor checkout fold in here; do not keep a parallel product surface. See [docs/UPSTREAM_DONOR_ARCHIVE.md](docs/UPSTREAM_DONOR_ARCHIVE.md): the donor checkout is read-only—do not run `source-parity-one-shot` or rematch jobs there.
 
 Package: `src/agentdecompile_recovery/` plus companion scripts under `scripts/`.
 
@@ -30,93 +32,7 @@ The imported code expects a repo-root `scripts/` tree and root-relative `target/
 
 ## Cursor Cloud specific instructions
 
-### Environment
-
-- **Python 3.10+** and **Java 21** (OpenJDK) are pre-installed in the VM.
-- **Ghidra 12.0.4** is installed at `/opt/ghidra-install/ghidra_12.0.4_PUBLIC`. Set `GHIDRA_INSTALL_DIR` accordingly.
-- **uv** package manager is at `~/.local/bin/uv`. Ensure `$HOME/.local/bin` is on `PATH`.
-- **PyGhidra** is installed from Ghidra's bundled pypkg (not PyPI). The update script reinstalls it from `$GHIDRA_INSTALL_DIR/Ghidra/Features/PyGhidra/pypkg`.
-- **ruff** is in the `dev` dependency group (`uv sync --dev`); CI runs `uv run ruff check` via `test-unit.yml`.
-- chromadb (semantic search) is optional and not installed; the server logs a warning but operates normally without it.
-
-### Injected secrets (environment variables)
-
-**agentdecompile-server** is always a local instance (PyGhidra/JVM); it does not use proxy URL env vars. For local server runs, **unset** Ghidra server credentials if you do not want HTTP Basic Auth on MCP requests:
-
-```bash
-unset AGENT_DECOMPILE_GHIDRA_SERVER_USERNAME
-unset AGENT_DECOMPILE_GHIDRA_SERVER_PASSWORD
-unset AGENT_DECOMPILE_GHIDRA_SERVER_HOST
-unset AGENT_DECOMPILE_GHIDRA_SERVER_PORT
-unset AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY
-```
-
-To run in **proxy mode** (forward to a remote MCP backend), use **agentdecompile-proxy** and set `AGENT_DECOMPILE_MCP_SERVER_URL` or `AGENTDECOMPILE_MCP_SERVER_URL` (or pass `--backend-url`).
-
-**Auto match-function propagation** (optional):
-
-- **`AGENTDECOMPILE_AUTO_MATCH_PROPAGATE`**: When set to `1` or `true`, after function-modifying tools (`rename-function`, `manage-function` with rename/set_prototype/set_return_type/set_calling_convention, `manage-comments` with set/post/eol/etc., `manage-function-tags` with add/remove), the server automatically runs match-function for the modified function to configured target binaries, propagating names, tags, all comment types, prototype, and bookmarks, and checks in target programs (minimizing lock time when it checked them out). For **local .gpr projects**, propagation runs in a **child process** (ProcessPoolExecutor, spawn) so the main MCP process is not blocked; for shared-server or other sessions it runs in-process. **HTTP equivalent:** send header `X-AgentDecompile-Auto-Match-Propagate` with value `1`, `true`, or `yes` (per-request override).
-- **`AGENTDECOMPILE_AUTO_MATCH_TARGET_PATHS`**: Optional comma-separated list of target program paths for auto propagation. If unset, other open programs in the session are used as targets. **HTTP equivalent:** `X-AgentDecompile-Auto-Match-Target-Paths` (comma-separated paths; per-request override).
-
-**Max analysis tier filter** (optional):
-
-- **`AGENTDECOMPILE_MAX_ANALYSIS_TIER`** (alias **`AGENT_DECOMPILE_MAX_ANALYSIS_TIER`**): When set to `2` or `3`, `tools/list` and `agentdecompile://capabilities` expose only tools with `analysis_tier` ≤ that value. Unset = no filter. **`tools/call` is unchanged** — tier-3 tools remain callable when hidden from the list. **HTTP equivalent:** header `X-AgentDecompile-Max-Analysis-Tier` with value `2` or `3` (per-request override; invalid values fall back to env).
-
-**Auto check-in** (optional):
-
-- **`AGENTDECOMPILE_AUTO_CHECKIN`**: When set to `1` or `true`, after any modifying tool succeeds (e.g. `manage-symbols` rename/create_label, `manage-function` rename/set_prototype, `manage-comments` set, `manage-structures` create/apply, `apply-data-type`, `manage-bookmarks` set, `manage-function-tags` add/remove, `match-function`), the server automatically runs **checkin-program** with no path (check in all): for **shared/versioned** programs it checks them in to the server; for **local** (non-versioned) programs it saves to disk. When this is set, **checkin-program** is not advertised, since check-ins/saves happen automatically.
-
-**Checkin all** (when auto-checkin is off): Call **checkin-program** with no `programPath` (or omit the parameter) to check in every open program in the session that is checked out and can be checked in, so changes are not left locked.
-
-### Running the MCP server locally
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-export GHIDRA_INSTALL_DIR=/opt/ghidra-install/ghidra_12.0.4_PUBLIC
-# Unset Ghidra server credentials if you do not want auth (see above)
-uv run agentdecompile-server -t streamable-http --host 127.0.0.1 --port 8080 \
-  --project-path /tmp/agentdecompile-projects /path/to/binary
-```
-
-The server takes ~3 seconds to initialize PyGhidra/JVM. Once running, use the CLI:
-
-```bash
-uv run agentdecompile-cli --server-url http://127.0.0.1:8080 tool-seq \
-  '[{"name":"open-project","arguments":{"path":"/path/to/binary"}},
-    {"name":"analyze-program","arguments":{"programPath":"binaryname"}},
-    {"name":"list-functions","arguments":{"programPath":"binaryname","limit":10}}]'
-```
-
-### Session and proxy behavior
-
-- **Session id:** The server (or proxy) assigns an MCP session id at initialization and returns it in response headers (`mcp-session-id`). Clients must send it on all subsequent requests (MCP Streamable HTTP spec).
-- **CLI persistence:** The CLI persists the session id per normalized backend URL (in `.agentdecompile/cli_state.json`) and sends it on later invocations when the same `--server-url` is used, so `open-project` in one run and `checkout-program` in a second run can reuse the same server session.
-- **Proxy forwarding:** Proxies (e.g. agentdecompile-proxy) must forward the client's `mcp-session-id` header to the backend so the same logical session is used end-to-end. Without that, the backend sees a new session each request and shared-project state from a previous `open-project` is not available.
-
-### Default session
-
-When no session id is provided (no `mcp-session-id` header and no session cookie), the server uses a single stable session id `"default"`. All such requests share the same in-memory session, so multiple requests (e.g. sequential CLI invocations) can reuse the same session without the client persisting a session id. **Caveat:** Multiple independent clients that do not send a session id will share the same default session. Single-user or single-client use is the intended case for "no session id"; for multi-user or multi-session use, clients should send distinct session ids (or use cookies so each gets a distinct id).
-
-### Session id in logs (security)
-
-Do not log full MCP session ids. Use a redacted form (e.g. first 8–12 characters + "…") or "present" in all log messages. If any middleware or handler logs response bodies, ensure `sessionId` is redacted or excluded (e.g. debug_info returns `sessionId` in payloads; do not log those payloads in full).
-
-### Session state caveat
-
-CLI reuses the same server session across invocations when the same `--server-url` is used, provided the server (or proxy) forwards the session id. If you use a proxy, ensure it forwards `mcp-session-id` to the backend. Programs loaded in one session are available in the next run only when the session is preserved. Use `tool-seq` to chain multiple tool calls (open, analyze, list, decompile) within a single run, or pass binaries as positional arguments to `agentdecompile-server` so they are imported at startup.
-
-### Lint, test, build
-
-| Task | Command |
-|------|---------|
-| Lint | `uv run ruff check --no-fix src/ tests/` |
-| Test (all) | `uv run pytest tests/ -v --timeout=180` |
-| Test (unit only) | `uv run pytest -m unit -v` |
-| Test (analysis gate) | `uv run pytest tests/test_program_analysis_gate.py tests/test_tool_providers_analysis_gate.py -m unit -q` |
-| CI (unit, no Ghidra) | GitHub Actions workflow `test-unit.yml` on PRs to `master` |
-| Build | `uv build` |
-
-Pre-existing lint violations (36 errors) exist in the codebase; they are not caused by the development environment. Docker-dependent e2e tests require a running Docker environment to pass.
+Environment setup, env-var reference (auto-match-propagate, auto-checkin, max-analysis-tier), local server startup, session/proxy behavior, and lint/test/build commands: see the **agentdecompile-server-env** skill (`.claude/skills/agentdecompile-server-env/SKILL.md`).
 
 ## Naming Conventions
 
@@ -158,31 +74,5 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 ## Learned Workspace Facts
 
 - When editing video-derived docs (e.g. docs/from_video), keep product names accurate in historical notes, but do not encode those names into recovery pipeline defaults or profile detection.
-- open-project: `analyzeAfterImport` is optional and defaults to true. `open` and `import-binary` always run incremental Ghidra auto-analysis when needed (blocking); other program-scoped tools wait until analysis completes for that program.
-- Load Ghidra from `GHIDRA_INSTALL_DIR` via a top-level repo `.env`; the path must match the real install folder name (for example `ghidra_12.0.4_PUBLIC`—a wrong or stale basename breaks LFG/driver).
-- Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
-- In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
-- For proxy mode set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path; use separate backends and proxy URLs when multiple projects run at once. The CLI persists mcp-session-id per normalized --server-url; without a session header the server may use one default session—send distinct session ids for multi-user or multi-client use. Keep server-side session state on the same logical key as the client-persisted id so it does not split across `default` and `sdk-session:…` buckets.
-- For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
-- Before domain_file.save() or shared versioned checkin-program while a program is open (e.g. sync-project push, check-in all), end the program's active transaction to avoid "Unable to lock due to active transaction". For shared check-in, the DomainFile used must match the open program being edited—repo-style programPath strings and Program.getDomainFile() pathnames may differ only by basename on Windows; mismatched resolution yields "File has not been modified since checkout" despite successful mutations.
-- get-function with an address returns the containing function (not the callee); get-references and list-cross-references accept addressOrSymbol or importName (thunk and IAT supported; .rsrc targets include LoadStringA/LoadStringW as indirect refs).
-- When Ghidra exposes multiple overloads for the same operation (e.g. `Listing.getComment` variants), support both with try/fallback for compatibility across backends.
-- Comments, bookmarks, function rename/prototype, function-tags, create-label, and manage-symbols are advertised by default (not in registry _DEFAULT_HIDDEN_TOOLS or CLI curated-only list).
-- Cross-binary match-function uses signature (param count, return type), name, and call graph (caller/callee names) to find the same function in another binary; it does not use byte or instruction-level comparison, so it works when addresses, registers, and stack layout differ across builds.
-- Strict proof sequence `/lfg` is defined in `.cursor/commands/lfg.md` (shared Ghidra Server, MCP restarts, `tool-seq`). For automation, avoid unmodified stock `ghidraSvr.bat console` (separate JVM window and poor terminal logging); use the driver’s patched background start or a dedicated Ghidra window per that doc.
-- Setting `AGENT_DECOMPILE_GHIDRA_SERVER_REPOSITORY` (or the legacy alias) on the MCP server process can make shared-session bootstrap treat the repository name as a program key; LFG scripting avoids exporting repository into MCP env, and program activation skips treating the repo name as a program when it matches the open shared handle’s repository.
-- ContextStream Claude Code hooks should be launched via `scripts/contextstream_claude_hook.ps1` (or a stable copy under `~/.claude/scripts`), resolving the global `@contextstream/mcp-server` install instead of stale `npx` cache paths to `index.js`.
-- For JPype buffers passed to Ghidra `Memory.getBytes`, allocate with `jpype.JArray(jpype.JByte)(length)`; Pyright may need `cast(Any, ...)` around the constructor when stubs disagree.
-- `ProgramInfo` (`context.py`) declares optional `domain_object_consumer` and `domain_file` for shared/versioned program lifecycle; use those typed fields instead of `setattr`.
 
-## Modification conflicts (two-step flow)
-
-Tools that modify project data (e.g. `manage-symbols` rename, `manage-function` rename/set_prototype, `manage-comments` set, `manage-structures` create/apply, `apply-data-type`, `manage-bookmarks` set) may return a **conflict** when the change would overwrite existing custom data. In that case, the response includes a `conflictId` and a udiff-style summary. Use **`resolve-modification-conflict`** with that `conflictId` and `resolution=overwrite` to apply the change or `resolution=skip` to discard. Do not retry the modifying tool with the same args to force overwrite—only `resolve-modification-conflict` completes the flow.
-
-## Tiered reverse-engineering analysis
-
-Agents should **not default to Ghidra** for every task. Use the **tiered-re-analysis** skill ([.cursor/skills/tiered-re-analysis/SKILL.md](.cursor/skills/tiered-re-analysis/SKILL.md)) and knowledge base ([docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md](docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md)): Tier 0 shell/static tools → Tier 1 batch `ghidrecomp` → Tier 2 MCP read-only → Tier 3 decompile/mutations. Multi-agent RE agents (`.github/agents/re-*.agent.md`) follow this routing in Planner triage and Worker/Critic verification.
-
-## MCP server debugging & self-healing
-
-When investigating or fixing MCP server issues (timeouts, schema, GUI/coords, sandbox), use the **mcp-debugging** skill: open [.cursor/skills/mcp-debugging/SKILL.md](.cursor/skills/mcp-debugging/SKILL.md) or invoke `/mcp-debugging` in Agent chat. The skill references the meta-debug loop and the five CLIs (MCP Inspector, mcptools, mcp-debug, mcp-trace, FastMCP CLI). Detailed docs: [references/CLIS_AND_META_DEBUG.md](.cursor/skills/mcp-debugging/references/CLIS_AND_META_DEBUG.md), [references/WORKFLOWS.md](.cursor/skills/mcp-debugging/references/WORKFLOWS.md), [references/CLAUDE_MCP_DEBUG.md](.cursor/skills/mcp-debugging/references/CLAUDE_MCP_DEBUG.md).
+Ghidra/MCP-server-specific gotchas (session semantics, JPype, tool routing, checkin/conflict flow), modification-conflict handling, tiered RE analysis routing, and MCP server debugging: see [src/agentdecompile_cli/CLAUDE.md](src/agentdecompile_cli/CLAUDE.md) — loads automatically when working in that package.

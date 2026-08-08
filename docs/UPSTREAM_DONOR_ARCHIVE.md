@@ -1,4 +1,4 @@
-# Mizuchi archive (read-only donor)
+# Upstream donor archive (read-only)
 
 **Status:** archived donor checkout. Not an active recovery product.
 
@@ -6,14 +6,14 @@
 flowchart TD
     A[Recovery work] --> B{Which checkout?}
     B -->|AgentDecompile| C[Active: match, dump, one-shot]
-    B -->|Mizuchi| D[Archive: read-only donor]
+    B -->|Upstream donor| D[Archive: read-only donor]
     D -.->|copy receipts/scripts| C
     D -.->|never run pipelines| X[No source-parity-one-shot / rematch]
 ```
 
 ## Hard rule
 
-Do **not** run recovery pipelines from `~/Workspaces/Mizuchi` (or `/run/media/.../Mizuchi`):
+Do **not** run recovery pipelines from the upstream donor checkout:
 
 - No `source-parity-one-shot`
 - No `swkotor-match-*` rematches
@@ -26,7 +26,7 @@ cd ~/Workspaces/agentdecompile   # or /run/media/.../Workspaces/agentdecompile
 uv run agentdecompile-reconstruct ...
 ```
 
-## What Mizuchi still is
+## What the upstream donor checkout still is
 
 - Historical receipts, inventories, and matched sources under its `target/` (copy/symlink into AgentDecompile `target/` if needed)
 - Donor of scripts and ideas already folded into `src/agentdecompile_recovery/`

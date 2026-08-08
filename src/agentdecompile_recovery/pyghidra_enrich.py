@@ -29,6 +29,8 @@ class EnrichProgram(Protocol):
 
     def apply_struct(self, class_name: str, fields: list[dict[str, str]]) -> None: ...
 
+    def apply_signature(self, entry: int, signature: dict[str, Any]) -> bool: ...
+
     def decompile(self, entry: int) -> dict[str, Any]: ...
 
     def close(self) -> None: ...
@@ -41,6 +43,7 @@ class FakeEnrichProgram:
     calls: list[str] = field(default_factory=list)
     names: dict[int, str] = field(default_factory=dict)
     structs: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+    signatures: dict[int, dict[str, Any]] = field(default_factory=dict)
     decompile_text: str = "void FUN_stub(void) {\n  return;\n}\n"
     closed: bool = False
 
@@ -54,6 +57,11 @@ class FakeEnrichProgram:
     def apply_struct(self, class_name: str, fields: list[dict[str, str]]) -> None:
         self.calls.append(f"struct:{class_name}")
         self.structs[class_name] = fields
+
+    def apply_signature(self, entry: int, signature: dict[str, Any]) -> bool:
+        self.calls.append(f"signature:{entry}:{signature.get('callingConvention')}")
+        self.signatures[entry] = signature
+        return True
 
     def decompile(self, entry: int) -> dict[str, Any]:
         self.calls.append(f"decompile:{entry}")
@@ -150,6 +158,93 @@ class PyGhidraEnrichProgram:
         finally:
             self.program.endTransaction(tx, commit)
 
+    def _resolve_type(self, type_name: str | None) -> Any:
+        """Best-effort Ghidra `DataType` for a curated type name, or None.
+
+        Curated engine types (`CExoString`, `Vector`) do not exist in a freshly
+        imported program, so an exact lookup usually fails. What has to survive
+        that failure is the *width and shape* of the parameter, because that is
+        what decides where an argument lands: a pointer becomes a generic
+        pointer, anything else falls back to `undefined4`. Getting the exact
+        struct back would improve readability, not the ABI.
+        """
+
+        from ghidra.program.model.data import (
+            BuiltInDataTypeManager,
+            PointerDataType,
+            Undefined4DataType,
+        )
+
+        text = str(type_name or "").strip()
+        if not text:
+            return None
+        if text.endswith("*") or text.endswith("&"):
+            return PointerDataType()
+        managers = (self.program.getDataTypeManager(), BuiltInDataTypeManager.getDataTypeManager())
+        for manager in managers:
+            for path in (f"/{text}", text):
+                try:
+                    found = manager.getDataType(path)
+                except Exception:  # noqa: BLE001 - malformed path is a miss, not a failure
+                    found = None
+                if found is not None:
+                    return found
+        return Undefined4DataType.dataType
+
+    def apply_signature(self, entry: int, signature: dict[str, Any]) -> bool:
+        """Apply a curated prototype to one function; True when it took effect.
+
+        Only called for signatures that already passed the `ret N` arity gate in
+        `curated_enrichment` -- this method does no validation of its own and
+        must not be handed an unchecked prototype.
+
+        Failures are swallowed and reported as False rather than raised: a
+        prototype the target program will not accept (an unknown calling
+        convention for its compiler spec, a parameter that will not fit its
+        storage model) must degrade to "decompile without it", not abort a run
+        over thousands of functions.
+        """
+
+        from ghidra.program.model.data import Undefined4DataType
+        from ghidra.program.model.listing import Function, ParameterImpl, ReturnParameterImpl
+        from ghidra.program.model.symbol import SourceType
+        # `updateFunction`'s two overloads take `List` or `Variable[]`; a Python
+        # list matches neither, so JPype raises "no matching overloads" and the
+        # prototype silently never lands.
+        from java.util import ArrayList
+
+        function = self.program.getFunctionManager().getFunctionAt(self._address(entry))
+        if function is None:
+            return False
+
+        convention = str(signature.get("callingConvention") or "").strip() or None
+        return_type = self._resolve_type(signature.get("returnType"))
+        parameters = ArrayList()
+        for index, raw in enumerate(signature.get("parameters") or []):
+            if not isinstance(raw, dict):
+                continue
+            data_type = self._resolve_type(raw.get("type")) or Undefined4DataType.dataType
+            label = str(raw.get("name") or "").strip() or f"param_{index + 1}"
+            parameters.add(ParameterImpl(label, data_type, self.program))
+
+        tx = self.program.startTransaction(f"Apply curated prototype at {entry:#x}")
+        commit = False
+        try:
+            function.updateFunction(
+                convention,
+                None if return_type is None else ReturnParameterImpl(return_type, self.program),
+                parameters,
+                Function.FunctionUpdateType.DYNAMIC_STORAGE_FORMAL_PARAMS,
+                True,
+                SourceType.USER_DEFINED,
+            )
+            commit = True
+        except Exception:  # noqa: BLE001 - see docstring: degrade, never abort the run
+            return False
+        finally:
+            self.program.endTransaction(tx, commit)
+        return True
+
     def decompile(self, entry: int) -> dict[str, Any]:
         from ghidra.util.task import TaskMonitor
 
@@ -201,6 +296,10 @@ class EnrichSession:
     boundaries: list[dict[str, Any]] = field(default_factory=list)
     module_by_entry: dict[int, str] = field(default_factory=dict)
     names_by_entry: dict[int, tuple[str, str]] = field(default_factory=dict)
+    #: Curated prototypes keyed by entry VA, as loaded from
+    #: `curated_project.load_curated_signatures`. Only records that already
+    #: passed the `ret N` arity gate belong here.
+    signatures_by_entry: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 
 def readability_score(*, name: str, module: str | None, provenance: str | None) -> float:
@@ -230,12 +329,18 @@ def build_names_by_entry(
     discovered: list[dict[str, Any]],
     rtti_classes: list[RttiClass] | None = None,
     corpus: ReferenceCorpus | None = None,
+    curated_names: dict[int, str] | None = None,
 ) -> dict[int, tuple[str, str]]:
     """Ranked naming evidence applied before decompile.
 
     Priority (last write wins only within a lower priority; higher wins):
     1. Ghidra non-default symbol names (imports, FLIRT, user labels)
     2. Corpus class methods matched by simple name when RTTI class is present
+    3. Curated names from a real curated Ghidra project database (highest)
+
+    `curated_names` defaults to `None`, in which case this tier is skipped
+    entirely and behavior is identical to before it existed -- callers that
+    do not pass it are unaffected.
     """
 
     names: dict[int, tuple[str, str]] = {}
@@ -249,32 +354,64 @@ def build_names_by_entry(
             continue
         names[entry] = (name, "ghidra-symbol")
 
-    if corpus is None or not rtti_classes:
-        return names
+    if corpus is not None and rtti_classes:
+        class_names = {cls.name for cls in rtti_classes}
+        method_to_qualified: dict[str, str] = {}
+        for class_name, cls in corpus.classes.items():
+            if class_name not in class_names:
+                continue
+            for method in cls.methods:
+                simple = method.split("::")[-1] if "::" in method else method
+                method_to_qualified.setdefault(simple, f"{class_name}::{simple}")
 
-    class_names = {cls.name for cls in rtti_classes}
-    method_to_qualified: dict[str, str] = {}
-    for class_name, cls in corpus.classes.items():
-        if class_name not in class_names:
-            continue
-        for method in cls.methods:
-            simple = method.split("::")[-1] if "::" in method else method
-            method_to_qualified.setdefault(simple, f"{class_name}::{simple}")
+        for row in discovered:
+            try:
+                entry = int(row["entry"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if entry in names:
+                continue
+            name = str(row.get("name") or "").strip()
+            if is_default_ghidra_name(name):
+                continue
+            qualified = method_to_qualified.get(name)
+            if qualified:
+                names[entry] = (qualified, "rtti-corpus")
 
-    for row in discovered:
-        try:
-            entry = int(row["entry"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if entry in names:
-            continue
-        name = str(row.get("name") or "").strip()
-        if is_default_ghidra_name(name):
-            continue
-        qualified = method_to_qualified.get(name)
-        if qualified:
-            names[entry] = (qualified, "rtti-corpus")
+    if curated_names:
+        for entry, name in curated_names.items():
+            text = str(name or "").strip()
+            if is_default_ghidra_name(text):
+                continue
+            names[int(entry)] = (text, "curated-project")
+
     return names
+
+
+def curated_fact_fields(curated: dict[str, Any] | None) -> dict[str, Any]:
+    """Fact columns carrying an applied curated prototype, or `{}` when none.
+
+    `callingConvention` and `locals` are the two fields
+    `sourcegen.normalize_function_fact` already reads, so filling them here is
+    what puts the prototype in front of candidate generation; the rest is
+    provenance for a reader auditing where a candidate's shape came from.
+    """
+
+    if not curated:
+        return {}
+    fields: dict[str, Any] = {"curatedSignature": curated.get("signature")}
+    if curated.get("callingConvention"):
+        fields["callingConvention"] = curated["callingConvention"]
+    if curated.get("qualifiedName"):
+        fields["qualifiedName"] = curated["qualifiedName"]
+    named_params = [
+        {"name": item["name"], "slot": item["slot"]}
+        for item in (curated.get("parameters") or [])
+        if isinstance(item, dict) and item.get("name") and item.get("slot")
+    ]
+    if named_params:
+        fields["locals"] = named_params
+    return fields
 
 
 def iter_enriched_facts(session: EnrichSession) -> Iterator[dict[str, Any]]:
@@ -308,15 +445,28 @@ def iter_enriched_facts(session: EnrichSession) -> Iterator[dict[str, Any]]:
         for entry, (name, provenance) in session.names_by_entry.items():
             program.apply_name(entry, name, provenance)
 
+        # Prototypes go on after names and before decompile: the calling
+        # convention decides where arguments live, so the decompiler has to see
+        # it to emit `this->field` instead of a read of an uninitialised
+        # `in_ECX`, and applying it afterwards would change nothing.
+        applied_signatures: set[int] = set()
+        for entry, signature in session.signatures_by_entry.items():
+            if program.apply_signature(int(entry), signature):
+                applied_signatures.add(int(entry))
+
         for row in session.boundaries:
             entry = int(row["entry"] if not isinstance(row.get("entry"), str) else int(str(row["entry"]), 16))
             result = program.decompile(entry)
-            name = str(result.get("name") or f"FUN_{entry:08x}")
-            provenance = str(row.get("provenance") or "eh-frame")
+            # Prefer the ranked naming tier over whatever the decompiler echoed.
+            # apply_name can fail to stick; curated/ghidra tiers must still reach facts.
             if entry in session.names_by_entry:
-                provenance = session.names_by_entry[entry][1]
+                name, provenance = session.names_by_entry[entry]
+            else:
+                name = str(result.get("name") or f"FUN_{entry:08x}")
+                provenance = str(row.get("provenance") or "eh-frame")
             module = session.module_by_entry.get(entry) or row.get("module")
             score = readability_score(name=name, module=module, provenance=provenance)
+            curated = session.signatures_by_entry.get(entry) if entry in applied_signatures else None
             yield {
                 "entry": f"{entry:08x}",
                 "entryOffset": entry,
@@ -329,6 +479,7 @@ def iter_enriched_facts(session: EnrichSession) -> Iterator[dict[str, Any]]:
                 "readabilityScore": score,
                 "section": row.get("section"),
                 "length": row.get("length") or row.get("bodyBytes"),
+                **curated_fact_fields(curated),
                 **({"error": result["error"]} if result.get("error") else {}),
             }
     finally:
@@ -349,7 +500,9 @@ def write_facts_jsonl(path: Path, facts: list[dict[str, Any]], *, receipt: dict[
         "schema": SCHEMA,
         "factsPath": str(path),
         "functionCount": len(facts),
-        "namedCount": sum(1 for f in facts if not str(f.get("name") or "").startswith("FUN_")),
+        "namedCount": sum(
+            1 for f in facts if not is_default_ghidra_name(str(f.get("name") or ""))
+        ),
         **(receipt or {}),
     }
     (path.parent / "enrich-receipt.json").write_text(
@@ -367,6 +520,7 @@ def run_enrich_pipeline(
     program_factory: Callable[[], EnrichProgram],
     module_by_entry: dict[int, str] | None = None,
     names_by_entry: dict[int, tuple[str, str]] | None = None,
+    signatures_by_entry: dict[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     session = EnrichSession(
         program=program_factory(),
@@ -375,21 +529,26 @@ def run_enrich_pipeline(
         boundaries=boundaries,
         module_by_entry=module_by_entry or {},
         names_by_entry=names_by_entry or {},
+        signatures_by_entry=signatures_by_entry or {},
     )
     out_facts.parent.mkdir(parents=True, exist_ok=True)
     function_count = 0
     named_count = 0
+    prototyped_count = 0
     with out_facts.open("w", encoding="utf-8") as handle:
         for fact in iter_enriched_facts(session):
             handle.write(json.dumps(fact, sort_keys=True) + "\n")
             function_count += 1
-            if not str(fact.get("name") or "").startswith("FUN_"):
+            if not is_default_ghidra_name(str(fact.get("name") or "")):
                 named_count += 1
+            if fact.get("curatedSignature"):
+                prototyped_count += 1
     summary = {
         "schema": SCHEMA,
         "factsPath": str(out_facts),
         "functionCount": function_count,
         "namedCount": named_count,
+        "curatedPrototypeCount": prototyped_count,
     }
     (out_facts.parent / "enrich-receipt.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",

@@ -79,6 +79,13 @@ def choose_next_action(
     best_diff = optional_int(verifier_data.get("differenceCount"))
     if best_diff is None:
         best_diff = optional_int(verifier_data.get("differences"))
+    # best_diff doubles as the objdiff-zero signal, so it stays as-is. For the
+    # near-miss *band*, prefer the instruction count: `differences` is a status
+    # flag (0/1/-1), so comparing it to NEAR_MISS_MAX_DIFF put every mismatch --
+    # 1 instruction off or 200 -- inside the band.
+    near_miss_magnitude = optional_int(verifier_data.get("instructionMismatchCount"))
+    if near_miss_magnitude is None or near_miss_magnitude <= 0:
+        near_miss_magnitude = best_diff
     verifier_error = (verifier.error if verifier else "") or ""
     generator_error = (generator.error if generator else "") or ""
 
@@ -110,7 +117,7 @@ def choose_next_action(
         # Quality-filtered / non-exportable zero-diff rows must not stop the retry loop.
         action = "try-next-generated-candidate"
         reason = "differenceCount 0 but verifier plugin did not succeed (non-exportable match)"
-    elif best_diff is not None and best_diff <= NEAR_MISS_MAX_DIFF:
+    elif near_miss_magnitude is not None and near_miss_magnitude <= NEAR_MISS_MAX_DIFF:
         shape_search_exhausted = bool(context.get("sourceShapeSearch"))
         function_name = str(row.get("name") or "") if isinstance(row, dict) else ""
         work_dir_value = context.get("workDir")
@@ -126,19 +133,19 @@ def choose_next_action(
             action = "try-rewrite-request"
             reason = (
                 f"mechanisms 1+2 (compiler-flag exploration, idiom permutation) exhausted with "
-                f"{best_diff} difference(s) remaining; writing a rewrite-request queue entry "
+                f"{near_miss_magnitude} difference(s) remaining; writing a rewrite-request queue entry "
                 f"({rewrite_remaining} request(s) remaining in budget)"
             )
         else:
             action = "try-nearby-source-shape-or-permuter"
             if mismatch_class == CLASS_OPERAND:
-                reason = f"operand near-miss with {best_diff} difference(s); permuter-first playbook"
+                reason = f"operand near-miss with {near_miss_magnitude} difference(s); permuter-first playbook"
             elif mismatch_class == CLASS_OPCODE:
-                reason = f"opcode near-miss with {best_diff} difference(s); shape-search playbook"
+                reason = f"opcode near-miss with {near_miss_magnitude} difference(s); shape-search playbook"
             elif mismatch_class == CLASS_INSERT_DELETE:
-                reason = f"insert/delete near-miss with {best_diff} difference(s); branch-shape playbook"
+                reason = f"insert/delete near-miss with {near_miss_magnitude} difference(s); branch-shape playbook"
             else:
-                reason = f"candidate is close to match with {best_diff} difference(s); near-miss is not promote"
+                reason = f"candidate is close to match with {near_miss_magnitude} difference(s); near-miss is not promote"
     elif context.get("compilerProfiles") in (None, [], ()):
         action = "block-on-compiler-profile-evidence"
         reason = "large mismatch without compiler-profile evidence"

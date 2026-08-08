@@ -23,7 +23,7 @@ from typing import Any
 from . import acquisition_registry as registry
 from .context_pack import build_context_pack
 from .discovery import route_inputs, sniff_path
-from .ghidra_context import export_ghidra_context
+from .ghidra_context import export_ghidra_context, open_project_names_context
 from .targets import identify_binary
 
 
@@ -115,7 +115,8 @@ def acquire_context(
     preferred_name: str | None = None,
     repo_root: Path | None = None,
     ghidra: Path | None = None,
-    project_snapshot: Path | None = None,
+    project: Path | None = None,
+    project_program: str | None = None,
     register: bool = True,
     max_files: int = 500,
     merge_prior: bool = True,
@@ -125,6 +126,13 @@ def acquire_context(
     `target_input` supplies target identity for fingerprinting and can itself be
     sniffed as a binary source for Ghidra extraction.  `context_paths` are extra
     loose artifacts; each is auto-routed.
+
+    `project`, if given, is a `.gpr` file or `.rep` directory of an existing
+    Ghidra project. It is opened read-only through `ghidra_db` (no JVM, no
+    write path) and its curated function names are folded into this run's
+    context, independent of whatever `target_input`/`context_paths` sniff to.
+    `project_program` picks a program by name when the project holds more than
+    one; required in that case, otherwise ignored.
 
     When ``merge_prior`` is true (default), a previously registered bundle for the
     same target fingerprint is merged into a new immutable snapshot. This never
@@ -169,6 +177,22 @@ def acquire_context(
     ghidra_reports: list[dict[str, Any]] = []
     derived_context: list[Path] = list(routed.context_paths)
     ghidra_errors: list[dict[str, Any]] = []
+
+    if project is not None:
+        project_out = snapshot_dir / "ghidra" / "project"
+        try:
+            report = open_project_names_context(
+                source=project,
+                out_dir=project_out,
+                program_name=project_program,
+            )
+            ghidra_reports.append(report)
+            facts_jsonl = Path(str(report.get("factsJsonl") or ""))
+            if facts_jsonl.exists():
+                derived_context.append(facts_jsonl)
+        except (ValueError, FileNotFoundError, OSError) as exc:
+            ghidra_errors.append({"source": str(project), "error": str(exc)})
+
     for source in routed.ghidra_sources:
         ghidra_out = snapshot_dir / "ghidra" / source.path.stem
         try:
@@ -176,7 +200,6 @@ def acquire_context(
                 source=source.path,
                 out_dir=ghidra_out,
                 ghidra=ghidra,
-                project_snapshot=project_snapshot,
             )
             ghidra_reports.append(report)
             facts_jsonl = Path(str(report.get("factsJsonl") or ""))
@@ -227,8 +250,20 @@ def acquire_context(
         if missing:
             raise RuntimeError(f"acquire_context must not delete verified/ artifacts; missing: {missing[:5]}")
 
+    # A requested --project that failed to open must never be reported as a
+    # complete acquisition: without this check, status is computed purely
+    # from target_input/registration outcome, so a project-only call (no
+    # target_input) with a bad project path fell through every branch to
+    # "complete" while the failure sat unexamined in ghidraErrors -- a
+    # silent-success receipt for curated data that was never actually read.
+    project_failed = project is not None and any(
+        error.get("source") == str(project) for error in ghidra_errors
+    )
+
     if target_input is not None and not _has_target_identity(target):
         status = "failed"
+    elif project_failed:
+        status = "partial" if bundle_manifest else "failed"
     elif register and not can_register and not registry_entry:
         status = "partial" if bundle_manifest else "failed"
     else:

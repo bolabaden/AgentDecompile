@@ -110,7 +110,119 @@ def parse_objdiff_report(returncode: int, output: str) -> dict[str, Any]:
     if histogram:
         report["mismatchHistogram"] = histogram
         report["instructionMismatchCount"] = sum(int(value) for value in histogram.values())
+    aligned = extract_aligned_diff(parsed)
+    if aligned:
+        report["alignedDiff"] = aligned
     return report
+
+
+def _function_instructions(side: Any) -> list[dict[str, Any]]:
+    """Instruction rows for the first function symbol on one side of a report."""
+
+    if not isinstance(side, dict):
+        return []
+    for symbol in side.get("symbols") or []:
+        if not isinstance(symbol, dict):
+            continue
+        instructions = symbol.get("instructions")
+        if isinstance(instructions, list) and instructions:
+            return [row for row in instructions if isinstance(row, dict)]
+    return []
+
+
+def _formatted(row: dict[str, Any] | None) -> str | None:
+    if not isinstance(row, dict):
+        return None
+    instruction = row.get("instruction")
+    if not isinstance(instruction, dict):
+        return None
+    text = instruction.get("formatted")
+    return text.strip() if isinstance(text, str) else None
+
+
+def _select_rows(rows: list[dict[str, Any]], limit: int | None) -> list[dict[str, Any]]:
+    """Trim to `limit` rows without ever dropping a differing instruction.
+
+    Differing rows are the entire signal; neighbouring rows are context. Budget
+    goes to differences first, then one line of context either side, then
+    leading context -- always re-sorted into original order so the listing
+    still reads as an instruction sequence.
+    """
+
+    if limit is None or limit <= 0 or len(rows) <= limit:
+        return rows
+    differing = [index for index, row in enumerate(rows) if row["differs"]]
+    context = [neighbour for index in differing for neighbour in (index - 1, index + 1)]
+    keep: set[int] = set()
+    for group in (differing, context, range(len(rows))):
+        for index in group:
+            if len(keep) >= limit:
+                break
+            if 0 <= index < len(rows):
+                keep.add(index)
+    return [rows[index] for index in sorted(keep)]
+
+
+def extract_aligned_diff(parsed: Any, *, limit: int | None = 200) -> list[dict[str, Any]]:
+    """Instruction-aligned target-vs-candidate rows from an objdiff report.
+
+    objdiff runs as ``-1 <target> -2 <candidate>`` (see
+    ``scripts/lib/verify-objdiff.sh``), so ``left`` is the target and ``right``
+    is the candidate. Both sides emit one row per aligned slot -- an insertion
+    on one side is a gap on the other -- so pairing by index reproduces
+    objdiff's own alignment instead of re-deriving it.
+
+    This is the evidence a rewrite prompt needs: which instruction differs and
+    what the target holds there. ``extract_mismatch_histogram`` counts these
+    same rows by kind and discards the rest.
+    """
+
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(parsed, dict):
+        return []
+    target = _function_instructions(parsed.get("left"))
+    candidate = _function_instructions(parsed.get("right"))
+    if not target and not candidate:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for index in range(max(len(target), len(candidate))):
+        target_row = target[index] if index < len(target) else None
+        candidate_row = candidate[index] if index < len(candidate) else None
+        diff_kind: str | None = None
+        for row in (target_row, candidate_row):
+            kind = row.get("diff_kind") if isinstance(row, dict) else None
+            if kind and kind != "DIFF_NONE":
+                diff_kind = str(kind)
+                break
+        target_text = _formatted(target_row)
+        candidate_text = _formatted(candidate_row)
+        rows.append(
+            {
+                "index": index,
+                "target": target_text,
+                "candidate": candidate_text,
+                "diffKind": diff_kind,
+                "differs": bool(diff_kind) or target_text != candidate_text,
+            }
+        )
+    return _select_rows(rows, limit)
+
+
+def render_aligned_diff(rows: list[dict[str, Any]]) -> str:
+    """Render aligned rows as a two-column listing; ``!`` marks a difference."""
+
+    lines: list[str] = []
+    for row in rows:
+        marker = "!" if row.get("differs") else " "
+        target = row.get("target") or "<none>"
+        candidate = row.get("candidate") or "<none>"
+        lines.append(f"{marker} {target:<38} | {candidate}")
+    return "\n".join(lines)
 
 
 def extract_mismatch_histogram(parsed: Any) -> dict[str, int]:

@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 
 from agentdecompile_recovery.pipeline import RecoveryConfig, RecoveryRunner, default_function_facts_path
+from agentdecompile_recovery.curated_project import CURATED_SIGNATURES_FILENAME
 from agentdecompile_recovery.reconstruct_enrich import (
     boundaries_from_candidates,
     run_reconstruct_enrich,
+    trusted_curated_signatures,
 )
 
 pytestmark = pytest.mark.unit
@@ -101,3 +103,52 @@ def test_stage_enrich_decompile_skip(tmp_path: Path) -> None:
     summary = runner.stage_enrich_decompile(stage)
     assert summary["status"] == "skipped"
     assert (work / "facts" / "enrich-receipt.json").is_file()
+
+
+# -- trusted_curated_signatures ------------------------------------------------
+
+
+def _write_signatures(work_dir: Path, payload: dict[str, dict[str, object]]) -> None:
+    (work_dir / CURATED_SIGNATURES_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_trusted_curated_signatures_drops_records_the_arity_gate_rejected(tmp_path: Path) -> None:
+    """A contradicted prototype must never reach candidate generation.
+
+    `curated_enrichment` reports the contradiction by emitting `signature:
+    null` while keeping the name; this is the consumer side of that contract.
+    """
+
+    _write_signatures(
+        tmp_path,
+        {
+            "00401060": {"name": "Kept", "arityCheck": "match", "signature": "void Kept(int)"},
+            "00401380": {"name": "Dropped", "arityCheck": "contradicted", "signature": None},
+        },
+    )
+
+    trusted = trusted_curated_signatures(
+        tmp_path, [{"entry": 0x401060}, {"entry": 0x401380}]
+    )
+
+    assert list(trusted) == [0x401060]
+
+
+def test_trusted_curated_signatures_ignores_entries_this_run_will_not_decompile(
+    tmp_path: Path,
+) -> None:
+    _write_signatures(
+        tmp_path,
+        {
+            "00401060": {"name": "InRun", "arityCheck": "match", "signature": "void InRun(void)"},
+            "00999000": {"name": "Elsewhere", "arityCheck": "match", "signature": "void E(void)"},
+        },
+    )
+
+    trusted = trusted_curated_signatures(tmp_path, [{"entry": 0x401060}])
+
+    assert list(trusted) == [0x401060]
+
+
+def test_trusted_curated_signatures_is_empty_without_a_curated_project(tmp_path: Path) -> None:
+    assert trusted_curated_signatures(tmp_path, [{"entry": 0x401060}]) == {}

@@ -15,7 +15,7 @@ flowchart TD
   B --> D[AgentDecompile runtime]
   C --> D
   D --> E[PyGhidra and Ghidra projects]
-  D --> F[70 canonical tools and 3 resources]
+  D --> F[72 canonical tools and 3 resources]
 ```
 
 ## Session-Validated Commands
@@ -420,6 +420,16 @@ pip install -e .
 agentdecompile-cli --server-url http://YOUR_SERVER:8080/ tool --list-tools
 ```
 
+### Optional: .NET/IL decompilation support (ilspycmd)
+
+`pipx install agentdecompile[all]` (or `pip install -e .[all]` from source) installs every optional **Python** feature, but .NET/IL assembly decompilation depends on [ILSpy's](https://github.com/icsharpcode/ILSpy) `ilspycmd`, which is a .NET global tool, not a PyPI package — it cannot be expressed as a pip dependency and is not bundled by any extras group. Install it separately:
+
+```bash
+dotnet tool install -g ilspycmd
+```
+
+Requires the [.NET SDK](https://dotnet.microsoft.com/download).
+
 ### Option 3: Docker (run the server)
 
 **Published image (no build required):**
@@ -764,16 +774,16 @@ On Windows use forward slashes or escaped backslashes in paths.
 
 ### API and tools (overview)
 
-AgentDecompile exposes 70 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
+AgentDecompile exposes 72 canonical MCP tools (see `src/agentdecompile_cli/registry.py`) and 3 resources:
 
-- **66 tools** are advertised by default: every non-GUI canonical tool.
+- **68 tools** are advertised by default: every non-GUI canonical tool.
 - Compatibility aliases remain callable but are hidden by default. Use `AGENT_DECOMPILE_TOOL_SURFACE=curated` for the smaller curated surface.
 - Canonical MCP tool names use **kebab-case** (for example `open`, `get-current-program`, `search-symbols`). JSON argument keys use camelCase (for example `programPath`, `serverHost`). Many CLI-generated subcommands expose `--snake_case` options and some hand-written commands also accept hyphenated aliases.
 
 - Resources: `ghidra://programs`, `ghidra://static-analysis-results`, `ghidra://agentdecompile-debug-info`
 - Representative tools: `open`, `import-binary`, `list-functions`, `decompile-function`, `get-current-program`, `get-references`, `search-symbols`, `inspect-memory`, `manage-function-tags`, `get-call-graph`, `remove-program-binary`, `resolve-modification-conflict` (when a modifying tool reports a conflict)
 
-Live local server contract note: the default advertised surface is currently 66 tools. Compatibility aliases remain callable through raw MCP/CLI routes, and the `switch-project` alias still resolves to `open` even though it is not advertised.
+Live local server contract note: the default advertised surface is currently 68 tools (including Tier-0 `export-context` and `acquisition-query` for dismantling/acquisition context without an open Ghidra program). Compatibility aliases remain callable through raw MCP/CLI routes, and the `switch-project` alias still resolves to `open` even though it is not advertised.
 
 Use `agentdecompile-cli tool --list-tools` to view the live advertised set from your running server, `agentdecompile-cli alias <tool-name>` to inspect compatibility mappings, and [TOOLS_LIST.md](TOOLS_LIST.md) for the maintained reference.
 

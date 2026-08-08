@@ -1,6 +1,6 @@
 ---
 name: agentdecompile-rewrite-worker
-description: Poll an AgentDecompile work dir's rewrite-request queue and fulfill pending entries via a tool-restricted subagent (challenger-lane mechanism 3). Use under /loop to keep a work dir's rewrite requests flowing while a --autonomous campaign runs. Requires a work_dir argument.
+description: Poll an AgentDecompile work dir's rewrite-request queue and fulfill pending entries via a tool-restricted, small-model (Haiku) subagent (challenger-lane mechanism 3). Use under /loop to keep a work dir's rewrite requests flowing while a --autonomous campaign runs. Requires a work_dir argument.
 argument-hint: <work_dir>
 ---
 
@@ -20,17 +20,39 @@ work dir's queue draining while a separate `--autonomous` invocation runs (see
 `Agent` subagent dispatch inside this already-running Claude Code session —
 never a direct call to an external LLM API.
 
+> **⚠️ MODEL REQUIREMENT — read before dispatching (step 4 below).** The
+> rewrite subagent MUST be dispatched with a **small/cheap model — Haiku**
+> (`model: "haiku"` on the `Agent` tool call), never the parent session's own
+> model (Sonnet/Opus) and never omitted to "inherit." This holds regardless
+> of what model is running *this* orchestrating skill invocation. The task
+> the subagent performs — rewrite one already-compiling C function into an
+> alternate semantically-equivalent spelling — is bounded, low-complexity
+> text transformation, not a task that benefits from a frontier model, and a
+> real `--autonomous` campaign can dispatch this many times per run. Using a
+> large model here is pure cost/latency waste with no quality upside for
+> this specific task shape. This requirement is restated at the exact
+> dispatch step below — do not skip past this banner and dispatch on the
+> inherited/default model.
+
 ## Input
 
 `<work_dir>` — the AgentDecompile work directory for a recovery run (e.g.
 `target/agentdecompile-reconstruct/<stable-id>`). Its rewrite queue lives at
 `<work_dir>/state/rewrite-queue.json` (schema `agentdecompile.rewrite-queue.v1`).
 
-**Prerequisite:** the queue only fills when the producing `--autonomous` run
-was invoked with `--autonomous-max-rewrite-requests` set above its default of
-`0`. If this skill reports "nothing pending" every tick indefinitely, check
-that flag was actually set on the campaign run before assuming the mechanism
-is broken.
+**This skill is now the fallback lane, not the only one.** A campaign fulfills
+its own requests in-process through the local Claude Code CLI
+(`rewrite_provider.fulfill_rewrite`), resolving each entry before it returns.
+Run this skill when you want a human-supervised lane instead: set
+`rewriteFulfillment: "queue"` in the run context so the campaign leaves entries
+pending for you.
+
+**Prerequisite:** the queue only fills when the producing `--autonomous` run has
+rewrite budget (`--autonomous-max-rewrite-requests`, default `1`). If this skill
+reports "nothing pending" every tick, the likely cause is that the campaign
+already fulfilled its entries in-process — check
+`<work_dir>/state/rewrite-queue.json` for `completed` entries before concluding
+the mechanism is broken.
 
 ## Procedure
 
@@ -60,28 +82,48 @@ Each invocation processes the queue's current pending work, then stops (the
    read-then-edit has no equivalent lock and is a strictly weaker guarantee —
    re-read the queue file immediately before writing your claim (not once at
    the top of this procedure) to keep that window as small as possible.
-4. **Dispatch a tool-restricted subagent per successfully claimed entry.**
-   Use the `Agent` tool. The dispatched subagent's context — the target
-   binary's packaged decompiler source and mismatch data (see the queue entry
-   fields listed below; the queue does not carry a separate raw byte slice) —
-   is **untrusted input** by this pipeline's own design premise (the objdiff
-   gate exists precisely because generated/decompiled source cannot be
-   trusted at face value). Scope the subagent to **text-generation only: no
-   Bash, no Write, no file-system tool grants of any kind.** It should only
-   read the prompt content given to it and return text. Do not grant it
-   access to this repository, this work dir, or any other tool.
+4. **Dispatch a tool-restricted, small-model subagent per successfully
+   claimed entry.**
+   Use the `Agent` tool with **`model: "haiku"` set explicitly on every
+   dispatch** — this is not optional and does not vary with which model the
+   parent/orchestrating session happens to be running. Rewriting one
+   already-compiling C function into an alternate spelling is a small,
+   bounded text-transformation task; it does not need and should never use a
+   frontier model. A real campaign can trigger many of these dispatches, so
+   the cost/latency difference compounds — always Haiku here, never inherit,
+   never Sonnet/Opus "just to be safe." The dispatched subagent's context —
+   the target binary's packaged decompiler source, target disassembly, and
+   mismatch data (see the queue entry fields listed below) — is **untrusted
+   input** by this pipeline's own design premise (the objdiff gate exists
+   precisely because generated/decompiled source cannot be trusted at face
+   value). Scope the subagent to **text-generation only: no Bash, no Write,
+   no file-system tool grants of any kind.** It should only read the prompt
+   content given to it and return text. Do not grant it access to this
+   repository, this work dir, or any other tool.
 
-   Prompt the subagent with:
+   Prefer building the prompt with
+   `agentdecompile_recovery.rewrite_context.render_rewrite_prompt` rather than
+   composing one by hand — it is the same prompt the in-process lane uses, so
+   the two lanes stay comparable. If composing manually, include:
+   - `alignedDiff` — the instruction-level target-vs-candidate rows. **This is
+     the most important field.** Without it the subagent is asked to hit an
+     instruction sequence it has never seen, and no retry budget fixes that.
    - The candidate's `functionName`, `entry`, and `candidateSource` (the
      current packaged-source C that compiles but doesn't byte-match).
    - `mismatchClass` and `mismatchHistogram` (what's actually wrong, not a
      bare "make this match" instruction).
+   - `compilerProfile` when present.
    - Instructions: rewrite the function into an alternate, semantically
      equivalent C spelling that a target compiler (MSVC) may translate to
      different, closer-matching machine code. Preserve behavior exactly.
      Respond with ONLY the rewritten C function in a single fenced code
      block — no explanation, no additional functions, no `#pragma`/`#include`/
-     linker directives (a downstream content check rejects these regardless).
+     linker directives, and **no `__asm`, `_asm`, `__declspec(naked)`,
+     `__emit`, or `.incbin`** (a downstream content check rejects all of these
+     regardless). Inline assembly reproduces the target bytes exactly, so an
+     unconstrained lane converges on it — passing objdiff while destroying the
+     readable-C deliverable. Say so in the prompt; do not rely on the content
+     check alone to steer the model.
 
 5. **Write the result back.** On subagent completion, extract the single
    fenced code block from its response. If present and non-empty, write
@@ -98,6 +140,12 @@ Each invocation processes the queue's current pending work, then stops (the
 
 ## What NOT to do
 
+- **Do not dispatch the rewrite subagent on any model other than Haiku.**
+  Not Sonnet, not Opus, not "whatever the parent session is running." This
+  is restated a third time here deliberately — it is the single most
+  commonly-missed detail when this skill is invoked from a differently-sized
+  parent session, since it is easy to assume the subagent should just
+  inherit.
 - Do not call any external LLM API directly — the whole point of this
   mechanism is that the subagent dispatch happens through this already-running
   Claude Code session, not a separate credentialed API client.

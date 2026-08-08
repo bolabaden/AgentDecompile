@@ -10,10 +10,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .curated_project import load_curated_names, load_curated_signatures
 from .module_resolver import ModuleResolver, load_va_bands, normalize_code_path
 from .pyghidra_enrich import (
     PyGhidraEnrichProgram,
     build_names_by_entry,
+    is_default_ghidra_name,
     run_enrich_pipeline,
 )
 from .rtti_recover import (
@@ -70,6 +72,34 @@ def boundaries_from_candidates(candidates_payload: dict[str, Any]) -> list[dict[
             }
         )
     return boundaries
+
+
+def trusted_curated_signatures(
+    work_dir: Path,
+    boundaries: list[dict[str, Any]],
+) -> dict[int, dict[str, Any]]:
+    """Curated prototypes for the entries this run will decompile.
+
+    Two filters, both load-bearing:
+
+    * a record with no `signature` is dropped -- that is how
+      `curated_enrichment.build_curated_signature` reports "the target's own
+      `ret N` contradicts this parameter list", and applying such a prototype
+      would produce a confidently wrong candidate;
+    * a record for an address this run has no boundary for is dropped, so the
+      count in the receipt is the number of prototypes actually applied rather
+      than the size of the curated project.
+    """
+
+    curated = load_curated_signatures(work_dir)
+    if not curated:
+        return {}
+    wanted = {int(row["entry"]) for row in boundaries if row.get("entry") is not None}
+    return {
+        entry: record
+        for entry, record in curated.items()
+        if entry in wanted and record.get("signature")
+    }
 
 
 def load_work_dir_va_bands(work_dir: Path) -> list[tuple[int, str]]:
@@ -222,6 +252,7 @@ def run_reconstruct_enrich(
                 discovered=discovered,
                 rtti_classes=rtti_classes,
                 corpus=None,
+                curated_names=load_curated_names(work_dir),
             )
             from .symbol_provenance import load_symbol_provenance_names
 
@@ -232,11 +263,18 @@ def run_reconstruct_enrich(
                     continue
                 if entry not in names_by_entry:
                     names_by_entry[entry] = (prov_name, "symbol-provenance")
-            # Prefer candidate names when Ghidra still has FUN_*.
+            # Prefer candidate names only when they are not Ghidra/autogen defaults
+            # (FUN_*, sub_*, LAB_*, …). Treating `sub_*` as real names previously
+            # flooded names_by_entry with function-candidate and blocked curated
+            # names from mattering after a stale enrich.
             for row in boundaries:
                 entry = int(row["entry"])
                 name = str(row.get("name") or "")
-                if name and not name.startswith("FUN_") and entry not in names_by_entry:
+                if (
+                    name
+                    and not is_default_ghidra_name(name)
+                    and entry not in names_by_entry
+                ):
                     names_by_entry[entry] = (name, "function-candidate")
 
             for row in boundaries:
@@ -257,6 +295,7 @@ def run_reconstruct_enrich(
                 program_factory=lambda: PyGhidraEnrichProgram(flat_api),
                 module_by_entry=module_by_entry,
                 names_by_entry=names_by_entry,
+                signatures_by_entry=trusted_curated_signatures(work_dir, boundaries),
             )
     except Exception as exc:  # noqa: BLE001 - soft degrade; reconstruct continues
         receipt = {

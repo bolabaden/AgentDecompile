@@ -2,6 +2,7 @@
 
 Tier 0 surface: no open Ghidra program required. Keep this provider to the three
 default recovery tools; do not expand into vacuum/acquisition peer tools here.
+Dismantling and acquisition-query live in ContextSubstrateToolProvider.
 """
 
 from __future__ import annotations

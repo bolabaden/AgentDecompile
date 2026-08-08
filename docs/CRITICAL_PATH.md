@@ -4,7 +4,7 @@ Packed Windows PE targets use a **bounded checkpoint loop** inside `agentdecompi
 
 ELF targets (format detected from the binary) use `.eh_frame` as the authoritative inventory denominator, then a single PyGhidra enrich+decompile session, optional reference-corpus naming, evidence-based module mapping, and native clang/objdiff verification.
 
-Run recovery from **AgentDecompile only**. Mizuchi is archived: [MIZUCHI_ARCHIVE.md](MIZUCHI_ARCHIVE.md).
+Run recovery from **AgentDecompile only**. Mizuchi is archived: [UPSTREAM_DONOR_ARCHIVE.md](UPSTREAM_DONOR_ARCHIVE.md).
 
 ## Pipeline
 

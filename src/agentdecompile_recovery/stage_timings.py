@@ -35,7 +35,19 @@ def load_stage_timings(work_dir: Path) -> dict[str, Any]:
         except (OSError, json.JSONDecodeError, ValueError):
             return empty_timings(work_dir)
         if isinstance(data, dict) and data.get("schema") == SCHEMA:
-            data.setdefault("stages", {})
+            stages = data.get("stages")
+            if isinstance(stages, list):
+                # ReconstructPipeline._write_stage_timings() (pipeline.py) writes
+                # "stages" as a list of {"stage": name, ...} rows under the same
+                # schema tag. Convert to the dict-keyed-by-name shape this module
+                # expects so record_stage() can append to it safely.
+                data["stages"] = {
+                    row["stage"]: {k: v for k, v in row.items() if k != "stage"}
+                    for row in stages
+                    if isinstance(row, dict) and "stage" in row
+                }
+            else:
+                data.setdefault("stages", {})
             return data
     return empty_timings(work_dir)
 

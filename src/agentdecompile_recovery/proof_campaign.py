@@ -136,10 +136,41 @@ def write_proof_campaign(
         "bridgeReturncode": bridge_returncode,
         "proofTargetFirst": bool((seed_receipt or {}).get("proofTargetFirst")),
         "seededCount": (seed_receipt or {}).get("seededCount"),
+        "rewriteLane": summarize_rewrite_lane(work_dir),
         "claimBoundary": CLAIM_BOUNDARY,
     }
     atomic_write_json(campaign_path(work_dir), payload)
     return payload
+
+
+def summarize_rewrite_lane(work_dir: Path) -> dict[str, int]:
+    """Counts for challenger-lane mechanism 3, for the campaign receipt.
+
+    Without this a campaign that never reached mechanism 3 and one whose every
+    rewrite failed produce identical receipts (`accepts: 0, nearMisses: 0`).
+    That indistinguishability is how the lane stayed dormant unnoticed: no
+    recorded field would have differed.
+
+    `requested` reads the durable cumulative counter rather than counting live
+    entries, which are pruned once consumed.
+    """
+
+    from . import rewrite_queue
+
+    queue = rewrite_queue.read_rewrite_queue(Path(work_dir))
+    entries = [row for row in queue.get("entries", {}).values() if isinstance(row, dict)]
+    counts = {
+        "requested": sum(int(value or 0) for value in (queue.get("requestCounts") or {}).values()),
+        "completed": 0,
+        "failed": 0,
+        "pending": 0,
+        "claimed": 0,
+    }
+    for row in entries:
+        status = str(row.get("status") or "")
+        if status in counts:
+            counts[status] += 1
+    return counts
 
 
 def run_single_proof_campaign(
@@ -173,6 +204,11 @@ def run_single_proof_campaign(
             max_attempts=budget.max_attempts_per_function,
             vc_root=vc_root,
             wineprefix=wineprefix,
+            # Mechanism 2 escalation, and the precondition for mechanism 3.
+            # A campaign carrying rewrite budget that never enables shape search
+            # can never spend it -- choose_next_action reads this same flag off
+            # the attempt context to decide try-rewrite-request.
+            source_shape_search=budget.max_rewrite_requests_per_function > 0,
         ),
     )
     if bridge_args is None:

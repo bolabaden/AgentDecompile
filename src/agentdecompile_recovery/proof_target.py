@@ -312,6 +312,36 @@ def _iter_jsonl(path: Path):
             yield row
 
 
+def plugin_attempt_paths(work_dir: Path) -> list[Path]:
+    """Every directory a plugin run can drop ``plugin-attempts.jsonl`` into.
+
+    The file is written to ``SourcePluginRunConfig.out_dir``, which only ever
+    takes two shapes under a work dir: ``source-synthesis/`` (pipeline
+    ``stage_synthesize_source_tasks``) and ``source-synthesis/vacuum/<slug>/``
+    (``vacuum_runner``). Listing those two levels directly costs two directory
+    reads plus one stat per vacuum function.
+
+    A ``source-synthesis/**/plugin-attempts.jsonl`` walk returns the same files
+    but also descends ``source-synthesis/cases/``, which holds one directory per
+    compile attempt -- 2,337 cases x one directory per compiler profile x a
+    nested attempt directory each. That walk read 215 MB of directory metadata
+    and stalled the ``report`` stage past the point of abandonment on rotational
+    storage, so it is not an acceptable way to find 1,156 files. This mirrors the
+    single-pass index that replaced the per-candidate ``tasks.jsonl`` rescan in
+    ``build_proof_target_queue``: read the known locations, never rescan the tree.
+
+    Paths are returned sorted and are not checked for existence; callers already
+    filter with ``is_file()``.
+    """
+
+    synthesis = work_dir / "source-synthesis"
+    paths = [synthesis / "plugin-attempts.jsonl"]
+    vacuum = synthesis / "vacuum"
+    if vacuum.is_dir():
+        paths.extend(child / "plugin-attempts.jsonl" for child in vacuum.iterdir())
+    return sorted(paths)
+
+
 def load_near_miss_maps(work_dir: Path) -> NearMissMaps:
     """Return best positive objdiff difference and latest mismatch class per function."""
 
@@ -321,7 +351,7 @@ def load_near_miss_maps(work_dir: Path) -> NearMissMaps:
     class_by_entry: dict[str, str] = {}
     work_dir = work_dir.resolve()
     attempt_paths = [work_dir / "source-synthesis" / "attempts.jsonl"]
-    attempt_paths.extend(sorted(work_dir.glob("source-synthesis/**/plugin-attempts.jsonl")))
+    attempt_paths.extend(plugin_attempt_paths(work_dir))
     seen_paths: set[Path] = set()
     for attempts in attempt_paths:
         if not attempts.is_file() or attempts in seen_paths:
@@ -332,6 +362,37 @@ def load_near_miss_maps(work_dir: Path) -> NearMissMaps:
     return NearMissMaps(by_name, by_entry, class_by_name, class_by_entry)
 
 
+def near_miss_difference(row: dict[str, Any]) -> int | None:
+    """How far a mismatched row sits from the target, in instructions.
+
+    `differences` is a status flag from ``parse_objdiff_report`` -- 0 matched,
+    1 mismatched, -1 error -- and never a magnitude. Ranking near-misses by it
+    collapsed every mismatch to 1, which is inside ``NEAR_MISS_MAX_DIFF``, so
+    every mismatched function qualified as a near miss and every one drew the
+    maximum tight-band score bonus. A function 200 instructions away ranked
+    identically to one a single instruction away.
+
+    ``instructionMismatchCount`` is the real magnitude and was already being
+    computed from the objdiff histogram.
+
+    Returns None when the row is a match or an error -- neither is a near miss.
+    """
+
+    try:
+        differences = int(row.get("differences", -1))
+    except (TypeError, ValueError):
+        differences = -1
+    if differences <= 0:
+        return None
+    try:
+        count = int(row.get("instructionMismatchCount"))
+    except (TypeError, ValueError):
+        count = 0
+    # A mismatched row reporting no instruction diffs is inconsistent (usually a
+    # scalar-only report); fall back to the flag rather than read it as a match.
+    return count if count > 0 else differences
+
+
 def _ingest_near_miss_row(
     row: dict[str, Any],
     by_name: dict[str, int],
@@ -340,10 +401,7 @@ def _ingest_near_miss_row(
     class_by_entry: dict[str, str],
 ) -> None:
     status = str(row.get("status") or "")
-    try:
-        differences = int(row.get("differences", -1))
-    except (TypeError, ValueError):
-        differences = -1
+    magnitude = near_miss_difference(row)
     name = str(row.get("name") or "").strip()
     entry = row.get("entry") or row.get("address")
     entry_hex = normalize_entry_hex(entry) if entry is not None else None
@@ -353,12 +411,12 @@ def _ingest_near_miss_row(
             class_by_name[name] = str(mismatch_class)
         if entry_hex:
             class_by_entry[entry_hex] = str(mismatch_class)
-    if status not in {"mismatched", "matched"} or differences <= 0:
+    if status not in {"mismatched", "matched"} or magnitude is None:
         return
     if name:
-        by_name[name] = differences if name not in by_name else min(by_name[name], differences)
+        by_name[name] = magnitude if name not in by_name else min(by_name[name], magnitude)
     if entry_hex:
-        by_entry[entry_hex] = differences if entry_hex not in by_entry else min(by_entry[entry_hex], differences)
+        by_entry[entry_hex] = magnitude if entry_hex not in by_entry else min(by_entry[entry_hex], magnitude)
 
 
 def near_miss_score_bonus(best_difference: int | None) -> int:

@@ -96,6 +96,16 @@ filename (`pid + random suffix`), not one fixed `.tmp` name — concurrent
 writers sharing one intermediate file can have one writer's in-progress
 `.tmp` replaced out from under it.
 
+**Fulfillment-subagent model tier:** the dispatched `Agent` subagent that
+actually produces the rewrite (`.claude/skills/agentdecompile-rewrite-worker/SKILL.md`
+step 4) must always be dispatched on a small/cheap model (Haiku), regardless
+of what model the orchestrating `/loop` session itself is running. The task
+is a single bounded text transformation (rewrite one already-compiling
+function into an alternate spelling) with no benefit from a larger model, and
+a real campaign can trigger this dispatch many times — the cost/latency
+difference compounds. This is easy to get wrong specifically because it is
+tempting to have the subagent "inherit" the parent's model; don't.
+
 ## Why This Matters
 
 A queue described as "compare-and-swap" that is actually a bare

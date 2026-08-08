@@ -33,9 +33,14 @@ from .strategy import build_strategy
 from .snapshot import snapshot_existing_recovery
 from .targets import TargetIdentity, identify_binary
 from .tools import (
+    ASSETRIPPER_ENV,
+    ILSPYCMD_ENV,
+    UNITY_EDITOR_ENV,
     ToolchainError,
     detect_pe_packed,
     inspect_capabilities,
+    resolve_assetripper_cli,
+    resolve_ilspycmd,
     resolve_script_asset,
     resolve_steamless_cli,
     run_steamless,
@@ -110,6 +115,16 @@ class RecoveryConfig:
     context_extract_containers: bool = True
     context_include_low_signal_members: bool = False
     skip_enrichment: bool = False
+    unity_project_out: Path | None = None
+    unity_editor: Path | None = None
+    unity_editor_version: str | None = None
+    unity_max_memory_gb: float | None = None
+    unity_include_resources_assets: bool | None = None
+    unity_repair_attempts: int = 3
+    unity_editor_timeout: int = 3600
+    unity_assetripper_cli: Path | None = None
+    unity_ilspycmd: Path | None = None
+    unity_install_mcp_bridge: bool = False
 
 
 class RecoveryRunner:
@@ -142,6 +157,13 @@ class RecoveryRunner:
             Stage("byte-authority", "optionally emit a byte-exact source authority package", (self.run_dir / "byte-authority/result.json",), RecoveryRunner.stage_byte_authority),
             Stage("legacy-adapter", "optionally dispatch compatible legacy target-specific adapters", (self.run_dir / "legacy-adapter.json",), RecoveryRunner.stage_legacy_adapter),
             Stage("snapshot-existing-recovery", "snapshot previously verified recovery artifacts for this target", (self.run_dir / "snapshot-existing-recovery.json",), RecoveryRunner.stage_snapshot_existing_recovery),
+            Stage("unity-probe", "detect a Unity player and derive its version, backend, scenes, and assemblies", (self.run_dir / "unity/probe.json",), RecoveryRunner.stage_unity_probe),
+            Stage("unity-plan", "plan Unity asset export against a memory budget and select an editor", (self.run_dir / "unity/plan.json",), RecoveryRunner.stage_unity_plan),
+            Stage("unity-export-assets", "export Unity scenes/prefabs/assets into a reopenable project tree", (self.run_dir / "unity/assetripper.json",), RecoveryRunner.stage_unity_export_assets),
+            Stage("unity-decompile-managed", "decompile shipped game assemblies to editable C#", (self.run_dir / "unity/managed.json",), RecoveryRunner.stage_unity_decompile_managed),
+            Stage("unity-compose-project", "compose an openable Unity project from exported assets and decompiled source", (self.run_dir / "unity/compose.json",), RecoveryRunner.stage_unity_compose_project),
+            Stage("unity-editor-validate", "open the composed project headlessly and record compile/scene errors", (self.run_dir / "unity/validate.json",), RecoveryRunner.stage_unity_editor_validate),
+            Stage("unity-repair", "apply diagnostic-driven repairs until the project opens cleanly or stops converging", (self.run_dir / "unity/repair.json",), RecoveryRunner.stage_unity_repair),
             Stage("report", "write aggregate run report", (self.run_dir / "report.json",), RecoveryRunner.stage_report),
         ]
 
@@ -751,6 +773,11 @@ class RecoveryRunner:
             limit=self.config.source_task_limit,
             offset=self.config.source_task_offset,
         )
+        truncation = summary.get("candidateTruncation") if isinstance(summary, dict) else None
+        if isinstance(truncation, dict) and truncation.get("warning"):
+            # A truncated run still reports success, so the only way an operator
+            # learns the inventory was cut is if we say so here.
+            print(f"agentdecompile-reconstruct: warning: {truncation['warning']}", file=sys.stderr)
         atomic_write_json(self.run_dir / "source-generation/summary.json", summary)
         return summary
 
@@ -953,6 +980,249 @@ class RecoveryRunner:
         atomic_write_json(out_path, summary)
         return summary
 
+    # --- Unity reconstruction -------------------------------------------------
+    #
+    # These stages are inert for non-Unity targets: each writes a `skipped`
+    # receipt and returns. They are ordered so that a `--stop-after` on any one
+    # of them leaves a coherent, inspectable partial result.
+
+    def unity_install_root(self) -> Path:
+        """The game install directory (input may be the folder or the player exe)."""
+
+        candidate = self.config.input_path.resolve()
+        return candidate if candidate.is_dir() else candidate.parent
+
+    def _unity_dir(self) -> Path:
+        return self.run_dir / "unity"
+
+    def _load_unity_json(self, name: str) -> dict[str, Any]:
+        path = self._unity_dir() / name
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _unity_skip(self, out_path: Path, reason: str) -> dict[str, Any]:
+        summary = {"status": "skipped", "reason": reason}
+        atomic_write_json(out_path, summary)
+        return summary
+
+    def stage_unity_probe(self, _stage: Stage) -> dict[str, Any]:
+        from .unity_probe import probe_unity_install
+
+        out_path = self._unity_dir() / "probe.json"
+        probe = probe_unity_install(self.unity_install_root())
+        atomic_write_json(out_path, probe)
+        return {
+            "status": probe.get("status"),
+            "detected": probe.get("detected"),
+            "unityVersion": probe.get("unityVersion"),
+            "scriptingBackend": probe.get("scriptingBackend"),
+            "sceneCount": probe.get("sceneCount"),
+            "managedAssemblyCount": probe.get("managedAssemblyCount"),
+        }
+
+    def stage_unity_plan(self, _stage: Stage) -> dict[str, Any]:
+        from .unity_probe import build_unity_plan
+
+        out_path = self._unity_dir() / "plan.json"
+        probe = self._load_unity_json("probe.json")
+        if not probe.get("detected"):
+            return self._unity_skip(out_path, "target is not a Unity game")
+        installed = None
+        if self.config.unity_editor is not None:
+            # An explicit editor path wins over Hub discovery; label it with the
+            # requested version so drift reporting stays meaningful.
+            version = self.config.unity_editor_version or str(probe.get("unityVersion") or "explicit")
+            installed = {version: self.config.unity_editor}
+        plan = build_unity_plan(
+            probe,
+            max_memory_gb=self.config.unity_max_memory_gb,
+            include_resources_assets=self.config.unity_include_resources_assets,
+            requested_editor_version=self.config.unity_editor_version,
+            installed_editors=installed,
+        )
+        atomic_write_json(out_path, plan)
+        return {
+            "status": plan.get("status"),
+            "blockedReason": plan.get("blockedReason"),
+            "exportMode": (plan.get("export") or {}).get("mode"),
+            "editorVersion": (plan.get("editor") or {}).get("selectedVersion"),
+            "editorMatch": (plan.get("editor") or {}).get("match"),
+            "versionDrift": (plan.get("editor") or {}).get("versionDrift"),
+        }
+
+    def stage_unity_export_assets(self, _stage: Stage) -> dict[str, Any]:
+        from .unity_export import export_unity_project
+
+        out_path = self._unity_dir() / "assetripper.json"
+        probe = self._load_unity_json("probe.json")
+        plan = self._load_unity_json("plan.json")
+        if not probe.get("detected"):
+            return self._unity_skip(out_path, "target is not a Unity game")
+        if plan.get("status") == "blocked":
+            return self._unity_skip(out_path, str(plan.get("blockedReason") or "plan blocked"))
+
+        cli = resolve_assetripper_cli(ROOT, self.config.unity_assetripper_cli)
+        if cli is None:
+            raise ToolchainError(
+                "assetripper-missing",
+                detail=f"set {ASSETRIPPER_ENV} or place an AssetRipper binary under target/assetripper/",
+            )
+        receipt = export_unity_project(
+            self.unity_install_root(),
+            self._unity_dir() / "assetripper",
+            assetripper_cli=cli,
+            plan=plan,
+            staging_dir=self._unity_dir() / "staging",
+        )
+        atomic_write_json(out_path, receipt)
+        return {
+            "status": receipt.get("status"),
+            "mode": receipt.get("mode"),
+            "exportedProject": receipt.get("exportedProject"),
+            "hasProjectVersion": receipt.get("hasProjectVersion"),
+            "memoryFailureSuspected": receipt.get("memoryFailureSuspected"),
+            "reason": receipt.get("reason"),
+        }
+
+    def stage_unity_decompile_managed(self, _stage: Stage) -> dict[str, Any]:
+        from .unity_managed import decompile_game_assemblies
+
+        out_path = self._unity_dir() / "managed.json"
+        probe = self._load_unity_json("probe.json")
+        if not probe.get("detected"):
+            return self._unity_skip(out_path, "target is not a Unity game")
+        if probe.get("scriptingBackend") != "mono":
+            return self._unity_skip(
+                out_path,
+                f"scripting backend is {probe.get('scriptingBackend')}; managed decompilation needs Mono assemblies",
+            )
+        ilspycmd = resolve_ilspycmd(self.config.unity_ilspycmd)
+        if ilspycmd is None:
+            raise ToolchainError(
+                "ilspycmd-missing",
+                detail=f"install with `dotnet tool install -g ilspycmd` or set {ILSPYCMD_ENV}",
+            )
+        receipt = decompile_game_assemblies(
+            Path(str(probe["dataDir"])),
+            self._unity_dir() / "managed-csharp",
+            ilspycmd=ilspycmd,
+        )
+        atomic_write_json(out_path, receipt)
+        return {
+            "status": receipt.get("status"),
+            "requested": receipt.get("requested"),
+            "decompiled": receipt.get("decompiled"),
+            "failed": receipt.get("failed"),
+            "totalFileCount": receipt.get("totalFileCount"),
+            "strippedCount": receipt.get("strippedCount"),
+        }
+
+    def stage_unity_compose_project(self, _stage: Stage) -> dict[str, Any]:
+        from .unity_compose import compose_unity_project
+
+        out_path = self._unity_dir() / "compose.json"
+        probe = self._load_unity_json("probe.json")
+        if not probe.get("detected"):
+            return self._unity_skip(out_path, "target is not a Unity game")
+        if self.config.unity_project_out is None:
+            return self._unity_skip(out_path, "no target project; pass --unity-project-out <dir>")
+        export = self._load_unity_json("assetripper.json")
+        exported_project = export.get("exportedProject")
+        if not exported_project:
+            return self._unity_skip(out_path, "no AssetRipper ExportedProject to compose from")
+
+        managed = self._unity_dir() / "managed-csharp"
+        receipt = compose_unity_project(
+            Path(str(exported_project)),
+            self.config.unity_project_out,
+            managed_source=managed if managed.is_dir() else None,
+            extra_packages=probe.get("impliedPackages") or {},
+            install_root=self.unity_install_root(),
+        )
+        atomic_write_json(out_path, receipt)
+        openable = receipt.get("openable") or {}
+        return {
+            "status": receipt.get("status"),
+            "targetProject": str(self.config.unity_project_out),
+            "openable": openable.get("ready"),
+            "missing": openable.get("missing"),
+            "filesCopied": receipt.get("totalFilesCopied"),
+            "packagesAdded": (receipt.get("packages") or {}).get("added"),
+            "warnings": receipt.get("warnings"),
+        }
+
+    def stage_unity_editor_validate(self, _stage: Stage) -> dict[str, Any]:
+        from .unity_editor import validate_unity_project
+
+        out_path = self._unity_dir() / "validate.json"
+        probe = self._load_unity_json("probe.json")
+        plan = self._load_unity_json("plan.json")
+        if not probe.get("detected"):
+            return self._unity_skip(out_path, "target is not a Unity game")
+        if self.config.unity_project_out is None:
+            return self._unity_skip(out_path, "no target project; pass --unity-project-out <dir>")
+        editor = self.config.unity_editor or ((plan.get("editor") or {}).get("executable"))
+        if not editor:
+            raise ToolchainError(
+                "unity-editor-missing",
+                detail=f"no Unity Editor found; install one via Unity Hub or set {UNITY_EDITOR_ENV}",
+            )
+        receipt = validate_unity_project(
+            self.config.unity_project_out,
+            editor=Path(str(editor)),
+            timeout=self.config.unity_editor_timeout,
+            log_dir=self._unity_dir() / "editor-logs",
+        )
+        atomic_write_json(out_path, receipt)
+        scenes = receipt.get("scenes") or {}
+        return {
+            "status": receipt.get("status"),
+            "clean": receipt.get("clean"),
+            "compileErrorCount": (receipt.get("compile") or {}).get("errorCount"),
+            "scenesOpened": scenes.get("opened"),
+            "sceneTotal": scenes.get("total"),
+            "missingScriptTotal": scenes.get("missingScriptTotal"),
+            "packageErrorCount": receipt.get("packageErrorCount"),
+            "logPath": receipt.get("logPath"),
+        }
+
+    def stage_unity_repair(self, _stage: Stage) -> dict[str, Any]:
+        from .unity_editor import repair_unity_project
+
+        out_path = self._unity_dir() / "repair.json"
+        probe = self._load_unity_json("probe.json")
+        plan = self._load_unity_json("plan.json")
+        validate = self._load_unity_json("validate.json")
+        if not probe.get("detected"):
+            return self._unity_skip(out_path, "target is not a Unity game")
+        if self.config.unity_project_out is None:
+            return self._unity_skip(out_path, "no target project; pass --unity-project-out <dir>")
+        if validate.get("clean"):
+            return self._unity_skip(out_path, "validation reported a clean project; nothing to repair")
+        editor = self.config.unity_editor or ((plan.get("editor") or {}).get("executable"))
+        if not editor:
+            return self._unity_skip(out_path, "no Unity Editor available to re-validate repairs")
+        receipt = repair_unity_project(
+            self.config.unity_project_out,
+            editor=Path(str(editor)),
+            max_attempts=self.config.unity_repair_attempts,
+            timeout=self.config.unity_editor_timeout,
+        )
+        atomic_write_json(out_path, receipt)
+        return {
+            "status": receipt.get("status"),
+            "disposition": receipt.get("disposition"),
+            "attemptCount": receipt.get("attemptCount"),
+            "finalErrorCount": receipt.get("finalErrorCount"),
+            "unfixedErrorCount": receipt.get("unfixedErrorCount"),
+            "unimplementedRecipeCounts": receipt.get("unimplementedRecipeCounts"),
+            "unverifiedRepairs": receipt.get("unverifiedRepairs"),
+        }
+
     def stage_report(self, _stage: Stage) -> dict[str, Any]:
         from .readability_repair import write_readability_repair_queue
         from .proof_target import write_proof_target_queue
@@ -1030,8 +1300,36 @@ class RecoveryRunner:
         }
 
 
+def resolve_source_synthesis_mode(
+    mode: str | None,
+    *,
+    target_format: str | None,
+    vc_root_available: bool,
+) -> str:
+    """Pick the compiler lane when `--source-synthesis` is left at `auto`.
+
+    A candidate object is only comparable to the target when both came from
+    compatible toolchains. Diffing a clang-built object against an MSVC-built PE
+    slice diverges on calling convention, prologue shape, and register
+    allocation before any source-shape question is reached -- so a clang default
+    caps the accept rate for every Windows target regardless of how good
+    candidate generation becomes.
+
+    Mirrors the format/stem-derived profile rule in STRATEGY.md. An explicit
+    mode always wins; this only fills in `auto`.
+    """
+
+    if mode and mode != "auto":
+        return mode
+    if (target_format or "").strip().lower() == "pe":
+        # clang-cl is the fallback rather than clang: it at least matches MSVC
+        # calling conventions and name decoration.
+        return "msvc" if vc_root_available else "clang-cl"
+    return "clang"
+
+
 def compiler_for_source_synthesis_mode(mode: str) -> str:
-    if mode == "dry-run":
+    if mode in {"dry-run", "none"}:
         return "clang"
     if mode in {"clang", "clang-cl", "msvc"}:
         return mode
