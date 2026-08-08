@@ -24,6 +24,7 @@ def run_decomp_atlas(
     write_prompt: bool = False,
     corpus: "DecompFunctionCorpus | None" = None,
     embedder: "SemanticEmbedder | None" = None,
+    min_match_percent: float | None = None,
 ) -> dict[str, Any]:
     prompt_dir = resolve_prompt_dir(prompt_name, prompts_dir)
     query_text = build_query_text(prompt_name, query, prompt_dir)
@@ -47,7 +48,9 @@ def run_decomp_atlas(
     # purely additive so the token-overlap path above -- the tested, dependency-free
     # default -- is unaffected whether or not a corpus/embedder is supplied.
     if corpus is not None and embedder is not None and query_text.strip():
-        receipt["semanticResults"] = semantic_search(query_text, corpus, embedder, top_k)
+        receipt["semanticResults"] = semantic_search(
+            query_text, corpus, embedder, top_k, min_match_percent=min_match_percent
+        )
     if write_prompt and prompt_dir:
         receipt["promptUpdate"] = write_prompt_similar_examples(prompt_dir, receipt)
     return receipt
@@ -58,6 +61,8 @@ def semantic_search(
     corpus: "DecompFunctionCorpus",
     embedder: "SemanticEmbedder",
     top_k: int,
+    *,
+    min_match_percent: float | None = None,
 ) -> list[dict[str, Any]]:
     """Embedding-based nearest-neighbor search over a DecompFunctionCorpus.
 
@@ -65,6 +70,12 @@ def semantic_search(
     and ranks corpus functions by cosine similarity against their (already
     unit-normalized) vectors. Functions with no embedding are silently
     excluded rather than treated as a zero-similarity match.
+
+    Results carry each function's objdiff outcome, and `min_match_percent`
+    drops those that never reached it. A neighbour whose C is known to
+    compile to its own target is worth more as prompt context than an equally
+    close one nobody verified, and the caller cannot tell them apart unless
+    this says so.
     """
     vectors = corpus.vectors
     if not vectors:
@@ -88,9 +99,13 @@ def semantic_search(
     scored.sort(key=lambda item: item[0], reverse=True)
 
     results: list[dict[str, Any]] = []
-    for similarity, function_id in scored[: max(1, top_k)]:
+    for similarity, function_id in scored:
+        if len(results) >= max(1, top_k):
+            break
         fn = corpus.get_function_by_id(function_id)
         if fn is None:
+            continue
+        if min_match_percent is not None and (fn.match_percent is None or fn.match_percent < min_match_percent):
             continue
         results.append(
             {
@@ -99,6 +114,7 @@ def semantic_search(
                 "entry": function_id,
                 "similarity": round(similarity, 6),
                 "candidateSource": fn.c_module_path,
+                "matchPercent": fn.match_percent,
             }
         )
     return results

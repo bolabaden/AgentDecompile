@@ -10,10 +10,26 @@ or as an index node pointing at a chain of data buffers::
     index node:              | 8 (1) | obfuscation|dataLength (4) | nextIndexId (4) | dataBufId... |
 
 The high bit of the length word marks *obfuscated* content: the payload is XORed
-with a fixed 128-byte mask, indexed by the byte's offset within the logical
-record (not within its buffer). This is deliberately not encryption -- it exists
-so that raw strings are not trivially greppable out of a database file -- but it
-must be undone or every large string comes back as noise.
+with a fixed 128-byte mask, indexed by the byte's offset **within its own data
+buffer** -- `ChainedBuffer.xorMaskByte` takes a `bufferOffset` "in the range 0 to
+(dataSpace-1)", and `ChainedBuffer.get` resets it to 0 at every buffer boundary.
+The mask therefore restarts on each data buffer, not once per record. This is
+deliberately not encryption -- it exists so that raw strings are not trivially
+greppable out of a database file -- but it must be undone or every large string
+comes back as noise.
+
+A data-buffer id of -1 is a *sparse* node, not the end of the chain:
+`ChainedBuffer.getBytes` reads it as `dataSpace` zero bytes (unmasked) and keeps
+going. Index nodes are pre-filled with -1 by `createIndex`, so the number of
+entries has to come from the declared length -- a scan that stopped at the first
+-1 could not tell a hole from the end.
+
+Those zeros are what a chained buffer holds on its own. Ghidra lets a *caller*
+substitute an `uninitializedDataSource` for sparse nodes, and one caller does:
+`FileBytes` pairs each layered buffer with its original buffer, so an unpatched
+layered buffer is stored entirely sparse and reads back as the original file
+bytes. That pairing lives in the layer above, so anything reading `FileBytes`
+has to supply it; here a hole is zeros.
 """
 
 from __future__ import annotations
@@ -28,6 +44,14 @@ CHAINED_BUFFER_DATA_NODE = 9
 
 _OBFUSCATION_BIT = 0x80000000
 _LENGTH_MASK = 0x7FFFFFFF
+
+# db.ChainedBuffer node offsets.
+_ID_SIZE = 4
+_DATA_LENGTH_OFFSET = 1
+_NEXT_INDEX_ID_OFFSET = 5
+_INDEX_BASE_OFFSET = 9
+_DATA_BASE_OFFSET_NONINDEXED = 5
+_DATA_BASE_OFFSET_INDEXED = 1
 
 # db.ChainedBuffer.XOR_MASK_BYTES -- 128 bytes, applied by offset % 128.
 XOR_MASK_BYTES = bytes(
@@ -55,7 +79,12 @@ _MAX_CHAIN_BUFFERS = 1 << 20
 
 
 def deobfuscate(data: bytes, start_offset: int = 0) -> bytes:
-    """Undo the XOR mask. `start_offset` is the offset of `data[0]` in the record."""
+    """Undo the XOR mask.
+
+    `start_offset` is the offset of `data[0]` **within its data buffer**, which
+    is what `db.ChainedBuffer.xorMaskByte` indexes the mask by. Whole buffers
+    therefore start at 0; the argument exists for partial reads.
+    """
 
     mask = XOR_MASK_BYTES
     return bytes(byte ^ mask[(start_offset + index) % 128] for index, byte in enumerate(data))
@@ -66,35 +95,39 @@ def read_chained_buffer(buffer_file: BufferFile, buffer_id: int) -> bytes:
 
     root = buffer_file.read_buffer(buffer_id)
     node_type = root[0]
-
-    if node_type == CHAINED_BUFFER_DATA_NODE:
-        (raw_length,) = struct.unpack(">I", root[1:5])
-        obfuscated = bool(raw_length & _OBFUSCATION_BIT)
-        length = raw_length & _LENGTH_MASK
-        payload = root[5 : 5 + length]
-        if len(payload) < length:
-            raise BufferFileError(
-                f"chained buffer {buffer_id}: declared length {length} exceeds buffer payload"
-            )
-        return deobfuscate(payload, 0) if obfuscated else payload
-
-    if node_type != CHAINED_BUFFER_INDEX_NODE:
+    if node_type not in (CHAINED_BUFFER_DATA_NODE, CHAINED_BUFFER_INDEX_NODE):
         raise BufferFileError(
             f"buffer {buffer_id} is not a chained buffer (node type {node_type}, "
             f"expected {CHAINED_BUFFER_DATA_NODE} or {CHAINED_BUFFER_INDEX_NODE})"
         )
 
-    (raw_length,) = struct.unpack(">I", root[1:5])
+    (raw_length,) = struct.unpack(">I", root[_DATA_LENGTH_OFFSET : _DATA_LENGTH_OFFSET + 4])
     obfuscated = bool(raw_length & _OBFUSCATION_BIT)
     total_length = raw_length & _LENGTH_MASK
 
-    data_ids = _collect_data_buffer_ids(buffer_file, buffer_id, root)
+    if node_type == CHAINED_BUFFER_DATA_NODE:
+        payload = root[_DATA_BASE_OFFSET_NONINDEXED : _DATA_BASE_OFFSET_NONINDEXED + total_length]
+        if len(payload) < total_length:
+            raise BufferFileError(
+                f"chained buffer {buffer_id}: declared length {total_length} exceeds buffer payload"
+            )
+        return deobfuscate(payload) if obfuscated else payload
+
+    # ChainedBuffer.allocateIndex: every data buffer holds `data_space` logical
+    # bytes, so the chain is a fixed number of equal slices of the record.
+    data_space = buffer_file.header.buffer_size - _DATA_BASE_OFFSET_INDEXED
+    data_ids = _collect_data_buffer_ids(buffer_file, buffer_id, root, total_length, data_space)
 
     chunks: list[bytes] = []
     remaining = total_length
     for data_id in data_ids:
-        if remaining <= 0:
-            break
+        chunk_length = min(data_space, remaining)
+        if data_id < 0:
+            # ChainedBuffer.getBytes: a never-written data node reads as zeros,
+            # and the XOR mask is not applied to them.
+            chunks.append(bytes(chunk_length))
+            remaining -= chunk_length
+            continue
         node = buffer_file.read_buffer(data_id)
         if node[0] != CHAINED_BUFFER_DATA_NODE:
             raise BufferFileError(
@@ -102,41 +135,72 @@ def read_chained_buffer(buffer_file: BufferFile, buffer_id: int) -> bytes:
                 f"expected a data node"
             )
         # Indexed data nodes carry no length word -- the index node owns the total.
-        chunk = node[1:]
-        chunks.append(chunk[:remaining])
-        remaining -= len(chunks[-1])
+        chunk = node[_DATA_BASE_OFFSET_INDEXED : _DATA_BASE_OFFSET_INDEXED + chunk_length]
+        # The mask restarts here: this byte is at offset 0 of *its* data buffer.
+        chunks.append(deobfuscate(chunk) if obfuscated else chunk)
+        remaining -= len(chunk)
 
-    data = b"".join(chunks)
-    if len(data) < total_length:
-        raise BufferFileError(
-            f"chained buffer {buffer_id}: recovered {len(data)} of {total_length} declared bytes"
-        )
-    return deobfuscate(data, 0) if obfuscated else data
+    # No short-read check: the slot count is derived from `total_length` rather
+    # than discovered, so a chain that cannot supply it fails in the walk above.
+    return b"".join(chunks)
 
 
-def _collect_data_buffer_ids(buffer_file: BufferFile, root_id: int, root: bytes) -> list[int]:
+def _collect_data_buffer_ids(
+    buffer_file: BufferFile, root_id: int, root: bytes, total_length: int, data_space: int
+) -> list[int]:
     """Walk index nodes, gathering data-buffer ids in order.
+
+    Mirrors `db.ChainedBuffer.buildIndex`: the slot count comes from the declared
+    length, and every slot is taken, negative ones included. Negative means a
+    sparse (never-written) data node -- `createIndex` pre-fills the whole index
+    with -1 -- so stopping at the first one would truncate the record at its
+    first hole and could not tell that hole from the end of the chain.
 
     Bounded and cycle-guarded: a corrupt `nextIndexId` chain must not spin.
     """
 
+    indexes_per_buffer = (buffer_file.header.buffer_size - _INDEX_BASE_OFFSET) // _ID_SIZE
+    if indexes_per_buffer <= 0:
+        raise BufferFileError(f"chained buffer {root_id}: buffers too small to hold an index")
+
+    # allocateIndex: indexCount = ((size - 1) / dataSpace) + 1, i.e. one slot per
+    # data buffer the declared length needs.
+    index_count = (total_length + data_space - 1) // data_space
+    if index_count > _MAX_CHAIN_BUFFERS:
+        raise BufferFileError(f"chained buffer {root_id}: implausible chain length {index_count}")
+
     ids: list[int] = []
     seen_index_nodes = {root_id}
     node = root
-    while True:
-        (next_index_id,) = struct.unpack(">i", node[5:9])
-        for offset in range(9, len(node) - 3, 4):
-            (data_id,) = struct.unpack(">i", node[offset : offset + 4])
-            if data_id < 0:
-                break
-            ids.append(data_id)
-            if len(ids) > _MAX_CHAIN_BUFFERS:
-                raise BufferFileError(f"chained buffer {root_id}: implausible chain length")
-        if next_index_id < 0 or next_index_id in seen_index_nodes:
-            return ids
-        seen_index_nodes.add(next_index_id)
-        node = buffer_file.read_buffer(next_index_id)
-        if node[0] != CHAINED_BUFFER_INDEX_NODE:
-            raise BufferFileError(
-                f"chained buffer {root_id}: buffer {next_index_id} is not an index node"
+    slot = 0
+    offset = _INDEX_BASE_OFFSET
+    while len(ids) < index_count:
+        if slot == indexes_per_buffer:
+            (next_index_id,) = struct.unpack(
+                ">i", node[_NEXT_INDEX_ID_OFFSET : _NEXT_INDEX_ID_OFFSET + _ID_SIZE]
             )
+            if next_index_id < 0:
+                # buildIndex throws AssertException here: createIndex allocated
+                # every index buffer the declared length needs, so running out
+                # of them means the record is shorter than it claims.
+                raise BufferFileError(
+                    f"chained buffer {root_id}: index chain ends after {len(ids)} of "
+                    f"{index_count} data buffers"
+                )
+            if next_index_id in seen_index_nodes:
+                raise BufferFileError(
+                    f"chained buffer {root_id}: index chain revisits buffer {next_index_id}"
+                )
+            seen_index_nodes.add(next_index_id)
+            node = buffer_file.read_buffer(next_index_id)
+            if node[0] != CHAINED_BUFFER_INDEX_NODE:
+                raise BufferFileError(
+                    f"chained buffer {root_id}: buffer {next_index_id} is not an index node"
+                )
+            slot = 0
+            offset = _INDEX_BASE_OFFSET
+        (data_id,) = struct.unpack(">i", node[offset : offset + _ID_SIZE])
+        ids.append(data_id)
+        offset += _ID_SIZE
+        slot += 1
+    return ids

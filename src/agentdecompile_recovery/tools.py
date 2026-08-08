@@ -7,13 +7,38 @@ import os
 import shutil
 import subprocess
 import sysconfig
+
 from pathlib import Path
 from typing import Any
-
 
 DEFAULT_STEAMLESS = Path("target/steamless-release/extracted/Steamless.CLI.exe")
 STEAMLESS_ENV = "AGENTDECOMPILE_STEAMLESS_CLI"
 STEAMLESS_API_NAME = "Steamless.API.dll"
+
+ILSPYCMD_ENV = "AGENTDECOMPILE_ILSPYCMD"
+ASSETRIPPER_ENV = "AGENTDECOMPILE_ASSETRIPPER_CLI"
+UNITY_EDITOR_ENV = "AGENTDECOMPILE_UNITY_EDITOR"
+UNITY_HUB_ROOT_ENV = "AGENTDECOMPILE_UNITY_HUB_ROOT"
+
+DEFAULT_ASSETRIPPER = Path("target/assetripper/AssetRipper.GUI.Free")
+
+# AssetRipper ships as a single self-hosted binary whose name has varied across
+# releases/editions; probe every known spelling before giving up.
+_ASSETRIPPER_NAMES = (
+    "AssetRipper.GUI.Free",
+    "AssetRipper.GUI.Free.exe",
+    "AssetRipper.CLI",
+    "AssetRipper.CLI.exe",
+    "AssetRipper",
+    "AssetRipper.exe",
+)
+
+# Unity Hub install layouts, relative to a hub "Editor" root, per platform.
+_UNITY_EDITOR_RELATIVE = (
+    Path("Editor/Unity"),  # Linux
+    Path("Editor/Unity.exe"),  # Windows
+    Path("Unity.app/Contents/MacOS/Unity"),  # macOS
+)
 
 
 class ToolchainError(RuntimeError):
@@ -85,6 +110,26 @@ def inspect_capabilities(repo_root: Path) -> dict[str, Any]:
         "wine": inspect_tool("wine", ["wine", "--version"]),
         "mono": inspect_tool("mono", ["mono", "--version"]),
         "uv": inspect_tool("uv", ["uv", "--version"]),
+        "dotnet": inspect_tool("dotnet", ["dotnet", "--version"]),
+        "git-lfs": inspect_tool("git-lfs", ["git-lfs", "version"]),
+    }
+    ilspycmd = resolve_ilspycmd()
+    assetripper = resolve_assetripper_cli(repo_root)
+    unity_editors = discover_unity_editors()
+    tools["ilspycmd"] = (
+        inspect_executable("ilspycmd", ilspycmd, [str(ilspycmd), "--version"])
+        if ilspycmd
+        else {"name": "ilspycmd", "path": None, "available": False}
+    )
+    tools["assetripper"] = (
+        {"name": "assetripper", "path": str(assetripper), "available": True}
+        if assetripper
+        else {"name": "assetripper", "path": None, "available": False}
+    )
+    tools["unity-editor"] = {
+        "name": "unity-editor",
+        "available": bool(unity_editors),
+        "versions": {version: str(path) for version, path in sorted(unity_editors.items())},
     }
     local = {
         "oneShotSource": resolve_script_asset(repo_root, "one-shot-source.py") is not None,
@@ -206,6 +251,170 @@ def detect_pe_packed(path: Path, repo_root: Path, *, timeout: int = 60) -> bool 
     if not isinstance(detection, dict):
         return None
     return bool(detection.get("packed"))
+
+
+def resolve_ilspycmd(configured: Path | None = None) -> Path | None:
+    """Locate ``ilspycmd`` (dotnet global tool; often installed off-PATH)."""
+
+    candidates: list[Path] = []
+    if configured is not None:
+        candidates.append(configured)
+    env_path = os.environ.get(ILSPYCMD_ENV)
+    if env_path:
+        candidates.append(Path(env_path))
+    on_path = shutil.which("ilspycmd")
+    if on_path:
+        candidates.append(Path(on_path))
+    # `dotnet tool install -g ilspycmd` lands here and is frequently not on PATH.
+    candidates.append(Path.home() / ".dotnet" / "tools" / "ilspycmd")
+    for candidate in candidates:
+        expanded = candidate.expanduser()
+        if expanded.exists() and os.access(expanded, os.X_OK):
+            return expanded.resolve()
+    return None
+
+
+def resolve_assetripper_cli(repo_root: Path, configured: Path | None = None) -> Path | None:
+    """Locate an AssetRipper binary (env override, then repo-managed, then PATH)."""
+
+    candidates: list[Path] = []
+    if configured is not None:
+        candidates.append(configured)
+    env_path = os.environ.get(ASSETRIPPER_ENV)
+    if env_path:
+        candidates.append(Path(env_path))
+    # Prefer pinned repo-managed layout over cwd (cwd-first is an abuse vector).
+    candidates.append(repo_root / DEFAULT_ASSETRIPPER)
+    for name in _ASSETRIPPER_NAMES:
+        candidates.append(repo_root / "target" / "assetripper" / name)
+        candidates.append(repo_root / "tools" / "AssetRipper" / "linux" / name)
+        on_path = shutil.which(name)
+        if on_path:
+            candidates.append(Path(on_path))
+    for candidate in candidates:
+        expanded = candidate.expanduser()
+        if expanded.is_file() and os.access(expanded, os.X_OK):
+            return expanded.resolve()
+    return None
+
+
+def discover_unity_editors(hub_roots: list[Path] | None = None) -> dict[str, Path]:
+    """Map installed Unity Editor version -> executable, via Unity Hub layouts."""
+
+    roots: list[Path] = []
+    env_root = os.environ.get(UNITY_HUB_ROOT_ENV)
+    if env_root:
+        roots.append(Path(env_root))
+    if hub_roots:
+        roots.extend(hub_roots)
+    roots.extend(
+        [
+            Path.home() / "Unity" / "Hub" / "Editor",
+            Path("/opt/unity/editors"),
+            Path("/Applications/Unity/Hub/Editor"),
+            Path("C:/Program Files/Unity/Hub/Editor"),
+        ]
+    )
+    found: dict[str, Path] = {}
+    for root in roots:
+        expanded = root.expanduser()
+        if not expanded.is_dir():
+            continue
+        try:
+            children = sorted(expanded.iterdir())
+        except OSError:
+            continue
+        for version_dir in children:
+            if not version_dir.is_dir() or version_dir.name in found:
+                continue
+            for relative in _UNITY_EDITOR_RELATIVE:
+                executable = version_dir / relative
+                if executable.is_file() and os.access(executable, os.X_OK):
+                    found[version_dir.name] = executable.resolve()
+                    break
+    return found
+
+
+def select_unity_editor(
+    requested_version: str | None,
+    *,
+    installed: dict[str, Path] | None = None,
+) -> tuple[str | None, Path | None, str]:
+    """Pick an Editor for ``requested_version``.
+
+    Returns ``(version, executable, match)`` where ``match`` is one of
+    ``exact`` / ``minor`` / ``fallback`` / ``none``. A non-``exact`` match is a
+    real fidelity risk (Unity silently upgrades project assets on open), so the
+    caller must record it rather than treat any Editor as interchangeable.
+    """
+
+    editors = discover_unity_editors() if installed is None else installed
+    if not editors:
+        return None, None, "none"
+    if requested_version and requested_version in editors:
+        return requested_version, editors[requested_version], "exact"
+    if requested_version:
+        # `2022.3.62f2` -> prefer another `2022.3.*` before anything else.
+        parts = requested_version.split(".")
+        if len(parts) >= 2:
+            prefix = f"{parts[0]}.{parts[1]}."
+            same_minor = sorted(v for v in editors if v.startswith(prefix))
+            if same_minor:
+                chosen = same_minor[-1]
+                return chosen, editors[chosen], "minor"
+    chosen = sorted(editors)[-1]
+    return chosen, editors[chosen], "fallback" if requested_version else "exact"
+
+
+def run_ilspycmd(
+    cli: Path,
+    assembly: Path,
+    out_dir: Path,
+    *,
+    reference_dirs: list[Path] | None = None,
+    timeout: int = 1800,
+) -> subprocess.CompletedProcess[str]:
+    """Decompile one assembly into a project tree under ``out_dir``."""
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    args = [str(cli), str(assembly), "-p", "-o", str(out_dir)]
+    for reference in reference_dirs or []:
+        args.extend(["-r", str(reference)])
+    return subprocess.run(args, text=True, capture_output=True, check=False, timeout=timeout)
+
+
+def run_unity_batchmode(
+    editor: Path,
+    project_path: Path,
+    *,
+    execute_method: str | None = None,
+    log_file: Path | None = None,
+    extra_args: list[str] | None = None,
+    timeout: int = 3600,
+) -> subprocess.CompletedProcess[str]:
+    """Open a project headlessly and quit.
+
+    A cold batchmode open performs a full asset import, which is what makes this
+    usable as a verification gate: no Editor window, no focus-dependent
+    background scanning, and a deterministic log to parse afterwards.
+    """
+
+    args = [
+        str(editor),
+        "-batchmode",
+        "-quit",
+        "-nographics",
+        "-silent-crashes",
+        "-projectPath",
+        str(project_path),
+    ]
+    if execute_method:
+        args.extend(["-executeMethod", execute_method])
+    if log_file:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        args.extend(["-logFile", str(log_file)])
+    args.extend(extra_args or [])
+    return subprocess.run(args, text=True, capture_output=True, check=False, timeout=timeout)
 
 
 def resolve_script_asset(repo_root: Path, script_name: str) -> Path | None:

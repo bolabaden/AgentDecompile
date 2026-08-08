@@ -64,7 +64,43 @@ def _parse_settings_yaml(text: str) -> dict[str, str]:
     return values
 
 
-def _load_prompt_from_dir(prompts_dir: Path, dir_name: str) -> PromptInfo:
+def _object_symbols(target_path: Path, dir_name: str, symbol_cache: dict[Path, set[str]] | None) -> set[str]:
+    """Return the symbol names `nm` reports for `target_path`.
+
+    Hundreds of prompt folders routinely point at the same object file, so the
+    parsed symbol set is memoized in `symbol_cache` (keyed by resolved path).
+    The cache is owned by one `load_prompts` call and must not outlive it:
+    object files are rewritten between compile iterations, and a longer-lived
+    cache would hand back stale symbols. A failure to run `nm` at all is not
+    cached -- it is retried per prompt folder, exactly as before.
+    """
+    cache_key = target_path.resolve()
+    if symbol_cache is not None and cache_key in symbol_cache:
+        return symbol_cache[cache_key]
+
+    try:
+        completed = subprocess.run(
+            ["nm", str(target_path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise PromptLoadError(dir_name, f"Failed to run nm on object file: {exc}") from exc
+
+    symbols: set[str] = set()
+    for line in completed.stdout.splitlines():
+        fields = line.strip().split()
+        if fields:
+            symbols.add(fields[-1])
+
+    if symbol_cache is not None:
+        symbol_cache[cache_key] = symbols
+    return symbols
+
+
+def _load_prompt_from_dir(prompts_dir: Path, dir_name: str, symbol_cache: dict[Path, set[str]] | None = None) -> PromptInfo:
     prompt_dir = prompts_dir / dir_name
     prompt_md_path = prompt_dir / "prompt.md"
     settings_path = prompt_dir / "settings.yaml"
@@ -93,22 +129,7 @@ def _load_prompt_from_dir(prompts_dir: Path, dir_name: str) -> PromptInfo:
     if not target_path.is_file():
         raise PromptLoadError(dir_name, f"Target object file not found: {target_object_path}")
 
-    try:
-        completed = subprocess.run(
-            ["nm", str(target_path)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise PromptLoadError(dir_name, f"Failed to run nm on object file: {exc}") from exc
-
-    symbols = {
-        fields[-1]
-        for line in completed.stdout.splitlines()
-        if (fields := line.strip().split())
-    }
+    symbols = _object_symbols(target_path, dir_name, symbol_cache)
     # Mach-O (and some other ABIs) prefix C symbols with '_'. Accept both.
     if function_name not in symbols and f"_{function_name}" not in symbols:
         raise PromptLoadError(
@@ -129,16 +150,18 @@ def load_prompts(prompts_dir: Path) -> tuple[list[PromptInfo], list[PromptLoadEr
 
     Each subdirectory of `prompts_dir` must contain `prompt.md` and
     `settings.yaml`. Directories that fail to load are reported as errors
-    rather than aborting the whole scan.
+    rather than aborting the whole scan. Folders sharing an object file share
+    one `nm` run, via a cache that lives only for this call.
     """
     prompt_dirs = sorted(p.name for p in prompts_dir.iterdir() if p.is_dir())
 
     prompts: list[PromptInfo] = []
     errors: list[PromptLoadError] = []
+    symbol_cache: dict[Path, set[str]] = {}
 
     for dir_name in prompt_dirs:
         try:
-            prompts.append(_load_prompt_from_dir(prompts_dir, dir_name))
+            prompts.append(_load_prompt_from_dir(prompts_dir, dir_name, symbol_cache))
         except PromptLoadError as exc:
             errors.append(exc)
 

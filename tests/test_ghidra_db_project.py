@@ -24,8 +24,11 @@ from agentdecompile_recovery.ghidra_db.packed import (
     read_packed_header,
 )
 from agentdecompile_recovery.ghidra_db.project import (
+    INDEX_FILE,
     ProjectLayoutError,
     find_program,
+    is_item_filesystem_root,
+    item_storage_roots,
     iter_program_entries,
     list_programs,
     open_project_program,
@@ -39,10 +42,14 @@ ODYSSEY_GPR = Path("/home/brunner56/Odyssey.gpr")
 ODYSSEY_REP = Path("/home/brunner56/Odyssey.rep")
 GHIDRA_REP = Path("/home/brunner56/Downloads/biodecompwarehouse/projects/agentdecompile.rep")
 REAL_GZF = Path("/home/brunner56/Desktop/k1_win_gog_swkotor.exe.gzf")
+SERVER_REPO = Path("/run/media/brunner56/MyBook/Downloads/biodecompwarehouse/repos/_odyssey")
 
 _needs_odyssey = pytest.mark.skipif(not ODYSSEY_REP.is_dir(), reason="Odyssey project fixture unavailable")
 _needs_ghidra_project = pytest.mark.skipif(not GHIDRA_REP.is_dir(), reason="Ghidra project fixture unavailable")
 _needs_real_gzf = pytest.mark.skipif(not REAL_GZF.is_file(), reason="packed .gzf fixture unavailable")
+_needs_server_repo = pytest.mark.skipif(
+    not SERVER_REPO.is_dir(), reason="Ghidra server repository fixture unavailable"
+)
 
 
 # -- synthetic project builder ----------------------------------------------
@@ -83,6 +90,47 @@ def _make_project(
     for version in versions:
         (database / f"db.{version}.gbf").write_bytes(b"")
     return repository
+
+
+def _make_server_repository(
+    root: Path,
+    *,
+    items: tuple[tuple[str, str, str], ...] = (("0000000b", "game.exe", "/TSL"),),
+    content_type: str = "Program",
+    versions: tuple[int, ...] = (1,),
+) -> Path:
+    """Build a minimal Ghidra *server* repository.
+
+    A repository on a server is an item filesystem with no project wrapper: the
+    `~index.dat` that marks a root sits at the top, and the storage
+    subdirectories are its immediate children. `items` is `(storage_name, name,
+    folder)` triples.
+    """
+
+    root.mkdir(parents=True, exist_ok=True)
+    folders = sorted({folder for _, _, folder in items})
+    lines = ["VERSION=1", "/"]
+    for folder in folders:
+        lines.append(folder)
+        for storage_name, name, item_folder in items:
+            if item_folder == folder:
+                lines.append(f"  {storage_name}:{name}:id-{storage_name}")
+    lines += ["NEXT-ID:32", "MD5:d41d8cd98f00b204e9800998ecf8427e", ""]
+    (root / INDEX_FILE).write_text("\n".join(lines))
+
+    for storage_name, name, folder in items:
+        storage = root / storage_subdirectory(storage_name)
+        storage.mkdir(exist_ok=True)
+        (storage / f"{storage_name}.prp").write_text(
+            _PRP_TEMPLATE.format(
+                content_type=content_type, parent=folder, file_id=f"id-{storage_name}", name=name
+            )
+        )
+        database = storage / f"~{storage_name}.db"
+        database.mkdir(exist_ok=True)
+        for version in versions:
+            (database / f"db.{version}.gbf").write_bytes(b"")
+    return root
 
 
 # -- storage arithmetic -----------------------------------------------------
@@ -267,7 +315,160 @@ def test_iteration_is_lazy(tmp_path: Path) -> None:
     assert next(entries).name == "target.exe"
 
 
+# -- server repositories ----------------------------------------------------
+
+
+def test_server_repository_resolves_to_itself(tmp_path: Path) -> None:
+    """`IndexedLocalFileSystem.isIndexed`: a directory holding `~index.dat` is a root."""
+
+    repository = _make_server_repository(tmp_path / "_odyssey")
+
+    assert is_item_filesystem_root(repository)
+    assert resolve_project_root(repository) == repository
+
+
+def test_local_project_root_is_not_an_item_filesystem_root(tmp_path: Path) -> None:
+    """In a `.rep` the index sits in `idata/`, so the wrapper itself is not a root."""
+
+    repository = _make_project(tmp_path / "Sample.gpr")
+    (repository / "idata" / INDEX_FILE).write_text("VERSION=1\n/\n")
+
+    assert not is_item_filesystem_root(repository)
+    assert item_storage_roots(repository) == [repository / "idata"]
+
+
+def test_server_repository_programs_carry_their_folder(tmp_path: Path) -> None:
+    """Names repeat across folders, so identity is the folder path plus the name."""
+
+    repository = _make_server_repository(
+        tmp_path / "_odyssey",
+        items=(
+            ("0000002a", "swkotor.exe", "/K1"),
+            ("0000000b", "swkotor.exe", "/TSL"),
+        ),
+    )
+
+    entries = list_programs(repository)
+
+    assert [entry.project_path for entry in entries] == ["/K1/swkotor.exe", "/TSL/swkotor.exe"]
+    assert entries[0].database_path == repository / "02/~0000002a.db/db.1.gbf"
+    assert entries[1].database_path == repository / "00/~0000000b.db/db.1.gbf"
+
+
+def test_server_repository_takes_the_highest_database_version(tmp_path: Path) -> None:
+    repository = _make_server_repository(tmp_path / "_odyssey", versions=(1, 2, 18))
+
+    entry = list_programs(repository)[0]
+
+    assert entry.version == 18
+    assert entry.database_path.name == "db.18.gbf"
+
+
+def test_server_repository_ignores_version_and_change_files(tmp_path: Path) -> None:
+    """A checked-in item keeps `ver.N.gbf` and `change.N.gbf` beside `db.N.gbf`."""
+
+    repository = _make_server_repository(tmp_path / "_odyssey", versions=(1, 18))
+    database = repository / "00/~0000000b.db"
+    (database / "ver.99.gbf").write_bytes(b"")
+    (database / "change.99.gbf").write_bytes(b"")
+    (database / "checkout.dat").write_bytes(b"")
+
+    assert list_programs(repository)[0].database_path.name == "db.18.gbf"
+
+
 # -- real projects ----------------------------------------------------------
+
+
+@_needs_server_repo
+def test_server_repository_lists_every_program_with_its_folder() -> None:
+    """The real 24-program `_odyssey` repository, enumerated from its root."""
+
+    entries = list_programs(SERVER_REPO)
+
+    assert len(entries) == 24
+    assert [entry.project_path for entry in entries] == [
+        "/JE/JadeEmpire.exe",
+        "/K1/k1_android_ARM64",
+        "/K1/k1_android_ARMEABI",
+        "/K1/k1_iOS_KOTOR.ipa",
+        "/K1/k1_mac_swkotor.app",
+        "/K1/k1_win_amazongames_swkotor.exe",
+        "/K1/k1_win_gog_swkotor.exe",
+        "/K1/k1_win_gog_swkotor.exe.keep",
+        "/K1/k1_xbox_default.xbe",
+        "/Other BioWare Engines/Aurora/nwmain.exe",
+        "/Other BioWare Engines/Eclipse/DragonAge2.exe",
+        "/Other BioWare Engines/Eclipse/daorigins.exe",
+        "/TSL/k2_android_libkotor2.so_arm64-v8aandroid",
+        "/TSL/k2_android_libkotor2.so_armeabi-v7aandroid",
+        "/TSL/k2_android_libkotor2.so_x86_64android",
+        "/TSL/k2_android_libkotor2.so_x86android",
+        "/TSL/k2_ios_KOTOR_II.ipa",
+        "/TSL/k2_linux_swkotor2.elf",
+        "/TSL/k2_mac_swkotor2.app",
+        "/TSL/k2_win_CD_1.0_swkotor2.exe",
+        "/TSL/k2_win_CD_1.0b_swkotor2.exe",
+        "/TSL/k2_win_gog_aspyr_swkotor2.exe",
+        "/TSL/k2_win_steam_aspyr_swkotor2.exe",
+        "/TSL/k2_xbox_default.xbe",
+    ]
+
+
+@_needs_server_repo
+def test_server_repository_folders_agree_with_the_index_file() -> None:
+    """Globbing `.prp` files must give the folder tree `~index.dat` records.
+
+    The walk deliberately ignores the index, so this is the check that the two
+    cannot drift apart unnoticed: every `id:name:fileId` line in the index has to
+    match the `PARENT`/`NAME`/`FILE_ID` of the item with that storage name.
+    """
+
+    indexed: dict[str, str] = {}
+    folder = "/"
+    for line in (SERVER_REPO / INDEX_FILE).read_text().splitlines():
+        if line.startswith("/"):
+            folder = line
+        elif line.startswith("  "):
+            storage_name, name, file_id = line.strip().split(":")
+            indexed[storage_name] = f"{folder.rstrip('/')}/{name}|{file_id}"
+
+    walked = {
+        entry.storage_name: f"{entry.project_path}|{entry.file_id}"
+        for entry in list_programs(SERVER_REPO)
+    }
+
+    assert walked == indexed
+
+
+@_needs_server_repo
+def test_server_repository_current_version_is_the_highest_database_file() -> None:
+    """`/TSL/k2_win_gog_aspyr_swkotor2.exe` has 18 versions checked in."""
+
+    entry = find_program(SERVER_REPO, "/TSL/k2_win_gog_aspyr_swkotor2.exe")
+
+    assert entry is not None
+    assert entry.database_path == SERVER_REPO / "01/~00000014.db/db.18.gbf"
+    assert entry.version == 18
+    assert sorted(entry.database_path.parent.glob("ver.*.gbf"))  # older versions kept beside it
+
+
+@_needs_server_repo
+def test_server_repository_program_opens_and_reads_its_metadata() -> None:
+    """The 6 MB `/TSL/k2_win_CD_1.0_swkotor2.exe`, opened straight from the repository."""
+
+    entry = find_program(SERVER_REPO, "/TSL/k2_win_CD_1.0_swkotor2.exe")
+
+    assert entry is not None
+    with entry.open() as program:
+        assert program.image_base == 0x400000
+        assert program.language_id == "x86:LE:32:default"
+        assert [block.name for block in program.memory_blocks()] == [
+            "Headers",
+            ".text",
+            ".rdata",
+            ".data",
+            ".rsrc",
+        ]
 
 
 @_needs_odyssey

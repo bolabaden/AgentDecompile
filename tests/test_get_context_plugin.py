@@ -48,6 +48,16 @@ def test_reports_failure_when_script_exits_nonzero(tmp_path: Path):
     assert "boom" in result.error
 
 
+def test_reports_failure_when_script_exceeds_timeout(tmp_path: Path):
+    plugin = GetContextPlugin("sleep 10", tmp_path, timeout_seconds=1)
+
+    result, context = plugin.execute({"functionName": "f", "targetObjectPath": "x.o"})
+
+    assert result.status == "failure"
+    assert "timed out" in result.error
+    assert "contextContent" not in context
+
+
 def test_cleanup_removes_temp_directory(tmp_path: Path):
     plugin = GetContextPlugin("echo hi", tmp_path)
     _result, updated = plugin.execute({"functionName": "f", "targetObjectPath": "x.o"})

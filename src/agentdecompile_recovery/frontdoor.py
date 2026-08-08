@@ -23,7 +23,8 @@ from .acquire import acquire_context
 from .autonomy_budget import budget_from_args
 from .claim_report import write_claim_report
 from .critical_path import write_critical_path
-from .cli import main as legacy_main
+from .cli import add_unity_arguments, main as legacy_main, unity_config_kwargs
+from .package_verify import resolve_vc_root_option
 from .pipeline import RecoveryConfig, RecoveryRunner, resolve_source_synthesis_mode
 from .targets import identify_binary
 from .tools import inspect_capabilities, resolve_script_asset
@@ -222,10 +223,18 @@ def build_parser() -> argparse.ArgumentParser:
             "byte-authority",
             "legacy-adapter",
             "snapshot-existing-recovery",
+            "unity-probe",
+            "unity-plan",
+            "unity-export-assets",
+            "unity-decompile-managed",
+            "unity-compose-project",
+            "unity-editor-validate",
+            "unity-repair",
             "report",
         ],
         help="Stop after a named stage for bounded runs.",
     )
+    add_unity_arguments(parser)
     parser.add_argument(
         "--skip-enrichment",
         action="store_true",
@@ -265,7 +274,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Only verify generated candidates with this source quality. Repeat or comma-separate.",
     )
-    parser.add_argument("--source-synthesis-vc-root", type=Path, help="MSVC/VC Toolkit root used by source synthesis.")
+    parser.add_argument(
+        "--source-synthesis-vc-root",
+        type=Path,
+        help="MSVC/VC Toolkit root used by source synthesis. Takes a path or a profile name: vc71, vc80.",
+    )
     parser.add_argument(
         "--vc-root",
         type=Path,
@@ -384,6 +397,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
         args.resume = False
     if getattr(args, "vc_root", None) and not getattr(args, "source_synthesis_vc_root", None):
         args.source_synthesis_vc_root = args.vc_root
+    args.source_synthesis_vc_root = resolve_vc_root_option(getattr(args, "source_synthesis_vc_root", None))
     work_dir = args.work_dir or default_work_dir(args.input, args.preferred_name)
     work_dir.mkdir(parents=True, exist_ok=True)
     if getattr(args, "autonomous", False):
@@ -535,6 +549,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
         context_extract_containers=not args.no_context_extract_containers,
         context_include_low_signal_members=args.context_include_low_signal_members,
         skip_enrichment=False,
+        **unity_config_kwargs(args),
     )
     rc = RecoveryRunner(config).run()
     write_critical_path(work_dir)

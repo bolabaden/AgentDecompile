@@ -9,13 +9,43 @@ From `target/agentdecompile-reconstruct/swkotor-parity/claim-report.json`:
 
 | Class | Count | Meaning |
 |---|---:|---|
-| `objdiff-verified-semantic` | **6** | Byte-exact. Real proof. |
+| `objdiff-verified-semantic` | **0** | Full target-object proof. None exists yet. |
 | `advisory-decompiler` | 11,865 | Decompiler output. Unproven. |
 | `byte-authoritative` | 14,373 | Copied bytes. **Not source recovery.** |
 
-Proof-ladder coverage: **0.0467%** (6 / 12,845). Rung: `below-1`.
+Proof-ladder coverage: **0%** (0 / 12,845). Rung: `below-1`.
+
+Three functions do carry objdiff-zero receipts, filed under
+`verified/code-slice/`: `sub_1430_401430`, `sub_1590_401590`, `sub_15a0_4015a0`.
+Each compiled under MSVC and reached zero differences — against a target object
+the pipeline assembled from that function's own target slice bytes, not against
+a real target object. The producer records that boundary itself: *"this is
+code-slice evidence, not full target-object source parity."* Slice evidence
+stays out of the ladder numerator, in the ELF/clang lane and the PE/MSVC lane
+alike.
+
+All three are also compiler-invariant — `return 0x0073d5c0u;`, a stdcall stub
+returning 0, and an empty `void` body. They match under any MSVC of any era, so
+they settle nothing about the build configuration.
 
 That is the honest state. Everything below is written against it.
+
+### 1.1 Corrected 2026-08-07: this section previously read "6 | Byte-exact. Real proof."
+
+Both halves were wrong.
+
+There were never 6. The ladder counted each published artifact's metadata file
+and its receipt sidecar as separate proofs, so 3 functions reported as 6. Fixing
+the double-count is arithmetic, not policy — under the most permissive tier
+ruling available the answer was 3.
+
+And "byte-exact" overstated what the 3 are. A match against a synthesized target
+object is code-slice evidence by its producer's own words. `_OBJDIFF_PROOF_TIERS`
+in `claim_report.py` used to admit the clang/ELF synthetic tier while excluding
+the equivalent MSVC/clang-cl PE tier, so runs of identical rigor reported
+different numerators depending on the lane. Neither tier counts now.
+
+Coverage figures below were rewritten from 0.0467% to 0% by the same correction.
 
 ## 2. Why the loop is rate-limited
 
@@ -32,11 +62,11 @@ To make one function match under objdiff, *all* of these must be right at once:
 Items 5–6 are per-function.**
 
 The current loop spends its compute on 5–6 while 1–4 are unsettled. That is
-precisely the shape that produces 0.0467%: per-function idiom search cannot
+precisely the shape that produces 0%: per-function idiom search cannot
 converge when the global preconditions are wrong, because a wrong struct offset
 or wrong flag set makes *every* affected function unmatchable no matter how
-good the source guess is. The six that did match are the ones insensitive to
-all four globals — trivial leaves.
+good the source guess is. The three that reached objdiff zero on slice evidence
+are the ones insensitive to all four globals — trivial leaves.
 
 This is the single most important finding in this document. The system is not
 short on cleverness per function. It is attacking the wrong layer.
@@ -133,7 +163,7 @@ boolean, and the difference *class* maps to a specific corrective action:
 signature is *global* must escape the per-function loop and file a global work
 item. The current design has no escape hatch, so a function blocked on a bad
 struct offset burns unbounded compute on idiom permutations that cannot
-possibly help. Every such loop is pure waste, and at 0.0467% most loops are
+possibly help. Every such loop is pure waste, and at 0% most loops are
 exactly this.
 
 **Budget allocation by proximity.** A function at 2 differing instructions is
@@ -147,13 +177,14 @@ in the current design.
 ### Layer E — Readability, fully decoupled from parity
 
 The primary objective is a readable representation of the binary **in its
-entirety**. Gating readability behind byte-parity would cap it at 0.0467%
+entirety**. Gating readability behind byte-parity would cap it at 0%
 forever. So readability must be produced for all 12,845 functions regardless of
 proof status, with honest per-tier labeling:
 
 | Tier | Content | Claim |
 |---|---|---|
-| `verified/` | Byte-exact | Provably original semantics |
+| `verified/` | objdiff zero against a real target object | Provably original semantics |
+| `verified/code-slice/` | objdiff zero against a synthesized target object | Slice evidence, not target-object parity |
 | `readable/` | Named, typed, de-Ghidra-ified, compiles | Faithful, not byte-proven |
 | advisory | Best-effort | Decompiler output, cleaned |
 
@@ -180,7 +211,7 @@ Stated as predictions with reasoning, not aspirations.
 
 | Stage | Expected coverage | Reasoning |
 |---|---:|---|
-| Today | 0.0467% | Measured |
+| Today | 0% | Measured |
 | After Layer A (compiler ID) | 3–8% | Trivial leaves stop failing for global reasons |
 | After Layer B (structs) | 15–25% | Unblocks the large mid-tier |
 | After Layers C+D (ordering, real feedback loop) | **25–45%** | Mature decompilation projects land here |
@@ -216,7 +247,7 @@ Consequences, stated plainly:
   verified functions**, at full compute cost. Not "few" — zero, deterministically.
 - **Layer A (CRT calibration) is itself blocked**, because calibration is
   fundamentally a compile-and-compare procedure.
-- The 6 existing verified functions date from a session when the toolchain was
+- The 3 existing code-slice matches date from a session when the toolchain was
   mounted; they are not reproducible today.
 
 This reorders the gap analysis: acquiring an MSVC toolchain is item **#0**, a
@@ -291,7 +322,7 @@ is unaffected.
 | 9 | De-Ghidra-ification into a `readable/` tier | E | **Done** (U11/U13) |
 | 10 | objdiff re-verification proving byte-neutrality (V2) | E | Blocked: no toolchain |
 
-Items 1 and 3 together are the difference between 0.0467% and double-digit
+Items 1 and 3 together are the difference between 0% and double-digit
 coverage. Nothing in the per-function loop matters until they exist.
 
 ## 6. Scope boundaries

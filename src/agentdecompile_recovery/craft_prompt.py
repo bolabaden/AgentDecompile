@@ -44,6 +44,10 @@ class SamplingCFunction:
     c_code: str
     asm_code: str
     calls_target: bool
+    # objdiff similarity this decompilation achieved against its own target,
+    # 0-100, when it was ever verified. Rendered next to the example so the
+    # model can tell a proven reconstruction from an unverified guess.
+    match_percent: float | None = None
 
 
 _TEMPLATE_EXAMPLE = "# Examples\n\n"
@@ -102,6 +106,22 @@ _PLATFORM_INFO: dict[PlatformTarget, tuple[str, str]] = {
 }
 
 
+def _render_sample(sample: SamplingCFunction) -> str:
+    return (
+        f"## `{sample.name}`{_outcome_label(sample.match_percent)}\n\n"
+        f"```c\n{sample.c_code}\n```\n\n```asm\n{sample.asm_code}\n```"
+    )
+
+
+def _outcome_label(match_percent: float | None) -> str:
+    """How much this example is worth as evidence, stated plainly."""
+    if match_percent is None:
+        return ""
+    if match_percent >= 100.0:
+        return " -- verified: this C compiles to the assembly below, byte for byte"
+    return f" -- {match_percent:.1f}% of instructions match; the rest still differ"
+
+
 def craft_prompt(
     *,
     platform: PlatformTarget,
@@ -112,25 +132,20 @@ def craft_prompt(
     sampling: list[SamplingCFunction],
     type_definitions: list[str],
     asm_declaration: str | None = None,
+    example_limit: int = 5,
 ) -> str:
-    # TODO: Instead of slicing, use a sampling strategy to select examples.
-    examples = [sample for sample in sampling if not sample.calls_target][:5]
+    # `sampling` arrives pre-ranked (see codebase_context.get_func_context),
+    # so taking the head takes the most useful examples rather than arbitrary
+    # ones. This is the sampling strategy the upstream port left as a TODO.
+    examples = [sample for sample in sampling if not sample.calls_target][: max(0, example_limit)]
     example_prompts = (
-        _TEMPLATE_EXAMPLE
-        + "\n\n".join(
-            f"## `{sample.name}`\n\n```c\n{sample.c_code}\n```\n\n```asm\n{sample.asm_code}\n```" for sample in examples
-        )
-        if examples
-        else ""
+        _TEMPLATE_EXAMPLE + "\n\n".join(_render_sample(sample) for sample in examples) if examples else ""
     )
 
     c_functions_calling_target = [sample for sample in sampling if sample.calls_target]
     functions_calling_target_prompt = (
         _TEMPLATE_FUNCTIONS_CALLING_TARGET
-        + "\n\n".join(
-            f"## `{sample.name}`\n\n```c\n{sample.c_code}\n```\n\n```asm\n{sample.asm_code}\n```"
-            for sample in c_functions_calling_target
-        )
+        + "\n\n".join(_render_sample(sample) for sample in c_functions_calling_target)
         if c_functions_calling_target
         else ""
     )
@@ -155,7 +170,10 @@ def craft_prompt(
         else ""
     )
 
-    platform_name, assembly_language = _PLATFORM_INFO[platform]
+    platform_info = _PLATFORM_INFO.get(platform)
+    if platform_info is None:
+        raise ValueError(f"Unsupported platform: {platform}. Known: {', '.join(sorted(_PLATFORM_INFO))}")
+    platform_name, assembly_language = platform_info
 
     return (
         _TEMPLATE_DECOMPILE.replace("{assemblyLanguage}", assembly_language)

@@ -27,7 +27,7 @@ from .logistic_regression import (
 
 DECOMP_FUNCTION_CORPUS_VERSION = 1
 
-Platform = str  # "arm" | "mips"
+Platform = str  # "arm" | "mips" | "x86" | "x86_64"
 
 
 @dataclass
@@ -40,6 +40,12 @@ class DecompFunctionDoc:
     rom_address: int | None = None
     c_code: str | None = None
     c_module_path: str | None = None
+    # objdiff similarity of `c_code` compiled against `asm_code`, 0-100, when a
+    # verification produced one. `None` means "never verified", which is not the
+    # same as 0.0 ("verified and matched nothing"). Retrieval ranks on this:
+    # a decompilation that provably reached (or nearly reached) the target is
+    # worth far more as a worked example than one nobody ever compiled.
+    match_percent: float | None = None
 
 
 @dataclass

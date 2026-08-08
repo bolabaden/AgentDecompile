@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 from .get_context_plugin import GetContextPlugin
 from .gnu_c_compiler import GnuCCompiler
-from .integrator_plugin import IntegratorPlugin
+from .integrator_plugin import IntegratorConfig, IntegratorPlugin
 from .permuter_background import BackgroundPermuterPlugin
 from .plugin_pipeline import PluginPipeline, PluginResult, now_ms
 from .prompt_loader import PromptInfo, load_prompts
@@ -42,6 +42,8 @@ class RunPipelineConfig:
     get_context_script: str = ""
     integrator_module: Path | None = None
     integrator_build_command: str | None = None
+    #: How far the post-match phase automates: "commit", "push", or "pr".
+    integrator_auto_action: str = "commit"
 
 
 class M2cPhasePlugin:
@@ -156,7 +158,14 @@ def _build_pipeline(config: RunPipelineConfig, *, command_runner: CommandRunner 
     )
     if config.integrator_module is not None:
         pipeline.register_post_match_phase(
-            IntegratorPlugin(config.integrator_module, config.project_root, build_command=config.integrator_build_command)
+            IntegratorPlugin(
+                IntegratorConfig(
+                    integrator_module=config.integrator_module,
+                    verify_build_script=config.integrator_build_command,
+                    auto_action=config.integrator_auto_action,
+                ),
+                config.project_root,
+            )
         )
     return pipeline
 

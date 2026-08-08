@@ -17,9 +17,12 @@ import pytest
 from agentdecompile_recovery.curated_project import (
     CURATED_HINTS_FILENAME,
     CURATED_NAMES_FILENAME,
+    CURATED_SIGNATURES_FILENAME,
+    apply_curated_names_to_facts_jsonl,
     extract_curated_project_data,
     load_curated_hints,
     load_curated_names,
+    load_curated_signatures,
 )
 
 pytestmark = pytest.mark.unit
@@ -230,3 +233,120 @@ def test_extract_curated_project_data_hints_feed_dump_source_tree_end_to_end(tmp
 
     assert curated_name in text
     assert slot not in text
+
+
+# -- load_curated_signatures --------------------------------------------------
+
+
+def test_load_curated_signatures_returns_none_when_file_absent(tmp_path: Path) -> None:
+    assert load_curated_signatures(tmp_path) is None
+
+
+def test_load_curated_signatures_keys_by_entry_int(tmp_path: Path) -> None:
+    payload = {
+        "00401060": {
+            "name": "GetObjectTableManager",
+            "callingConvention": "__thiscall",
+            "signature": "undefined4 __thiscall CAppManager::GetObjectTableManager(int)",
+        }
+    }
+    (tmp_path / CURATED_SIGNATURES_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
+
+    signatures = load_curated_signatures(tmp_path)
+
+    assert signatures is not None
+    assert signatures[0x401060]["callingConvention"] == "__thiscall"
+
+
+def test_load_curated_signatures_returns_none_for_corrupt_json(tmp_path: Path) -> None:
+    (tmp_path / CURATED_SIGNATURES_FILENAME).write_text("{not json", encoding="utf-8")
+
+    assert load_curated_signatures(tmp_path) is None
+
+
+def test_load_curated_signatures_skips_unparsable_keys(tmp_path: Path) -> None:
+    payload = {"00401060": {"name": "Ok"}, "not-hex": {"name": "Dropped"}}
+    (tmp_path / CURATED_SIGNATURES_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
+
+    signatures = load_curated_signatures(tmp_path)
+
+    assert signatures is not None
+    assert list(signatures) == [0x401060]
+
+
+def test_apply_curated_names_to_facts_renames_sub_and_stamps_provenance(tmp_path: Path) -> None:
+    (tmp_path / CURATED_NAMES_FILENAME).write_text(
+        json.dumps({"0x401060": "GetObjectTableManager", "0x401080": "DoSaveGameScreenShot"}),
+        encoding="utf-8",
+    )
+    facts = tmp_path / "function-facts.jsonl"
+    facts.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "entry": "00401060",
+                        "name": "sub_1060",
+                        "provenance": "function-candidate",
+                        "decompiled": "undefined4 sub_1060(void) { return 0; }",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "entry": "00401080",
+                        "name": "DoSaveGameScreenShot",
+                        "provenance": "function-candidate",
+                    }
+                ),
+                json.dumps({"entry": "00409999", "name": "sub_9999", "provenance": "eh-frame"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    receipt = apply_curated_names_to_facts_jsonl(tmp_path)
+
+    assert receipt["status"] == "complete"
+    assert receipt["joined"] == 2
+    assert receipt["renamed"] == 2
+    rows = [json.loads(line) for line in facts.read_text(encoding="utf-8").splitlines() if line.strip()]
+    by_entry = {row["entry"]: row for row in rows}
+    assert by_entry["00401060"]["name"] == "GetObjectTableManager"
+    assert by_entry["00401060"]["provenance"] == "curated-project"
+    assert by_entry["00401060"]["priorName"] == "sub_1060"
+    # Body unchanged — overlay does not re-decompile.
+    assert "sub_1060" in by_entry["00401060"]["decompiled"]
+    assert by_entry["00401080"]["name"] == "DoSaveGameScreenShot"
+    assert by_entry["00401080"]["provenance"] == "curated-project"
+    assert by_entry["00409999"]["name"] == "sub_9999"
+
+
+def test_apply_curated_names_to_facts_skips_without_names(tmp_path: Path) -> None:
+    (tmp_path / "function-facts.jsonl").write_text(
+        json.dumps({"entry": "00401060", "name": "sub_1060"}) + "\n", encoding="utf-8"
+    )
+    receipt = apply_curated_names_to_facts_jsonl(tmp_path)
+    assert receipt["status"] == "skipped"
+    assert receipt["reason"] == "no-curated-names"
+
+
+@_needs_any_project
+def test_extract_writes_signatures_alongside_names_and_hints(tmp_path: Path) -> None:
+    project = _first_available_project()
+    assert project is not None
+
+    receipt = extract_curated_project_data(project=project, work_dir=tmp_path)
+
+    assert receipt["status"] == "complete", receipt
+    assert (tmp_path / CURATED_SIGNATURES_FILENAME).is_file()
+    assert receipt["signatureCount"] > 0
+    # A contradicted prototype keeps its name and loses its signature, so the
+    # prototype count can never exceed the signature (i.e. named) count.
+    assert receipt["prototypeCount"] <= receipt["signatureCount"]
+
+    signatures = load_curated_signatures(tmp_path)
+    assert signatures
+    for record in signatures.values():
+        if record.get("arityCheck") == "contradicted":
+            assert record.get("signature") is None

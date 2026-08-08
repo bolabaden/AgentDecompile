@@ -12,12 +12,17 @@ from __future__ import annotations
 
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 PipelineEventHandler = Callable[[dict[str, Any]], None]
+
+#: Seconds cancel_all()/shutdown() will wait for signalled tasks before abandoning them.
+#: Bounded so a plugin that ignores its abort_event cannot wedge the pipeline.
+DEFAULT_CANCEL_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass
@@ -78,6 +83,7 @@ class BackgroundTaskCoordinator:
         event_handler: PipelineEventHandler | None = None,
         *,
         max_workers: int = 4,
+        cancel_timeout: float = DEFAULT_CANCEL_TIMEOUT_SECONDS,
     ) -> None:
         self._plugins = list(plugins)
         self._event_handler = event_handler
@@ -88,6 +94,8 @@ class BackgroundTaskCoordinator:
         self._success_result: BackgroundTaskResult | None = None
         self._next_task_id = 1
         self._foreground_abort_event = threading.Event()
+        self._cancel_timeout = max(0.0, cancel_timeout)
+        self._abandoned_task_ids: list[str] = []
 
     @property
     def foreground_abort_event(self) -> threading.Event:
@@ -172,16 +180,37 @@ class BackgroundTaskCoordinator:
             self._foreground_abort_event.set()
             self._emit({"type": "background-task-success", "taskId": task_id})
 
-    def cancel_all(self) -> None:
-        """Abort all running tasks and wait for them to clean up."""
+    def cancel_all(self, *, timeout: float | None = None) -> list[str]:
+        """Abort all running tasks and wait -- bounded -- for them to clean up.
+
+        Returns the ids of tasks still running when the wait expired. Those tasks keep
+        their worker thread until they notice their abort_event (or never, if the plugin
+        ignores it), so the ids are also recorded for get_abandoned_task_ids(). The wait
+        is bounded because _work() swallows task exceptions: an unbounded future.result()
+        can only ever wait, never fail.
+        """
         with self._lock:
-            active = list(self._tasks.values())
-        for _future, abort_event in active:
+            active = list(self._tasks.items())
+        for _task_id, (future, abort_event) in active:
             abort_event.set()
-        for future, _abort_event in active:
-            future.result()
+            future.cancel()  # only takes effect for tasks the pool has not started yet
+        deadline = time.monotonic() + (self._cancel_timeout if timeout is None else max(0.0, timeout))
+        abandoned: list[str] = []
+        for task_id, (future, _abort_event) in active:
+            try:
+                future.result(timeout=max(0.0, deadline - time.monotonic()))
+            except FutureTimeoutError:
+                abandoned.append(task_id)
+            except CancelledError:
+                continue
+            except Exception:  # noqa: BLE001 - _work() already records failures; never block teardown.
+                continue
         with self._lock:
             self._tasks.clear()
+            self._abandoned_task_ids.extend(abandoned)
+        if abandoned:
+            self._emit({"type": "background-task-abandoned", "taskIds": abandoned})
+        return abandoned
 
     def get_all_results(self) -> list[BackgroundTaskResult]:
         with self._lock:
@@ -195,10 +224,23 @@ class BackgroundTaskCoordinator:
         with self._lock:
             return len(self._tasks)
 
-    def shutdown(self) -> None:
-        """Cancel outstanding work and release the thread pool. Call once the pipeline ends."""
-        self.cancel_all()
-        self._executor.shutdown(wait=True)
+    def get_abandoned_task_ids(self) -> list[str]:
+        """Tasks that outlived a cancel wait, cumulative across prompts (reset() keeps them)."""
+        with self._lock:
+            return list(self._abandoned_task_ids)
+
+    def shutdown(self, *, timeout: float | None = None) -> list[str]:
+        """Cancel outstanding work and release the thread pool. Call once the pipeline ends.
+
+        Returns the abandoned task ids from the bounded cancel. Executor.shutdown() takes no
+        timeout, so whenever this or an earlier cancel abandoned a task -- its worker thread
+        is still out there -- the pool is released without joining it.
+        """
+        abandoned = self.cancel_all(timeout=timeout)
+        with self._lock:
+            leaked = bool(self._abandoned_task_ids)
+        self._executor.shutdown(wait=not leaked, cancel_futures=True)
+        return abandoned
 
     def _emit(self, event: dict[str, Any]) -> None:
         if self._event_handler is not None:

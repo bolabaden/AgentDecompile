@@ -33,6 +33,21 @@ class DecompFuncContext:
     type_definitions: list[str] = field(default_factory=list)
 
 
+def _exemplar_rank(sample: SamplingCFunction, similarity: float) -> tuple[float, float]:
+    """Sort key for one candidate exemplar. Higher is better.
+
+    Match outcome dominates similarity, deliberately. A structurally similar
+    function whose C is *known* to compile to its target teaches the shape of
+    a correct answer; an equally similar one nobody ever verified only shows
+    that some C exists. Within a tier, closer neighbours come first.
+
+    Unverified examples (`match_percent is None`) rank below every verified
+    one rather than being treated as zero -- "never compiled" and "compiled
+    and matched nothing" are different facts.
+    """
+    return (-1.0 if sample.match_percent is None else sample.match_percent, similarity)
+
+
 def get_func_context(
     corpus: DecompFunctionCorpus,
     function_id: str,
@@ -43,7 +58,16 @@ def get_func_context(
     similarity_limit: int = 50,
     project_root: Path | None = None,
     ast_grep_command_runner: CommandRunner | None = None,
+    min_match_percent: float | None = None,
+    exemplar_limit: int | None = None,
 ) -> DecompFuncContext:
+    """Gather few-shot context for `function_id` from `corpus`.
+
+    `min_match_percent` drops examples that never reached that objdiff
+    similarity (and, because unverified examples have no outcome at all,
+    setting it drops those too). `exemplar_limit` caps how many survive
+    ranking. Both default to off, preserving the ported behaviour.
+    """
     func = corpus.get_function_by_id(function_id)
     if func is None:
         raise ValueError(f"Function not found: {function_id}")
@@ -74,25 +98,37 @@ def get_func_context(
         type_definitions=list(type_definitions or []),
     )
 
-    # Similar functions from vector search -- filter to those with C code.
-    for similar in corpus.find_similar(function_id, similarity_limit):
-        if not similar.function.c_code:
-            continue
-        result.sampling.append(
-            SamplingCFunction(
-                name=similar.function.name,
-                c_code=similar.function.c_code,
-                asm_code=similar.function.asm_code,
-                calls_target=function_id in similar.function.calls_functions,
-            )
-        )
+    def keep(match_percent: float | None) -> bool:
+        if min_match_percent is None:
+            return True
+        return match_percent is not None and match_percent >= min_match_percent
 
-    # Functions that call the target -- filter to those with C code, dedup by name.
+    # Similar functions from vector search -- filter to those with C code.
+    ranked: list[tuple[tuple[float, float], SamplingCFunction]] = []
+    for similar in corpus.find_similar(function_id, similarity_limit):
+        if not similar.function.c_code or not keep(similar.function.match_percent):
+            continue
+        sample = SamplingCFunction(
+            name=similar.function.name,
+            c_code=similar.function.c_code,
+            asm_code=similar.function.asm_code,
+            calls_target=function_id in similar.function.calls_functions,
+            match_percent=similar.function.match_percent,
+        )
+        ranked.append((_exemplar_rank(sample, similar.similarity), sample))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    result.sampling.extend(sample for _key, sample in ranked)
+
+    # Functions that call the target -- filter to those with C code, dedup by
+    # name. Callers are appended after the ranked neighbours and not re-sorted:
+    # they earn their place by call-graph adjacency, not by similarity, and
+    # craft_prompt renders them in a section of their own.
     existing_names = {sample.name for sample in result.sampling}
     for caller in corpus.get_called_by(function_id):
         if not caller.c_code:
             continue
-        if caller.name in existing_names:
+        if caller.name in existing_names or not keep(caller.match_percent):
             continue
         result.sampling.append(
             SamplingCFunction(
@@ -100,8 +136,12 @@ def get_func_context(
                 c_code=caller.c_code,
                 asm_code=caller.asm_code,
                 calls_target=True,
+                match_percent=caller.match_percent,
             )
         )
         existing_names.add(caller.name)
+
+    if exemplar_limit is not None:
+        result.sampling = result.sampling[: max(0, exemplar_limit)]
 
     return result

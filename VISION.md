@@ -55,11 +55,11 @@ Common failure modes:
 
 - **Hallucinated identity** — models invent names, types, and origins because the chain from a local variable back to a stack slot, an address, a section, a resource, or a package payload was severed.
 - **Flat dumps** — decompiler text or hex thrown at a model with no structure, no citations, no conflicts retained.
-- **Hardcoded funnels** — “always decompile → always synthesize → always gate” policies baked into the product so agents cannot compose for their actual task.
+- **Hard-coded funnels** — “always decompile → always synthesize → always gate” policies baked into the product so agents cannot compose for their actual task.
 - **All-or-nothing recovery** — if one-shot full source is unavailable, the run is treated as worthless instead of producing usable trees, facts, and partial lifts.
-- **Forgotten packaging** — real software arrives as installers, packages, multipart payloads, plugin bundles, and resource forests; treating only the main executable as the problem throws away most of the product.
+- **Forgotten packaging** — real software arrives as installers, packages, multi-part payloads, plugin bundles, and resource forests; treating only the main executable as the problem throws away most of the product.
 
-AgentDecompile’s answer is architectural: **make the binary world legible, structured, and citeable**, then let agents decide what to do with it.
+AgentDecompile’s answer is architectural: **make the binary world legible, structured, and cite-able**, then let agents decide what to do with it.
 
 ---
 
@@ -142,7 +142,7 @@ Difficulty should live in **tooling and context design**, not in requiring front
 The product should use everything known to be effective in:
 
 - **Context engineering** — progressive disclosure, evidence graphs, retrieval of related functions and layouts, budgeting, conflict surfaces.  
-- **Prompt engineering** — structured, citeable bundles; exemplars grounded in measured neighbors; no unverifiable assertions dressed as facts.  
+- **Prompt engineering** — structured, cite-able bundles; exemplars grounded in measured neighbors; no unverifiable assertions dressed as facts.  
 - **Agentic tooling** — session-stable tools, flexible arguments, named terminals, repair loops, background work, MCP-native workflows.
 
 If a small model with excellent binary context outperforms a large model staring at an unprovenanced dump, the design is working.
@@ -236,7 +236,7 @@ These name investment themes, not a delivery checklist and not a privileged orde
 - **Structural legibility** — consistent trees and manifests for sections, install layouts, packages, plugins, and assets.  
 - **Evidence and provenance** — address- and path-keyed facts, conflict retention, citation in every agent-facing bundle.  
 - **Interactive analysis reliability** — session-stable tooling so agents see real program state.  
-- **Composable recovery** — candidate generation, repair, and optional hard verification as capabilities, not as the only story.  
+- **Composable rhardcodesecovery** — candidate generation, repair, and optional hard verification as capabilities, not as the only story.  
 - **Context assembly** — retrieval, budgeting, progressive disclosure, prompt-ready evidence packs.  
 - **Honest export** — layered outs with claim documentation; useful dumps even when verification is out of scope for the run.
 
@@ -291,7 +291,7 @@ The codebase succeeds when it is cited as the reference for **how to give agents
 - **Stakeholder representation:** Sections 1–5 and 11–17 state *what we are building and why*.  
 - **Anti-hallucination contract:** Section 6 defines *why facts must cite bytes*.  
 - **Composition contract:** Section 7 defines *how agents may use the system without hardcoded funnels*.  
-- **Drift detection:** If a change hardcodes product identities, severs provenance, forces a single gate ritual, voids partial usefulness, or blurs claim tiers — it violates this vision regardless of passing tests.
+- **Drift detection:** If a change hard-codes product identities, severs provenance, forces a single gate ritual, voids partial usefulness, or blurs claim tiers — it violates this vision regardless of passing tests.
 
 Implementation details, module maps, open defect lists, and measured snapshots belong elsewhere. This file answers: **What was AgentDecompile meant to become, and what obligations does that place on everyone who touches it?**
 

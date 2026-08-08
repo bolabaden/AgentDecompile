@@ -21,6 +21,7 @@ _BLOCK_COMMENT_RE = re.compile(r"/\*[\s\S]*?\*/")
 _ERROR_LINE_RE = re.compile(r"^(.+?):(\d+):\s*(.+)$")
 _MARKER = "extern void _AGENTDECOMPILE_CONCATENATED_CODE();"
 _MARKER_NEEDLE = "_AGENTDECOMPILE_CONCATENATED_CODE"
+_DEFAULT_TIMEOUT_SECONDS = 300
 
 
 @dataclass
@@ -48,9 +49,10 @@ def _format_compilation_errors(raw_error: str, context_line_count: int) -> list[
 
 
 class GnuCCompiler:
-    def __init__(self, compiler_script: str, project_root: Path) -> None:
+    def __init__(self, compiler_script: str, project_root: Path, timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS) -> None:
         self._compiler_script = compiler_script
         self._project_root = project_root
+        self._timeout_seconds = timeout_seconds
 
     def compile(self, function_name: str, c_code: str, context_content: str) -> CompileResult:
         tmp_dir = Path(tempfile.mkdtemp(prefix="agentdecompile-compile-"))
@@ -71,12 +73,16 @@ class GnuCCompiler:
             cpp = shutil.which("cpp")
             if cpp is None:
                 return CompileResult(success=False, error_message="cpp is not on PATH.")
-            cpp_result = subprocess.run(
-                [cpp, "-P", str(stripped_path), str(preprocessed_path)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            try:
+                cpp_result = subprocess.run(
+                    [cpp, "-P", str(stripped_path), str(preprocessed_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout_seconds,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                return CompileResult(success=False, error_message=f"cpp timed out after {self._timeout_seconds}s")
             if cpp_result.returncode != 0:
                 raw_error = cpp_result.stderr.strip() or cpp_result.stdout.strip()
                 return self._error_result(raw_error, preprocessed_path if preprocessed_path.exists() else stripped_path)
@@ -87,13 +93,17 @@ class GnuCCompiler:
                 .replace("{{functionName}}", function_name)
             )
             script_path.write_text("set -e\n" + rendered_script, encoding="utf-8")
-            compile_result = subprocess.run(
-                ["bash", str(script_path)],
-                cwd=str(self._project_root),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            try:
+                compile_result = subprocess.run(
+                    ["bash", str(script_path)],
+                    cwd=str(self._project_root),
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout_seconds,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                return CompileResult(success=False, error_message=f"compiler script timed out after {self._timeout_seconds}s")
             if compile_result.returncode != 0:
                 raw_error = compile_result.stderr.strip() or compile_result.stdout.strip()
                 return self._error_result(raw_error, preprocessed_path)
