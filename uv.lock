@@ -71,7 +71,7 @@ requires-dist = [
     { name = "ghidrecomp", marker = "python_full_version >= '3.10'", specifier = ">=0.5.9" },
     { name = "httpx", specifier = ">=0.28.1,<1.0" },
     { name = "httpx-sse", specifier = ">=0.4.3" },
-    { name = "mcp" },
+    { name = "mcp", specifier = ">=1.26.0,<2" },
     { name = "packaging", specifier = ">=26.1" },
     { name = "pip", specifier = ">=26.1.2" },
     { name = "psutil", specifier = ">=7.2.2" },
