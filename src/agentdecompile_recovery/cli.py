@@ -459,6 +459,18 @@ def build_parser() -> argparse.ArgumentParser:
     atlas_serve.add_argument("--host", default="127.0.0.1", help="Host to bind.")
     atlas_serve.add_argument("--port", type=int, default=3000, help="Port to bind.")
 
+    survey = sub.add_parser(
+        "survey-project",
+        help="Survey every program in a Ghidra project and print one row per program.",
+    )
+    survey.add_argument("project", type=Path, help="Ghidra project (.gpr file or .rep directory).")
+    survey.add_argument(
+        "--metadata-only",
+        action="store_true",
+        help="Report metadata only (architecture, image base, db version); skip function and symbol table scans. Much faster for large repositories.",
+    )
+    survey.add_argument("--json", action="store_true", dest="output_json", help="Emit a JSON array instead of a human-readable table.")
+
     run_pipeline = sub.add_parser(
         "run",
         help="Load prompts (prompt.md/settings.yaml folders) and run the m2c/compiler/objdiff pipeline over each, writing a JSON report.",
@@ -1149,6 +1161,80 @@ def run_run_pipeline_command(args: argparse.Namespace) -> int:
     return 0 if receipt.get("status") == "complete" else 1
 
 
+def run_survey_project(args: argparse.Namespace) -> int:
+    """Iterate every program in a Ghidra project and print one survey row each."""
+
+    from .ghidra_db.project import ProjectLayoutError, list_programs
+
+    try:
+        entries = list_programs(args.project)
+    except ProjectLayoutError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        row: dict[str, Any] = {
+            "path": entry.project_path,
+            "database": str(entry.database_path),
+            "dbVersion": entry.version,
+        }
+        try:
+            with entry.open() as prog:
+                meta = prog.metadata
+                row["languageId"] = meta.language_id
+                row["compilerSpecId"] = meta.compiler_spec_id
+                row["imageBase"] = f"0x{meta.image_base:x}"
+                if not args.metadata_only:
+                    func_count = sum(1 for _ in prog.functions())
+                    curated = prog.names_by_entry(curated_only=True)
+                    curated_count = len(curated)
+                    row["functionCount"] = func_count
+                    row["curatedCount"] = curated_count
+                    if func_count:
+                        row["curatedPercent"] = round(100.0 * curated_count / func_count, 1)
+        except Exception as exc:  # noqa: BLE001
+            row["error"] = str(exc)
+        rows.append(row)
+
+    if args.output_json:
+        print(json.dumps(rows, indent=2))
+        return 0
+
+    # Human-readable table
+    metadata_only = args.metadata_only
+    if metadata_only:
+        header = f"{'path':<55}  {'arch':<30}  {'compiler':<14}  {'imageBase':<18}  {'db'}"
+        print(header)
+        print("-" * len(header))
+        for row in rows:
+            if "error" in row:
+                print(f"{row['path']:<55}  ERROR: {row['error']}")
+            else:
+                print(
+                    f"{row['path']:<55}  {(row.get('languageId') or ''):<30}  "
+                    f"{(row.get('compilerSpecId') or ''):<14}  "
+                    f"{(row.get('imageBase') or ''):<18}  db.{row['dbVersion']}"
+                )
+    else:
+        header = f"{'path':<55}  {'arch':<30}  {'compiler':<14}  {'imageBase':<18}  {'db':<6}  {'funcs':>6}  {'curated':>7}  {'%':>5}"
+        print(header)
+        print("-" * len(header))
+        for row in rows:
+            if "error" in row:
+                print(f"{row['path']:<55}  ERROR: {row['error']}")
+            else:
+                curated_pct = row.get("curatedPercent")
+                print(
+                    f"{row['path']:<55}  {(row.get('languageId') or ''):<30}  "
+                    f"{(row.get('compilerSpecId') or ''):<14}  "
+                    f"{(row.get('imageBase') or ''):<18}  db.{row['dbVersion']:<3}  "
+                    f"{row.get('functionCount', 0):>6}  {row.get('curatedCount', 0):>7}  "
+                    f"{(f'{curated_pct:.1f}' if curated_pct is not None else 'n/a'):>5}"
+                )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
@@ -1194,6 +1280,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_atlas_serve_command(args)
     if args.command == "run":
         return run_run_pipeline_command(args)
+    if args.command == "survey-project":
+        return run_survey_project(args)
     parser.print_help()
     return 2
 

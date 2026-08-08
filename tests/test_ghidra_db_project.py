@@ -688,3 +688,79 @@ def test_extracted_database_can_be_reused_from_a_workdir(tmp_path: Path) -> None
     with open_packed_database(REAL_GZF, workdir=tmp_path) as second:
         assert second.header.block_size == block_size
     assert extracted.stat().st_mtime_ns == stamp
+
+
+# -- survey-project CLI subcommand ------------------------------------------
+
+
+def test_survey_project_json_output_error_rows_for_invalid_databases(tmp_path: Path) -> None:
+    """Programs whose databases cannot be opened produce error rows, not a crash."""
+
+    import json
+    from unittest.mock import patch
+
+    from agentdecompile_recovery.cli import main
+
+    repository = _make_project(tmp_path / "Survey.gpr", parent="/K1", name="game.exe")
+
+    captured: list[str] = []
+    with patch("builtins.print", side_effect=captured.append):
+        rc = main(["survey-project", str(repository), "--json", "--metadata-only"])
+
+    assert rc == 0
+    rows = json.loads(captured[0])
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["path"] == "/K1/game.exe"
+    # The database is empty bytes so opening it fails; error must be present.
+    assert "error" in row
+
+
+def test_survey_project_empty_project_returns_empty_json_array(tmp_path: Path) -> None:
+    """An empty project yields an empty JSON array and exit code 0."""
+
+    import json
+    from unittest.mock import patch
+
+    from agentdecompile_recovery.cli import main
+
+    repository = tmp_path / "Empty.rep"
+    (repository / "idata").mkdir(parents=True)
+
+    captured: list[str] = []
+    with patch("builtins.print", side_effect=captured.append):
+        rc = main(["survey-project", str(repository), "--json"])
+
+    assert rc == 0
+    rows = json.loads(captured[0])
+    assert rows == []
+
+
+def test_survey_project_bad_path_returns_nonzero(tmp_path: Path) -> None:
+    """A path that is not a Ghidra project returns a non-zero exit code."""
+
+    plain = tmp_path / "notaproject"
+    plain.mkdir()
+
+    from agentdecompile_recovery.cli import main
+
+    rc = main(["survey-project", str(plain)])
+    assert rc != 0
+
+
+def test_survey_project_human_table_no_crash(tmp_path: Path) -> None:
+    """Human-readable table mode completes without raising."""
+
+    from unittest.mock import patch
+
+    from agentdecompile_recovery.cli import main
+
+    repository = _make_project(tmp_path / "Table.gpr", parent="/TSL", name="foo.exe")
+
+    output_lines: list[str] = []
+    with patch("builtins.print", side_effect=output_lines.append):
+        rc = main(["survey-project", str(repository), "--metadata-only"])
+
+    assert rc == 0
+    full_output = "\n".join(output_lines)
+    assert "foo.exe" in full_output
