@@ -324,7 +324,7 @@ def elf64_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
     shstrndx = view.u16(62)
     sections = elf_sections(view, shoff, shentsize, shnum, shstrndx, is_64=True)
     symbols = elf_symbols(view, sections, is_64=True)
-    return elf_common_inventory(target, e_type, machine, entry, sections, symbols)
+    return elf_common_inventory(target, view, e_type, machine, entry, sections, symbols)
 
 
 def elf32_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
@@ -337,7 +337,7 @@ def elf32_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
     shstrndx = view.u16(50)
     sections = elf_sections(view, shoff, shentsize, shnum, shstrndx, is_64=False)
     symbols = elf_symbols(view, sections, is_64=False)
-    return elf_common_inventory(target, e_type, machine, entry, sections, symbols)
+    return elf_common_inventory(target, view, e_type, machine, entry, sections, symbols)
 
 
 def elf_sections(view: BinaryView, shoff: int, shentsize: int, shnum: int, shstrndx: int, *, is_64: bool) -> list[dict[str, Any]]:
@@ -445,7 +445,46 @@ def elf_symbols(view: BinaryView, sections: list[dict[str, Any]], *, is_64: bool
     return symbols
 
 
-def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entry: int, sections: list[dict[str, Any]], symbols: list[dict[str, Any]]) -> dict[str, Any]:
+def elf_comment_strings(view: BinaryView, sections: list[dict[str, Any]]) -> list[str]:
+    """Return the null-separated producer strings found in the .comment section."""
+    for section in sections:
+        if section["name"] == ".comment" and section["size"] > 0:
+            raw = view.bytes(section["offset"], section["size"])
+            parts = raw.split(b"\x00")
+            return [p.decode("utf-8", "replace") for p in parts if p]
+    return []
+
+
+def elf_toolchain_from_mangling(symbols: list[dict[str, Any]]) -> dict[str, Any]:
+    """Infer the C++ standard library from Itanium-mangled symbol names.
+
+    ``_ZNSt3__1`` is the libc++ inline namespace used by Clang.
+    ``_ZNSt`` without that inline namespace is the libstdc++ mangling used by GCC.
+    Returns a dict with ``stdlib`` (``"libc++"``, ``"libstdc++"``, or ``"unknown"``)
+    and the first ``evidence`` symbol that triggered the conclusion.
+    """
+    libcxx_evidence: str | None = None
+    libstdcxx_evidence: str | None = None
+    for sym in symbols:
+        name = sym.get("name", "")
+        if not name:
+            continue
+        if "_ZNSt3__1" in name and libcxx_evidence is None:
+            libcxx_evidence = name
+        elif "_ZNSt" in name and "_ZNSt3__1" not in name and libstdcxx_evidence is None:
+            libstdcxx_evidence = name
+        if libcxx_evidence and libstdcxx_evidence:
+            break
+    if libcxx_evidence and not libstdcxx_evidence:
+        return {"stdlib": "libc++", "evidence": libcxx_evidence}
+    if libstdcxx_evidence and not libcxx_evidence:
+        return {"stdlib": "libstdc++", "evidence": libstdcxx_evidence}
+    if libcxx_evidence and libstdcxx_evidence:
+        return {"stdlib": "unknown", "evidence": None, "note": "contradictory mangling (both libc++ and libstdc++ markers found)"}
+    return {"stdlib": "unknown", "evidence": None}
+
+
+def elf_common_inventory(target: TargetIdentity, view: BinaryView, e_type: int, machine: int, entry: int, sections: list[dict[str, Any]], symbols: list[dict[str, Any]]) -> dict[str, Any]:
     annotate_elf_function_sizes(symbols, sections)
     code_ranges = [
         {"name": section["name"], "address": section["address"], "offset": section["offset"], "size": section["size"]}
@@ -460,6 +499,10 @@ def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entr
     function_symbols = [sym for sym in symbols if sym["type"] == 2 and sym["sectionIndex"] != 0 and sym["value"] != 0]
     imported_symbols = [sym for sym in symbols if sym["table"] == ".dynsym" and sym["sectionIndex"] == 0 and sym["name"]]
     imports = [{"library": "dynamic-symbol-table", "symbols": [{"kind": "name", "name": sym["name"]} for sym in imported_symbols]}]
+    has_symtab = any(s["name"] == ".symtab" for s in sections)
+    stripped = not has_symtab
+    comment_strings = elf_comment_strings(view, sections)
+    toolchain = elf_toolchain_from_mangling(symbols)
     return {
         "schema": "agentdecompile.binary-inventory.v1",
         "target": target.to_json(),
@@ -473,6 +516,11 @@ def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entr
         "symbols": symbols,
         "codeRanges": code_ranges,
         "dataRanges": data_ranges,
+        "toolchain": {
+            "commentStrings": comment_strings,
+            "mangling": toolchain,
+            "stripped": stripped,
+        },
         "summary": {
             "sections": len(sections),
             "codeRanges": len(code_ranges),
@@ -481,6 +529,7 @@ def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entr
             "symbols": len(symbols),
             "functionSymbols": len(function_symbols),
             "dynamicSymbols": sum(1 for sym in symbols if sym["table"] == ".dynsym"),
+            "stripped": stripped,
         },
     }
 
