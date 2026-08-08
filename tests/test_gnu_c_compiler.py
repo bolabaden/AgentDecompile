@@ -44,7 +44,9 @@ class TestGnuCCompilerRealToolchain:
     def test_reports_compilation_errors_for_invalid_c(self, tmp_path: Path):
         compiler = self._compiler(tmp_path)
 
-        result = compiler.compile("broken", "int broken(void) { return ; }", "")
+        # Use unambiguously invalid syntax: older GCC versions only *warn* on
+        # `return ;` in a non-void function, which would falsely pass this test.
+        result = compiler.compile("broken", "int broken(void) { !!!not_valid_c!!! }", "")
 
         assert result.success is False
         assert result.error_message

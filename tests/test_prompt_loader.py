@@ -10,9 +10,11 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from agentdecompile_recovery import prompt_loader
 from agentdecompile_recovery.prompt_loader import PromptLoadError, load_prompts
 
 pytestmark = pytest.mark.unit
@@ -102,6 +104,26 @@ def test_reports_function_not_found_in_object_file(tmp_path: Path):
 
     assert prompts == []
     assert "not found in object file" in str(errors[0])
+
+
+def test_accepts_mach_o_underscore_prefixed_symbol(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    obj_path = tmp_path / "target_func.o"
+    obj_path.write_bytes(b"\x00")
+    prompts_dir = tmp_path / "prompts"
+    _write_prompt_dir(prompts_dir, "case1", function_name="target_func", target_object_path=str(obj_path))
+
+    def fake_run(args, **kwargs):
+        if list(args)[:1] == ["nm"]:
+            return SimpleNamespace(returncode=0, stdout="00000000 T _target_func\n", stderr="")
+        raise AssertionError(f"unexpected subprocess.run: {args}")
+
+    monkeypatch.setattr(prompt_loader, "subprocess", SimpleNamespace(run=fake_run, TimeoutExpired=subprocess.TimeoutExpired))
+
+    prompts, errors = load_prompts(prompts_dir)
+
+    assert errors == []
+    assert len(prompts) == 1
+    assert prompts[0].function_name == "target_func"
 
 
 @pytest.mark.skipif(not _HAS_GCC, reason="requires a system C compiler")

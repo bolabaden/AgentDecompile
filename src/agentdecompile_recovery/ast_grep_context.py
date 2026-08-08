@@ -45,11 +45,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+
+from .ast_grep_cli import resolve_ast_grep_binary
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +73,7 @@ class AstGrepCodebaseContext:
 
 
 def _resolve_binary() -> str | None:
-    for name in ("ast-grep", "sg"):
-        path = shutil.which(name)
-        if path:
-            return path
-    return None
+    return resolve_ast_grep_binary()
 
 
 def _default_run_command(
