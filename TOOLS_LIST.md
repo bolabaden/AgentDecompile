@@ -51,6 +51,8 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`delete-project-binary`](#delete-project-binary)
     - [`sync-project`](#sync-project)
     - [`export`](#export)
+    - [`export-context`](#export-context)
+    - [`acquisition-query`](#acquisition-query)
     - [`gen-callgraph`](#gen-callgraph)
     - [`get-call-graph`](#get-call-graph)
     - [`remove-program-binary`](#remove-program-binary)
@@ -536,6 +538,68 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 - **`ghidra.app.util.exporter.Exporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/Exporter)
 - **`ghidra.app.util.exporter.GzfExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/GzfExporter)
 - **`ghidra.app.util.exporter.CppExporter`** — [Javadoc](https://ghidra.re/ghidra_docs/api/ghidra/app/util/exporter/CppExporter)
+
+### `export-context`
+
+**Description**: Dismantles an app, installer, archive, or binary tree into navigable context files (`manifest.json`, `tree.json`, `TREE.md`, `LLM_CONTEXT.*`, `extracted/`). Tier 0 — does **not** require an open Ghidra program. Output is **advisory layout context** only (claim boundary in the response): not recovered source and not objdiff proof. Prefer conservative `maxFiles` for large installers.
+
+**Parameters**:
+- `inputPath` (string, required): File or folder to export (binary, archive, installer, or app tree).
+  - Synonyms: `inputPath`, `input_path`, `input-path`, `path`, `source`, `target`.
+- `outDir` (string, required): Output directory for manifest, tree, and per-file surrogates.
+  - Synonyms: `outDir`, `out_dir`, `out-dir`, `output`, `outputDir`, `output_dir`.
+- `format` (string, optional): Per-file surrogate format (`json`, `md`; default `json`).
+  - Synonyms: `format`.
+- `binaryAnalysis` (string, optional): Binary analysis depth (`light`, `standard`, `deep`; default `light` on MCP).
+  - Synonyms: `binaryAnalysis`, `binary_analysis`, `binary-analysis`, `analysis`.
+- `extractContainers` (boolean, optional): Recursively extract archives/installers with 7z when available (default true).
+  - Synonyms: `extractContainers`, `extract_containers`, `extract-containers`.
+- `includeLowSignalMembers` (boolean, optional): Also export low-signal members such as cursor/icon resources (default false).
+  - Synonyms: `includeLowSignalMembers`, `include_low_signal_members`, `include-low-signal-members`.
+- `maxFiles` (integer, optional): Maximum files to visit (default 250 on MCP).
+  - Synonyms: `maxFiles`, `max_files`, `max-files`, `limit`.
+- `maxDepth` (integer, optional): Maximum recursive container extraction depth (default 3).
+  - Synonyms: `maxDepth`, `max_depth`, `max-depth`, `depth`.
+
+**Overloads**:
+- `export-context(inputPath, outDir, format, binaryAnalysis, extractContainers, includeLowSignalMembers, maxFiles, maxDepth)` canonical signature.
+
+**Synonyms**: `export-context`, `export_context`, `exportContext`
+
+**Examples**:
+- Light tree export: `export-context inputPath="./app" outDir="./target/context-export" binaryAnalysis="light" maxFiles=250`.
+
+**Notes**:
+- Distinct from `export` (Ghidra program exporters). Use this for package/installer/layout trees before or without opening a program.
+- See [VISION.md](VISION.md) and [STRATEGY.md](STRATEGY.md) — substrate context, not matching recovery.
+
+### `acquisition-query`
+
+**Description**: Read-only query against a registered or explicit acquisition bundle (`inspect`, `search-everything`, `get-function`, `get-global`, `get-type`, `get-xrefs`). Returns address-keyed **advisory** evidence and conflicts. Tier 0 — does **not** require an open Ghidra program. Not verification: compile and objdiff gates remain required for verified claims.
+
+**Parameters**:
+- `bundleDir` (string, optional): Explicit acquisition-bundle directory. Omit to resolve the latest registered bundle.
+  - Synonyms: `bundleDir`, `bundle_dir`, `bundle-dir`, `bundle`, `path`.
+- `action` (string, optional): Query action (`inspect`, `search-everything`, `get-function`, `get-global`, `get-type`, `get-xrefs`; default `inspect`).
+  - Synonyms: `action`, `op`, `operation`, `mode`.
+- `query` (string, optional): Optional text query for search/get actions.
+  - Synonyms: `query`, `q`, `search`, `text`.
+- `address` (string, optional): Optional address (decimal or `0x`-hex) to filter entities.
+  - Synonyms: `address`, `addr`, `addressOrSymbol`.
+- `limit` (integer, optional): Maximum results (default 25).
+  - Synonyms: `limit`, `maxCount`, `count`.
+
+**Overloads**:
+- `acquisition-query(bundleDir, action, query, address, limit)` canonical signature.
+
+**Synonyms**: `acquisition-query`, `acquisition_query`, `acquisitionQuery`
+
+**Examples**:
+- Inspect latest bundle: `acquisition-query action="inspect"`.
+- Search a bundle: `acquisition-query bundleDir="./target/acquisition" action="search-everything" query="SaveGame" limit=25`.
+
+**Notes**:
+- Advisory evidence only — do not promote results into `verified/` without compile+objdiff honesty.
 
 ### `gen-callgraph`
 

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .curated_project import load_curated_names
 from .module_resolver import ModuleResolver, load_va_bands, normalize_code_path
 from .pyghidra_enrich import (
     PyGhidraEnrichProgram,
@@ -222,6 +223,7 @@ def run_reconstruct_enrich(
                 discovered=discovered,
                 rtti_classes=rtti_classes,
                 corpus=None,
+                curated_names=load_curated_names(work_dir),
             )
             from .symbol_provenance import load_symbol_provenance_names
 

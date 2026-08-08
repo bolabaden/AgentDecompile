@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from .autonomous_policy import choose_next_action
+from .background_task_coordinator import BackgroundSpawnContext, BackgroundTaskCoordinator
 from .dual_agent_advisory import evaluate_checker_gate
 from . import rewrite_queue
 
@@ -143,6 +144,7 @@ class PluginPipeline:
         max_retries: int = 3,
         event_handler: PipelineEventHandler | None = None,
         rewrite_provider: Callable[..., dict[str, Any]] | None = None,
+        background_plugins: list[Any] | None = None,
     ) -> None:
         self.max_retries = max(1, max_retries)
         self.event_handler = event_handler
@@ -150,6 +152,10 @@ class PluginPipeline:
         # defaults to the headless Claude Code CLI provider, resolved lazily so
         # importing this module never pulls in subprocess machinery.
         self.rewrite_provider = rewrite_provider
+        # Background-capable plugins (e.g. decomp-permuter) run on worker threads
+        # alongside the main-phase attempt loop; a success fires foreground_abort_event
+        # so the loop can stop early instead of burning its own retry budget.
+        self.background_coordinator = BackgroundTaskCoordinator(background_plugins) if background_plugins else None
         self.setup_phase_plugins: list[Plugin] = []
         self.programmatic_phase_stages: list[list[Plugin]] = []
         self.plugins: list[Plugin] = []
@@ -254,39 +260,80 @@ class PluginPipeline:
         attempts: list[AttemptResult] = []
         previous_attempts: list[dict[str, PluginResult]] = []
         success = False
-        for attempt_number in range(1, self.max_retries + 1):
-            context["attemptNumber"] = attempt_number
-            self.emit({"type": "attempt-start", "attemptNumber": attempt_number, "maxRetries": self.max_retries})
-            attempt, context = self.run_attempt(context, self.plugins)
-            attempts.append(attempt)
-            will_retry = not attempt.success and attempt_number < self.max_retries
-            self.emit(
-                {
-                    "type": "attempt-complete",
-                    "attemptNumber": attempt_number,
-                    "success": attempt.success,
-                    "willRetry": will_retry,
-                    "differenceCount": best_difference_count(attempt),
-                }
-            )
-            if attempt.success:
-                success = True
-                break
-            if will_retry:
-                attempt_map = {result.plugin_id: result for result in attempt.plugin_results if result.status != "skipped"}
-                previous_attempts.append(attempt_map)
-                context["previousAttempts"] = previous_attempts
-                context = self.prepare_retry(context, previous_attempts)
-                if context.get("autonomyStop"):
-                    self.emit(
-                        {
-                            "type": "autonomy-stop",
-                            "attemptNumber": attempt_number,
-                            "action": (context.get("autonomousPolicy") or {}).get("action"),
-                            "reason": context.get("autonomyStopReason"),
-                        }
-                    )
+        match_source: str | None = None
+        if self.background_coordinator is not None:
+            self.background_coordinator.reset()
+        try:
+            for attempt_number in range(1, self.max_retries + 1):
+                context["attemptNumber"] = attempt_number
+                self.emit({"type": "attempt-start", "attemptNumber": attempt_number, "maxRetries": self.max_retries})
+                attempt, context = self.run_attempt(context, self.plugins)
+                attempts.append(attempt)
+                will_retry = not attempt.success and attempt_number < self.max_retries
+                self.emit(
+                    {
+                        "type": "attempt-complete",
+                        "attemptNumber": attempt_number,
+                        "success": attempt.success,
+                        "willRetry": will_retry,
+                        "differenceCount": best_difference_count(attempt),
+                    }
+                )
+                if attempt.success:
+                    success = True
+                    match_source = "main-phase"
                     break
+                if self.background_coordinator is not None:
+                    self.background_coordinator.on_attempt_complete(
+                        BackgroundSpawnContext(
+                            attempt_number=attempt_number,
+                            will_retry=will_retry,
+                            context=context,
+                            attempt_results=attempt.plugin_results,
+                        )
+                    )
+                    if self.background_coordinator.foreground_abort_event.is_set():
+                        background_result = self.background_coordinator.get_success_result()
+                        success = True
+                        match_source = "background-permuter"
+                        context["backgroundMatch"] = background_result.data if background_result else None
+                        self.emit(
+                            {
+                                "type": "background-match-found",
+                                "taskId": background_result.task_id if background_result else None,
+                            }
+                        )
+                        break
+                if will_retry:
+                    attempt_map = {result.plugin_id: result for result in attempt.plugin_results if result.status != "skipped"}
+                    previous_attempts.append(attempt_map)
+                    context["previousAttempts"] = previous_attempts
+                    context = self.prepare_retry(context, previous_attempts)
+                    if context.get("autonomyStop"):
+                        self.emit(
+                            {
+                                "type": "autonomy-stop",
+                                "attemptNumber": attempt_number,
+                                "action": (context.get("autonomousPolicy") or {}).get("action"),
+                                "reason": context.get("autonomyStopReason"),
+                            }
+                        )
+                        break
+        finally:
+            if self.background_coordinator is not None:
+                self.background_coordinator.cancel_all()
+
+        # cancel_all() blocks until every active background task's future resolves,
+        # so a task spawned on the final attempt (no further foreground iteration to
+        # observe it) may have completed -- and recorded a success -- only during that
+        # wait. Re-check once more here rather than losing a match found in that window.
+        if not success and self.background_coordinator is not None and self.background_coordinator.foreground_abort_event.is_set():
+            background_result = self.background_coordinator.get_success_result()
+            if background_result is not None:
+                success = True
+                match_source = "background-permuter"
+                context["backgroundMatch"] = background_result.data
+                self.emit({"type": "background-match-found", "taskId": background_result.task_id})
 
         post_match_phase = self.run_post_match(context) if success else None
         return PipelineRunResult(
@@ -298,7 +345,7 @@ class PluginPipeline:
             setup_phase=setup_phase,
             programmatic_phase=programmatic_phase,
             post_match_phase=post_match_phase,
-            match_source="main-phase" if success else None,
+            match_source=match_source,
         )
 
     def run_attempt(self, context: dict[str, Any], plugins: list[Plugin]) -> tuple[AttemptResult, dict[str, Any]]:

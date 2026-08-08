@@ -12,6 +12,11 @@ from .acquisition_mcp import main as acquisition_mcp_main
 from .claim_report import build_claim_report, write_claim_report
 from .context_batch import main as context_batch_main
 from .context_export import ExportConfig, export_context
+
+# Module-level on purpose: tests monkeypatch `cli.project_input_error` to prove
+# run_acquire never validates a project that was not asked for. A function-local
+# import (frontdoor.py's pattern) would bypass the patch.
+from .ghidra_context import project_input_error
 from .package_sweep import sweep_recovered_source_package
 from .package_verify import verify_recovered_source_package
 from .pipeline import RecoveryConfig, RecoveryRunner
@@ -50,6 +55,17 @@ def build_parser() -> argparse.ArgumentParser:
     acquire.add_argument("--out-dir", type=Path, required=True, help="Directory for acquisition receipts and bundles.")
     acquire.add_argument("--preferred-name")
     acquire.add_argument("--no-register", action="store_true", help="Do not write the fingerprint registry entry.")
+    # Help text matches agentdecompile-reconstruct's flags verbatim so the two
+    # entrypoints document the same thing.
+    acquire.add_argument(
+        "--project",
+        type=Path,
+        help="Existing Ghidra project (.gpr file or .rep directory) to open read-only via ghidra_db for curated names.",
+    )
+    acquire.add_argument(
+        "--project-program",
+        help="Program name/path within --project to open when the project holds more than one.",
+    )
 
     claim = sub.add_parser("claim-report", help="Emit an honest claim summary for a reconstruct/recover work directory.")
     claim.add_argument("work_dir", type=Path, help="Run directory containing verified/, advisory/, and/or reports.")
@@ -336,6 +352,66 @@ def build_parser() -> argparse.ArgumentParser:
     )
     unity_export.add_argument("--install-root", type=Path, required=True, help="Unity game install directory (containing a *_Data folder).")
     unity_export.add_argument("--out-dir", type=Path, required=True, help="Output directory for exported assets.")
+
+    decomp_atlas = sub.add_parser(
+        "decomp-atlas",
+        help="Local text-overlap retrieval over matched prompts and feature indexes, for advisory prompt context.",
+    )
+    decomp_atlas.add_argument("prompt", nargs="?", help="Prompt name/path or search text.")
+    decomp_atlas.add_argument("--query", help="Additional search text.")
+    decomp_atlas.add_argument("--prompts-dir", type=Path, default=Path("prompts"), help="Prompt folders directory.")
+    decomp_atlas.add_argument("--index-root", type=Path, default=Path("target/source-parity-index"), help="Feature-index root directory.")
+    decomp_atlas.add_argument("--top-k", type=int, default=5, help="Maximum results to return.")
+    decomp_atlas.add_argument("--write-prompt", action="store_true", help="Update <prompt>/prompt.md with a Similar Examples section.")
+    decomp_atlas.add_argument(
+        "--semantic-index-root",
+        type=Path,
+        help=(
+            "Directory containing a decomp_indexer.write_index() corpus (decomp-function-index.json). "
+            "When given, adds an embedding-based semanticResults bucket alongside the default token-overlap "
+            "results; requires the agentdecompile[semantic] extra (chromadb) for the default embedder."
+        ),
+    )
+
+    index_codebase = sub.add_parser(
+        "index-codebase",
+        help="Scan a decomp project's asm/C source tree into a decomp-function-index.json corpus.",
+    )
+    index_codebase.add_argument("--project-root", type=Path, required=True, help="Project root directory.")
+    index_codebase.add_argument("--map-file", type=Path, required=True, help="GNU ld map file for object-path resolution.")
+    index_codebase.add_argument("--platform", choices=["arm", "mips"], required=True, help="Target ISA family.")
+    index_codebase.add_argument("--matching-asm-dir", action="append", default=[], dest="matching_asm_dirs", help="Directory (relative to project root) of per-function matched .s files. Repeatable.")
+    index_codebase.add_argument("--non-matching-asm-dir", action="append", default=[], dest="non_matching_asm_dirs", help="Directory (relative to project root) of unmatched .s files. Repeatable.")
+    index_codebase.add_argument("--c-source-dir", action="append", default=[], dest="c_source_dirs", help="Directory (relative to project root) to scan for C function definitions via ast-grep. Repeatable.")
+    index_codebase.add_argument("--exclude", action="append", default=[], dest="exclude_from_scan", help="Directory (relative to project root) to exclude from C-function scanning. Repeatable.")
+    index_codebase.add_argument("--skip-embeddings", action="store_true", help="Skip embedding generation for new/changed functions.")
+
+    atlas_serve = sub.add_parser(
+        "atlas-serve",
+        help="Serve the decomp-atlas JSON API (loadProject/buildPrompt/savePrompt) over HTTP.",
+    )
+    atlas_serve.add_argument("--project-root", type=Path, required=True, help="Project root directory (containing decomp-function-index.json).")
+    atlas_serve.add_argument("--prompts-dir", type=Path, required=True, help="Directory to write prompts saved via /api/savePrompt.")
+    atlas_serve.add_argument("--platform", required=True, help="Target platform label (e.g. win32).")
+    atlas_serve.add_argument("--map-file", type=Path, help="GNU ld map file for object-path resolution in /api/savePrompt.")
+    atlas_serve.add_argument("--host", default="127.0.0.1", help="Host to bind.")
+    atlas_serve.add_argument("--port", type=int, default=3000, help="Port to bind.")
+
+    run_pipeline = sub.add_parser(
+        "run",
+        help="Load prompts (prompt.md/settings.yaml folders) and run the m2c/compiler/objdiff pipeline over each, writing a JSON report.",
+    )
+    run_pipeline.add_argument("--prompts", type=Path, required=True, dest="prompts_dir", help="Directory containing prompt folders.")
+    run_pipeline.add_argument("--output", type=Path, required=True, dest="out_dir", help="Output directory for the run report.")
+    run_pipeline.add_argument("--compiler-script", required=True, help="Shell script template ({{cFilePath}}/{{objFilePath}}/{{functionName}}) invoking the target compiler.")
+    run_pipeline.add_argument("--project-root", type=Path, required=True, help="Project root (cwd for the compiler script).")
+    run_pipeline.add_argument("--permuter-dir", type=Path, help="Enable background decomp-permuter using this working directory.")
+    run_pipeline.add_argument("--permuter-jobs", type=int, help="Parallel job count for the background permuter.")
+    run_pipeline.add_argument("--retries", type=int, default=3, dest="max_retries", help="Maximum retry attempts per prompt.")
+    run_pipeline.add_argument("--m2c-target", help="m2c --target (e.g. ppc-mwcc-c++, mips-ido-c).")
+    run_pipeline.add_argument("--get-context-script", default="", help="Setup-phase shell script generating context content (e.g. relevant type definitions) on stdout.")
+    run_pipeline.add_argument("--integrator-module", type=Path, help="Post-match phase: Python module exporting integrate(function_name, generated_code, project_root, helpers) to insert matched code into the project source tree.")
+    run_pipeline.add_argument("--integrator-build-command", help="Command to verify the project still builds after integration.")
     return parser
 
 
@@ -761,12 +837,25 @@ def parse_clang_profiles(values: list[str]) -> list[list[str]]:
 
 def run_acquire(args: argparse.Namespace) -> int:
     context_paths = list(args.context or [])
+
+    # Pre-flight only when --project was actually given: a bad path must fail as
+    # one stderr line, not a traceback out of the Ghidra layer. The project is
+    # opened read-only downstream; nothing here writes to it.
+    project = getattr(args, "project", None)
+    if project is not None:
+        problem = project_input_error(project)
+        if problem:
+            print(f"agentdecompile-recovery: --project error: {problem}", file=sys.stderr)
+            return 2
+
     receipt = acquire_context(
         target_input=args.input,
         context_paths=context_paths,
         out_dir=args.out_dir,
         preferred_name=args.preferred_name,
         repo_root=Path.cwd(),
+        project=project,
+        project_program=getattr(args, "project_program", None),
         register=not args.no_register,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))
@@ -835,6 +924,132 @@ def run_unity_export(args: argparse.Namespace) -> int:
     return 0 if receipt.get("status") == "complete" else 1
 
 
+def run_decomp_atlas_command(args: argparse.Namespace) -> int:
+    from .decomp_atlas import run_decomp_atlas
+
+    corpus = None
+    embedder = None
+    if args.semantic_index_root:
+        from .decomp_function_corpus import DecompFunctionCorpus
+        from .decomp_indexer import load_existing_index
+        from .semantic_embedder import SemanticEmbedder
+
+        dump, _content_hashes = load_existing_index(args.semantic_index_root)
+        if dump is not None:
+            corpus = DecompFunctionCorpus.from_dump(dump)
+            try:
+                embedder = SemanticEmbedder()
+            except ImportError as exc:
+                print(json.dumps({"schema": "agentdecompile.decomp-atlas.semantic-index.v1", "status": "error", "reason": str(exc)}, indent=2, sort_keys=True))
+                return 1
+
+    receipt = run_decomp_atlas(
+        prompt_name=args.prompt,
+        query=args.query,
+        prompts_dir=args.prompts_dir,
+        index_root=args.index_root,
+        top_k=args.top_k,
+        write_prompt=args.write_prompt,
+        corpus=corpus,
+        embedder=embedder,
+    )
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0 if receipt.get("status") in {"complete", "no-local-examples"} else 1
+
+
+def run_index_codebase_command(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+
+    from .c_function_scan import scan_c_functions
+    from .decomp_indexer import IndexCodebaseConfig, index_codebase, load_existing_index, write_index
+    from .semantic_embedder import SemanticEmbedder
+
+    project_root = args.project_root
+    existing_dump, existing_content_hashes = load_existing_index(project_root)
+
+    embedder = None
+    if not args.skip_embeddings:
+        try:
+            embedder = SemanticEmbedder()
+        except ImportError as exc:
+            print(json.dumps({"schema": "agentdecompile.index-codebase.v1", "status": "error", "reason": str(exc)}, indent=2, sort_keys=True))
+            return 1
+
+    config = IndexCodebaseConfig(
+        project_root=project_root,
+        map_file_path=args.map_file,
+        platform=args.platform,
+        non_matching_asm_folders=args.non_matching_asm_dirs,
+        matching_asm_folders=args.matching_asm_dirs,
+        exclude_from_scan=args.exclude_from_scan,
+        c_functions=scan_c_functions(project_root, args.c_source_dirs),
+    )
+
+    def on_progress(progress) -> None:
+        print(f"[{progress.phase}] {progress.message}", file=sys.stderr)
+
+    result = index_codebase(
+        config,
+        existing_dump=existing_dump,
+        existing_content_hashes=existing_content_hashes,
+        embedder=embedder,
+        on_progress=on_progress,
+    )
+    write_index(project_root, result.dump, result.content_hashes)
+
+    receipt = {
+        "schema": "agentdecompile.index-codebase.v1",
+        "status": "complete",
+        "indexPath": str(project_root / "decomp-function-index.json"),
+        "stats": asdict(result.stats),
+        "functionCount": len(result.dump.functions),
+        "vectorCount": len(result.dump.vectors),
+    }
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0
+
+
+def run_atlas_serve_command(args: argparse.Namespace) -> int:
+    from .atlas_server import AtlasServerState, serve_atlas
+
+    state = AtlasServerState(
+        project_root=args.project_root,
+        prompts_dir=args.prompts_dir,
+        platform=args.platform,
+        map_file_path=args.map_file,
+    )
+    server = serve_atlas(state, host=args.host, port=args.port)
+    print(json.dumps({"schema": "agentdecompile.atlas-serve.v1", "status": "running", "url": f"http://{args.host}:{args.port}"}, indent=2, sort_keys=True))
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.shutdown()
+    return 0
+
+
+def run_run_pipeline_command(args: argparse.Namespace) -> int:
+    from .run_pipeline_command import RunPipelineConfig, run_prompts_pipeline
+
+    config = RunPipelineConfig(
+        prompts_dir=args.prompts_dir,
+        out_dir=args.out_dir,
+        compiler_script=args.compiler_script,
+        project_root=args.project_root,
+        permuter_dir=args.permuter_dir,
+        permuter_jobs=args.permuter_jobs,
+        max_retries=args.max_retries,
+        m2c_target=args.m2c_target,
+        get_context_script=args.get_context_script,
+        integrator_module=args.integrator_module,
+        integrator_build_command=args.integrator_build_command,
+    )
+    receipt = run_prompts_pipeline(config)
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0 if receipt.get("status") == "complete" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
@@ -872,6 +1087,14 @@ def main(argv: list[str] | None = None) -> int:
         return run_source_cleanup_package(args)
     if args.command == "unity-export":
         return run_unity_export(args)
+    if args.command == "decomp-atlas":
+        return run_decomp_atlas_command(args)
+    if args.command == "index-codebase":
+        return run_index_codebase_command(args)
+    if args.command == "atlas-serve":
+        return run_atlas_serve_command(args)
+    if args.command == "run":
+        return run_run_pipeline_command(args)
     parser.print_help()
     return 2
 

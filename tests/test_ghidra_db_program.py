@@ -14,6 +14,20 @@ Measured on `/home/brunner56/Odyssey.rep` (swkotor2.exe, image base 0x400000):
      5,151  comment rows, all with at least one non-empty comment
        273  composite data types
      2,236  named parameter/local symbols across 1,032 functions
+
+A second, independently-produced database -- `k1_win_gog_swkotor.exe.gzf`, the
+original (2003) KOTOR rather than TSL -- is exercised too, packed rather than
+loose, to pin the reader against a `.gzf` it wasn't written against. It is a
+genuinely distinct program, not a copy of the Odyssey fixture: different
+program name (`swkotor.exe` vs `swkotor2.exe`) and different counts throughout.
+
+Measured on `/home/brunner56/Desktop/k1_win_gog_swkotor.exe.gzf` (swkotor.exe,
+image base 0x400000):
+
+    24,591  Function Data rows == function symbols
+    24,242  function symbols that decode to real memory
+       349  externals, excluded from every VA-keyed result
+    24,060  of the 24,242 that carry a curated (non-empty) name
 """
 
 from __future__ import annotations
@@ -25,6 +39,7 @@ import pytest
 
 from agentdecompile_recovery.ghidra_db.address_map import TYPE_EXTERNAL, TYPE_RELOCATABLE
 from agentdecompile_recovery.ghidra_db.buffer_file import BufferFileError
+from agentdecompile_recovery.ghidra_db.packed import extract_database
 from agentdecompile_recovery.ghidra_db.program import (
     COMMENT_KINDS,
     CommentSet,
@@ -47,9 +62,11 @@ GHIDRA_GBF = Path(
     "/home/brunner56/Downloads/biodecompwarehouse/projects/agentdecompile.rep"
     "/versioned/00/~00000000.db/db.1.gbf"
 )
+K1_GZF = Path("/home/brunner56/Desktop/k1_win_gog_swkotor.exe.gzf")
 
 _needs_odyssey = pytest.mark.skipif(not ODYSSEY_GBF.is_file(), reason="Odyssey project fixture unavailable")
 _needs_ghidra_fixture = pytest.mark.skipif(not GHIDRA_GBF.is_file(), reason="Ghidra program fixture unavailable")
+_needs_k1_gzf = pytest.mark.skipif(not K1_GZF.is_file(), reason="k1 packed .gzf fixture unavailable")
 
 ODYSSEY_IMAGE_BASE = 0x400000
 ODYSSEY_FUNCTION_DATA_ROWS = 27318
@@ -59,12 +76,29 @@ ODYSSEY_CURATED_NAMES = 25586
 ODYSSEY_COMMENT_ROWS = 5151
 ODYSSEY_COMPOSITES = 273
 
+K1_IMAGE_BASE = 0x400000
+K1_PROGRAM_NAME = "swkotor.exe"
+K1_FUNCTION_DATA_ROWS = 24591
+K1_MEMORY_FUNCTIONS = 24242
+K1_EXTERNAL_FUNCTIONS = 349
+K1_CURATED_NAMES = 24060
+
 
 @pytest.fixture(scope="module")
 def odyssey() -> Iterator[GhidraProgram]:
     if not ODYSSEY_GBF.is_file():
         pytest.skip("Odyssey project fixture unavailable")
     with open_program(ODYSSEY_GBF) as program:
+        yield program
+
+
+@pytest.fixture(scope="module")
+def k1(tmp_path_factory: pytest.TempPathFactory) -> Iterator[GhidraProgram]:
+    if not K1_GZF.is_file():
+        pytest.skip("k1 packed .gzf fixture unavailable")
+    workdir = tmp_path_factory.mktemp("k1-gzf")
+    extracted = extract_database(K1_GZF, workdir / f"{K1_GZF.stem}.gbf")
+    with open_program(extracted) as program:
         yield program
 
 
@@ -464,3 +498,62 @@ def test_to_json_summarises_without_scanning_symbols(odyssey: GhidraProgram) -> 
     assert summary["metadata"]["imageBase"] == "0x400000"
     assert summary["metadata"]["programName"] == "swkotor2.exe"
     assert len(summary["memoryBlocks"]) == 7
+
+
+# -- second real fixture: k1, unpacked from a .gzf --------------------------
+#
+# Regression pin for a second, independently-produced Odyssey-engine database,
+# reached through `open_packed_database` rather than a loose `.gbf`, so the
+# `.gzf` extraction path and the program facade are proven together.
+
+
+@_needs_k1_gzf
+def test_k1_metadata_matches_the_packed_database(k1: GhidraProgram) -> None:
+    assert k1.image_base == K1_IMAGE_BASE
+    assert k1.program_name == K1_PROGRAM_NAME
+    assert k1.language_id == "x86:LE:32:default"
+
+
+@_needs_k1_gzf
+def test_k1_function_count_excludes_externals_by_default(k1: GhidraProgram) -> None:
+    functions = list(k1.functions())
+
+    assert len(functions) == K1_MEMORY_FUNCTIONS
+
+
+@_needs_k1_gzf
+def test_k1_externals_are_available_but_carry_no_address(k1: GhidraProgram) -> None:
+    functions = list(k1.functions(include_external=True))
+    externals = [function for function in functions if function.is_external]
+
+    assert len(functions) == K1_FUNCTION_DATA_ROWS
+    assert len(externals) == K1_EXTERNAL_FUNCTIONS
+
+
+@_needs_k1_gzf
+def test_k1_curated_function_names_join_to_known_addresses(k1: GhidraProgram) -> None:
+    """Cardinality/range alone would pass a systematic mis-join (e.g. an
+    off-by-one row-shift between Function Data and Symbols) undetected -- pin
+    specific address/name pairs, matching the rigor of the Odyssey sibling
+    test above."""
+
+    names = k1.names_by_entry()
+
+    assert len(names) == K1_CURATED_NAMES
+    assert all(entry >= K1_IMAGE_BASE for entry in names)
+    assert names[0x00401060] == "GetObjectTableManager"
+    assert names[0x00401080] == "DoSaveGameScreenShot"
+    assert names[0x00401160] == "CAppManager"
+    assert names[0x00401280] == "DestroyServer"
+
+
+@_needs_k1_gzf
+def test_k1_is_a_distinct_program_from_odyssey_tsl(k1: GhidraProgram) -> None:
+    """A second fixture only proves the reader generalizes if it is a different game."""
+
+    assert k1.program_name != "swkotor2.exe"
+    assert (K1_FUNCTION_DATA_ROWS, K1_MEMORY_FUNCTIONS, K1_CURATED_NAMES) != (
+        ODYSSEY_FUNCTION_DATA_ROWS,
+        ODYSSEY_MEMORY_FUNCTIONS,
+        ODYSSEY_CURATED_NAMES,
+    )
