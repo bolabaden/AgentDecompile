@@ -140,6 +140,7 @@ agentdecompile_cli = ["webui_assets/*"]
 [dependency-groups]
 dev = [
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
     "pytest-sugar>=1.1.1",
     "pytest-timeout>=2.0.0",
     "pytest>=9.0.2",
