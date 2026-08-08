@@ -148,7 +148,8 @@ dev = [
 
 [tool.setuptools_scm]
 # Extract version from git tags (e.g., 1.0.0 -> 1.0.0)
-# Fallback to 0.0.0.dev0 if no tags found
+# Fallback to the 2.0.1 release line if no tags are present
+fallback_version = "2.0.1"
 version_file = "src/agentdecompile_cli/_version.py"
 
 
