@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import struct
 from dataclasses import dataclass
@@ -89,6 +90,9 @@ def pe_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
     if magic not in {0x10B, 0x20B}:
         raise InventoryError(f"unsupported PE optional-header magic: 0x{magic:x}")
 
+    major_linker_version = view.u8(optional + 2)
+    minor_linker_version = view.u8(optional + 3)
+
     address_of_entry = view.u32(optional + 16)
     image_base = view.u64(optional + 24) if is_pe32_plus else view.u32(optional + 28)
     section_alignment = view.u32(optional + 32)
@@ -158,7 +162,15 @@ def pe_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
         "status": "complete",
         "machine": f"0x{machine:04x}",
         "timestamp": timestamp,
+        "timestampUtc": (
+            datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc).isoformat()
+            if timestamp not in {0, 0xFFFFFFFF}
+            else None
+        ),
         "characteristics": characteristics,
+        "optionalHeaderMagic": f"0x{magic:04x}",
+        "majorLinkerVersion": major_linker_version,
+        "minorLinkerVersion": minor_linker_version,
         "entryRva": address_of_entry,
         "entryVa": image_base + address_of_entry,
         "imageBase": image_base,

@@ -30,6 +30,7 @@ from .source_plugin_runner import (
     parse_profile_values,
     run_source_plugin_pipeline,
 )
+from .inventory import build_binary_inventory
 from .targets import identify_binary
 from .windows import run_recovery_windows
 
@@ -97,6 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
     inspect = sub.add_parser("inspect", help="Resolve and identify the target binary.")
     inspect.add_argument("input", type=Path)
     inspect.add_argument("--preferred-name")
+
+    headers = sub.add_parser("headers", help="Print the binary header inventory (PE/ELF/Mach-O) as JSON.")
+    headers.add_argument("input", type=Path)
+    headers.add_argument("--preferred-name")
 
     acquire = sub.add_parser(
         "acquire",
@@ -496,6 +501,13 @@ def add_package_verify_args(parser: argparse.ArgumentParser) -> None:
 def run_inspect(args: argparse.Namespace) -> int:
     identity = identify_binary(args.input, args.preferred_name)
     print(json.dumps(identity.to_json(), indent=2, sort_keys=True))
+    return 0
+
+
+def run_headers(args: argparse.Namespace) -> int:
+    identity = identify_binary(args.input, args.preferred_name)
+    inventory = build_binary_inventory(identity)
+    print(json.dumps(inventory, indent=2, sort_keys=True))
     return 0
 
 
@@ -1154,6 +1166,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     if args.command == "inspect":
         return run_inspect(args)
+    if args.command == "headers":
+        return run_headers(args)
     if args.command == "acquire":
         return run_acquire(args)
     if args.command == "claim-report":
