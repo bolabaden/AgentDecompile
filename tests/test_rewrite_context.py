@@ -102,11 +102,39 @@ def test_prompt_includes_exemplars_when_available() -> None:
     assert "y + y" in text
 
 
+def test_prompt_includes_codebase_exemplars_when_available() -> None:
+    text = render_rewrite_prompt(
+        _pack(
+            codebase_exemplars=[
+                {
+                    "name": "sub_7bde0",
+                    "cCode": "void sub_7bde0(char *dst) { *dst = 0; }",
+                    "matchPercent": 100.0,
+                    "callsTarget": False,
+                }
+            ]
+        )
+    )
+
+    assert "Worked examples from similar functions" in text
+    assert "sub_7bde0" in text
+    assert "*dst = 0" in text
+    assert "100.0% match" in text
+
+
+def test_pack_carries_codebase_exemplars() -> None:
+    samples = [{"name": "neighbour", "cCode": "int neighbour(void){ return 1; }"}]
+    pack = _pack(codebase_exemplars=samples)
+
+    assert pack["codebaseExemplars"] == samples
+
+
 def test_prompt_omits_empty_sections() -> None:
     text = render_rewrite_prompt(_pack())
 
     assert "Previous attempts" not in text
     assert "Verified transformations" not in text
+    assert "Worked examples from similar functions" not in text
 
 
 def test_prompt_requests_a_single_fenced_block() -> None:

@@ -39,6 +39,23 @@ typedef char *LPSTR;
 """.strip()
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Named MSVC toolchains, usable anywhere a compiler root is accepted
+# (--source-synthesis-vc-root vc71, --vc-root vc71, VC_ROOT=vc71). The roots
+# match scripts/compiler-profile.sh; tests/test_compiler_profiles.py guards the
+# two against drift.
+#
+# swkotor.exe's intact Rich header says the target was built by cl 13.00.9466
+# (MSVC 7.0 / VS.NET 2002 RTM). MSVC 7.0 has no authorized download, so vc71
+# (VC++ Toolkit 2003, cl 13.10.3052) is the closest obtainable toolchain. vc80
+# stays the default: two generations off the target, kept as the A/B control.
+COMPILER_PROFILES: dict[str, Path] = {
+    "vc71": REPO_ROOT / "target/toolchain-acquire/vctoolkit2003/msitools-extract/Program Files/Microsoft Visual C++ Toolkit 2003",
+    "vc80": Path("/run/media/brunner56/MyBook/Toolchains/msvc8.0-main"),
+}
+DEFAULT_COMPILER_PROFILE = "vc80"
+
 GLOBAL_RE = re.compile(r"\b(?:DAT|UNK|PTR|iRam|uRam|bRam|sRam|wRam|dRam|qRam|fRam|g_|s_)[A-Za-z0-9_]*\b")
 STACK_SYMBOL_RE = re.compile(r"\bstack0x[0-9A-Fa-f]+\b")
 # Matches `*<global>` (with optional intervening whitespace) so build_shim can
@@ -526,13 +543,29 @@ def compile_with_msvc(
     }
 
 
+def resolve_vc_root_option(value: Path | str | None) -> Path | None:
+    """Normalize a user-supplied MSVC root.
+
+    A bare compiler-profile name (``vc71``, ``vc80``) resolves to that profile's
+    toolchain root; anything else is taken as a filesystem path and returned
+    unchanged. Callers hand this the raw ``--vc-root`` / ``--source-synthesis-vc-root``
+    value so a profile name never reaches a ``Path.resolve()`` that would turn it
+    into a bogus ``$CWD/vc71``.
+    """
+    if value is None:
+        return None
+    profile = COMPILER_PROFILES.get(str(value).strip().lower())
+    return profile if profile is not None else Path(value)
+
+
 def resolve_msvc_root(msvc_root: Path | None) -> Path:
-    if msvc_root is not None:
-        return msvc_root
-    env_root = os.environ.get("VC_ROOT")
-    if env_root:
-        return Path(env_root)
-    return Path("/run/media/brunner56/MyBook/Toolchains/msvc8.0-main")
+    resolved = resolve_vc_root_option(msvc_root)
+    if resolved is not None:
+        return resolved
+    env_resolved = resolve_vc_root_option(os.environ.get("VC_ROOT") or None)
+    if env_resolved is not None:
+        return env_resolved
+    return COMPILER_PROFILES[DEFAULT_COMPILER_PROFILE]
 
 
 def msvc_environment(msvc_root: Path, wineprefix: Path | None) -> dict[str, str]:

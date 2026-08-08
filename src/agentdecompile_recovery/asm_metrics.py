@@ -1,7 +1,13 @@
-"""ARM/Thumb and MIPS assembly instruction/branch/label counting.
+"""ARM/Thumb, MIPS, and x86 assembly instruction/branch/label counting.
 
-Ports the upstream reference asm-metrics module. Feeds the difficulty
-classifier in logistic_regression.py.
+Ports the upstream reference asm-metrics module for ARM/MIPS. Feeds the
+difficulty classifier in logistic_regression.py.
+
+The x86 counter is an addition, not a port -- see asm_utils for why, and for
+the two Intel-syntax dialects it accepts. It shares asm_utils' mnemonic
+tables so a mnemonic classified as a branch there is one here too. `call` is
+counted as an instruction but not a branch, matching the ARM path's treatment
+of `bl`.
 """
 
 from __future__ import annotations
@@ -9,7 +15,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-ArmOrMips = str  # "arm" | "mips"
+from .asm_utils import (
+    X86_PLATFORMS,
+    AsmPlatform,
+    is_x86_branch_mnemonic,
+    is_x86_local_label,
+    iter_x86_instructions,
+    x86_label_name,
+)
+
+ArmOrMips = AsmPlatform  # Back-compat alias from the ARM/MIPS-only port.
 
 
 @dataclass
@@ -117,9 +132,30 @@ def _count_mips_metrics(asm_code: str) -> AsmMetrics:
     return AsmMetrics(instruction_count, branch_count, label_count)
 
 
-def count_asm_metrics(asm_code: str, platform: ArmOrMips) -> AsmMetrics:
+def _count_x86_metrics(asm_code: str) -> AsmMetrics:
+    instruction_count = 0
+    branch_count = 0
+    for _line, mnemonic in iter_x86_instructions(asm_code):
+        instruction_count += 1
+        if is_x86_branch_mnemonic(mnemonic):
+            branch_count += 1
+
+    # Labels are counted over the raw text: iter_x86_instructions drops them
+    # precisely because they are not instructions.
+    label_count = 0
+    for raw_line in asm_code.split("\n"):
+        name = x86_label_name(raw_line)
+        if name is not None and is_x86_local_label(name):
+            label_count += 1
+
+    return AsmMetrics(instruction_count, branch_count, label_count)
+
+
+def count_asm_metrics(asm_code: str, platform: AsmPlatform) -> AsmMetrics:
     if platform == "arm":
         return _count_arm_metrics(asm_code)
     if platform == "mips":
         return _count_mips_metrics(asm_code)
+    if platform in X86_PLATFORMS:
+        return _count_x86_metrics(asm_code)
     return AsmMetrics(0, 0, 0)

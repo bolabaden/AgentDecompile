@@ -23,12 +23,22 @@ pytestmark = pytest.mark.unit
 
 
 class _StubBackground:
-    def __init__(self, *, spawn_config=None, run_result="ok", is_success=False, run_delay=0.0, raise_error=None):
+    def __init__(
+        self,
+        *,
+        spawn_config=None,
+        run_result="ok",
+        is_success=False,
+        run_delay=0.0,
+        raise_error=None,
+        respect_abort=True,
+    ):
         self.spawn_config = spawn_config
         self.run_result = run_result
         self.success_flag = is_success
         self.run_delay = run_delay
         self.raise_error = raise_error
+        self.respect_abort = respect_abort
         self.reset_calls = 0
         self.run_calls: list[tuple] = []
         self.spawn_calls: list[BackgroundSpawnContext] = []
@@ -40,7 +50,10 @@ class _StubBackground:
     def run(self, config, abort_event: threading.Event):
         self.run_calls.append((config, abort_event))
         if self.run_delay:
-            abort_event.wait(self.run_delay)
+            if self.respect_abort:
+                abort_event.wait(self.run_delay)
+            else:
+                time.sleep(self.run_delay)  # misbehaving plugin: never polls abort_event
         if self.raise_error is not None:
             raise self.raise_error
         return self.run_result
@@ -161,11 +174,83 @@ def test_cancel_all_sets_abort_event_and_clears_active_tasks():
     coordinator.on_attempt_complete(_ctx())
     _wait_until(lambda: coordinator.get_active_task_count() == 1)
 
-    coordinator.cancel_all()
+    abandoned = coordinator.cancel_all()
 
+    assert abandoned == []
+    assert coordinator.get_abandoned_task_ids() == []
     assert coordinator.get_active_task_count() == 0
     _, abort_event = background.run_calls[0]
     assert abort_event.is_set()
+    coordinator.shutdown()
+
+
+def test_cancel_all_is_bounded_when_task_ignores_abort_event():
+    # The plugin never polls abort_event, so only the coordinator's bounded join can
+    # reclaim the worker; the pre-fix future.result() waited the full run_delay.
+    background = _StubBackground(spawn_config={"code": "x"}, run_delay=2.0, respect_abort=False)
+    coordinator = BackgroundTaskCoordinator([_StubPlugin("permuter", background)], cancel_timeout=0.2)
+
+    coordinator.on_attempt_complete(_ctx())
+    _wait_until(lambda: coordinator.get_active_task_count() == 1)
+
+    start = time.monotonic()
+    abandoned = coordinator.cancel_all()
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0
+    assert abandoned == ["permuter-1"]
+    assert coordinator.get_abandoned_task_ids() == ["permuter-1"]
+    assert coordinator.get_active_task_count() == 0
+    coordinator.shutdown()
+
+
+def test_shutdown_is_bounded_when_task_ignores_abort_event():
+    background = _StubBackground(spawn_config={"code": "x"}, run_delay=2.0, respect_abort=False)
+    coordinator = BackgroundTaskCoordinator([_StubPlugin("permuter", background)], cancel_timeout=0.2)
+
+    coordinator.on_attempt_complete(_ctx())
+    _wait_until(lambda: coordinator.get_active_task_count() == 1)
+
+    start = time.monotonic()
+    abandoned = coordinator.shutdown()
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0
+    assert abandoned == ["permuter-1"]
+
+
+def test_shutdown_after_cancel_all_does_not_rejoin_abandoned_task():
+    # cancel_all() clears _tasks, so shutdown()'s own cancel sees nothing to abandon --
+    # the executor join has to consult the abandonment ledger or it blocks all over again.
+    background = _StubBackground(spawn_config={"code": "x"}, run_delay=2.0, respect_abort=False)
+    coordinator = BackgroundTaskCoordinator([_StubPlugin("permuter", background)], cancel_timeout=0.2)
+
+    coordinator.on_attempt_complete(_ctx())
+    _wait_until(lambda: coordinator.get_active_task_count() == 1)
+    assert coordinator.cancel_all() == ["permuter-1"]
+
+    start = time.monotonic()
+    coordinator.shutdown()
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0
+
+
+def test_cancel_all_emits_abandoned_event():
+    events: list[dict] = []
+    background = _StubBackground(spawn_config={"code": "x"}, run_delay=2.0, respect_abort=False)
+    coordinator = BackgroundTaskCoordinator(
+        [_StubPlugin("permuter", background)],
+        events.append,
+        cancel_timeout=0.2,
+    )
+
+    coordinator.on_attempt_complete(_ctx())
+    _wait_until(lambda: coordinator.get_active_task_count() == 1)
+    coordinator.cancel_all()
+
+    abandoned_events = [event for event in events if event.get("type") == "background-task-abandoned"]
+    assert abandoned_events == [{"type": "background-task-abandoned", "taskIds": ["permuter-1"]}]
     coordinator.shutdown()
 
 

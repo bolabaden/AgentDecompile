@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import shutil
 import threading
+import time
+from pathlib import Path
 
 import pytest
 
 from agentdecompile_recovery.background_task_coordinator import BackgroundSpawnContext
-from agentdecompile_recovery.permuter_background import PermuterBackgroundCapability
+from agentdecompile_recovery.permuter_background import (
+    PermuterBackgroundCapability,
+    _default_permuter_runner,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -82,6 +88,61 @@ def test_run_delegates_to_injected_runner():
 
     assert calls
     assert result == {"matched": True, "differences": 0}
+
+
+def test_default_permuter_runner_returns_aborted_when_event_already_set(monkeypatch: pytest.MonkeyPatch):
+    def _must_not_run(**_kwargs):
+        raise AssertionError("permuter must not be launched once the abort event is set")
+
+    monkeypatch.setattr(
+        "agentdecompile_cli.mcp_utils.decomp_match.build_decomp_match_payload",
+        _must_not_run,
+    )
+    abort_event = threading.Event()
+    abort_event.set()
+
+    result = _default_permuter_runner({"permuter_dir": Path("/tmp/permuter")}, abort_event)
+
+    assert result["aborted"] is True
+    assert result["matched"] is False
+
+
+def test_default_permuter_runner_terminates_child_when_aborted_mid_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    if shutil.which("python3") is None:
+        pytest.skip("python3 is required to launch the stand-in permuter child process")
+
+    script = tmp_path / "permuter.py"
+    script.write_text("import time\n\ntime.sleep(120)\n", encoding="utf-8")
+    permuter_dir = tmp_path / "nonmatching"
+    permuter_dir.mkdir()
+    monkeypatch.setattr(
+        "agentdecompile_cli.mcp_utils.decomp_match.shutil.which",
+        lambda name: str(script) if name in {"permuter.py", "permuter"} else None,
+    )
+
+    abort_event = threading.Event()
+    timer = threading.Timer(0.5, abort_event.set)
+    timer.start()
+    try:
+        start = time.monotonic()
+        result = _default_permuter_runner(
+            {"permuter_dir": permuter_dir, "jobs": None, "timeout_ms": 120_000},
+            abort_event,
+        )
+        elapsed = time.monotonic() - start
+    finally:
+        timer.cancel()
+
+    assert elapsed < 10.0
+    assert result["aborted"] is True
+    assert result["matched"] is False
+    scan = result["raw"]["scan"]
+    assert scan["error"] == "aborted"
+    # A non-zero/negative exit code proves the child was signalled and reaped, not orphaned.
+    assert scan["exitCode"] not in (0, None)
 
 
 def test_is_success_requires_matched_and_zero_differences():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,23 @@ def test_run_enrich_pipeline_writes_facts(tmp_path: Path) -> None:
     assert out.exists()
     assert summary["functionCount"] == 1
     assert (tmp_path / "enrich-receipt.json").exists() or (out.parent / "enrich-receipt.json").exists()
+
+
+def test_run_enrich_pipeline_fact_name_prefers_names_by_entry(tmp_path: Path) -> None:
+    """Curated tier must reach the fact even if decompile still echoes sub_*."""
+    out = tmp_path / "facts.jsonl"
+    summary = run_enrich_pipeline(
+        boundaries=[{"entry": 0x401060, "length": 8, "name": "sub_1060"}],
+        corpus=None,
+        rtti_classes=[],
+        out_facts=out,
+        program_factory=FakeEnrichProgram,
+        names_by_entry={0x401060: ("GetObjectTableManager", "curated-project")},
+    )
+    assert summary["namedCount"] == 1
+    row = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+    assert row["name"] == "GetObjectTableManager"
+    assert row["provenance"] == "curated-project"
 
 
 def test_build_names_by_entry_prefers_ghidra_symbols() -> None:
@@ -157,3 +175,97 @@ def test_build_names_by_entry_curated_tier_against_real_odyssey_database() -> No
     entry, name = next(iter(curated_names.items()))
     names = build_names_by_entry(discovered=[], curated_names=curated_names)
     assert names.get(entry) == (name, "curated-project") or entry not in names
+
+
+# -- curated prototypes reach the decompiler ----------------------------------
+
+
+def _thiscall_signature() -> dict[str, object]:
+    return {
+        "name": "GetObjectTableManager",
+        "qualifiedName": "CAppManager::GetObjectTableManager",
+        "callingConvention": "__thiscall",
+        "returnType": "undefined4",
+        "parameters": [{"ordinal": 0, "name": "nIndex", "type": "int", "slot": "param_1"}],
+        "arityCheck": "match",
+        "signature": "undefined4 __thiscall CAppManager::GetObjectTableManager(int)",
+    }
+
+
+def test_curated_prototype_is_applied_before_decompile(tmp_path: Path) -> None:
+    """Order is the whole point: the calling convention decides argument storage.
+
+    Applied after the decompile it would change nothing, and the emitted C
+    would keep reading an uninitialised `in_ECX` for every `__thiscall` method.
+    """
+
+    program = FakeEnrichProgram()
+    run_enrich_pipeline(
+        boundaries=[{"entry": 0x401060, "length": 32}],
+        corpus=None,
+        rtti_classes=[],
+        out_facts=tmp_path / "facts.jsonl",
+        program_factory=lambda: program,
+        signatures_by_entry={0x401060: _thiscall_signature()},
+    )
+
+    assert program.calls.index("signature:4198496:__thiscall") < program.calls.index("decompile:4198496")
+
+
+def test_applied_prototype_lands_in_the_fact_row(tmp_path: Path) -> None:
+    out = tmp_path / "facts.jsonl"
+    summary = run_enrich_pipeline(
+        boundaries=[{"entry": 0x401060, "length": 32}],
+        corpus=None,
+        rtti_classes=[],
+        out_facts=out,
+        program_factory=FakeEnrichProgram,
+        signatures_by_entry={0x401060: _thiscall_signature()},
+    )
+
+    fact = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+
+    assert fact["callingConvention"] == "__thiscall"
+    assert fact["qualifiedName"] == "CAppManager::GetObjectTableManager"
+    assert fact["curatedSignature"] == "undefined4 __thiscall CAppManager::GetObjectTableManager(int)"
+    assert fact["locals"] == [{"name": "nIndex", "slot": "param_1"}]
+    assert summary["curatedPrototypeCount"] == 1
+
+
+def test_facts_are_unchanged_when_no_curated_prototype_is_supplied(tmp_path: Path) -> None:
+    out = tmp_path / "facts.jsonl"
+    summary = run_enrich_pipeline(
+        boundaries=[{"entry": 0x401060, "length": 32}],
+        corpus=None,
+        rtti_classes=[],
+        out_facts=out,
+        program_factory=FakeEnrichProgram,
+    )
+
+    fact = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+
+    assert "callingConvention" not in fact
+    assert "curatedSignature" not in fact
+    assert summary["curatedPrototypeCount"] == 0
+
+
+def test_a_prototype_the_program_rejects_does_not_reach_the_fact(tmp_path: Path) -> None:
+    class RejectingProgram(FakeEnrichProgram):
+        def apply_signature(self, entry: int, signature: dict[str, object]) -> bool:
+            self.calls.append(f"signature-rejected:{entry}")
+            return False
+
+    out = tmp_path / "facts.jsonl"
+    run_enrich_pipeline(
+        boundaries=[{"entry": 0x401060, "length": 32}],
+        corpus=None,
+        rtti_classes=[],
+        out_facts=out,
+        program_factory=RejectingProgram,
+        signatures_by_entry={0x401060: _thiscall_signature()},
+    )
+
+    fact = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+
+    assert "curatedSignature" not in fact
+    assert "callingConvention" not in fact

@@ -61,6 +61,7 @@ def build_context_pack(
     compiler_profile: str | None = None,
     prior_attempts: list[dict[str, Any]] | None = None,
     exemplars: list[dict[str, Any]] | None = None,
+    codebase_exemplars: list[dict[str, Any]] | None = None,
     callee_protos: list[str] | None = None,
 ) -> dict[str, Any]:
     """Assemble everything a rewrite needs into one serializable payload."""
@@ -76,6 +77,9 @@ def build_context_pack(
         "compilerProfile": compiler_profile,
         "priorAttempts": list(prior_attempts or []),
         "exemplars": list(exemplars or []),
+        # Structural neighbours from decomp-function-index.json (near-miss /
+        # verified C), distinct from pattern_memory mismatch-class exemplars.
+        "codebaseExemplars": list(codebase_exemplars or []),
         "calleeProtos": list(callee_protos or []),
         "claimBoundary": CLAIM_BOUNDARY,
     }
@@ -152,6 +156,29 @@ def render_rewrite_prompt(pack: dict[str, Any]) -> str:
                 "## Verified transformations for this mismatch class\n\n"
                 "These shape changes produced byte-exact matches on other "
                 "functions.\n\n" + "\n".join(lines)
+            )
+
+    codebase_exemplars = pack.get("codebaseExemplars") or []
+    if codebase_exemplars:
+        lines = []
+        for sample in codebase_exemplars:
+            name = str(sample.get("name") or "neighbour").strip()
+            c_code = str(sample.get("cCode") or "").strip()
+            if not c_code:
+                continue
+            match_pct = sample.get("matchPercent")
+            match_note = (
+                f" ({float(match_pct):.1f}% match)"
+                if isinstance(match_pct, (int, float))
+                else ""
+            )
+            lines.append(f"### `{name}`{match_note}\n\n```c\n{c_code}\n```")
+        if lines:
+            sections.append(
+                "## Worked examples from similar functions\n\n"
+                "These are structurally similar functions from the indexed "
+                "corpus. Prefer their source *shape* when it fits; do not copy "
+                "identifiers that belong to another function.\n\n" + "\n\n".join(lines)
             )
 
     sections.append(

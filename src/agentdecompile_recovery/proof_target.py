@@ -312,6 +312,36 @@ def _iter_jsonl(path: Path):
             yield row
 
 
+def plugin_attempt_paths(work_dir: Path) -> list[Path]:
+    """Every directory a plugin run can drop ``plugin-attempts.jsonl`` into.
+
+    The file is written to ``SourcePluginRunConfig.out_dir``, which only ever
+    takes two shapes under a work dir: ``source-synthesis/`` (pipeline
+    ``stage_synthesize_source_tasks``) and ``source-synthesis/vacuum/<slug>/``
+    (``vacuum_runner``). Listing those two levels directly costs two directory
+    reads plus one stat per vacuum function.
+
+    A ``source-synthesis/**/plugin-attempts.jsonl`` walk returns the same files
+    but also descends ``source-synthesis/cases/``, which holds one directory per
+    compile attempt -- 2,337 cases x one directory per compiler profile x a
+    nested attempt directory each. That walk read 215 MB of directory metadata
+    and stalled the ``report`` stage past the point of abandonment on rotational
+    storage, so it is not an acceptable way to find 1,156 files. This mirrors the
+    single-pass index that replaced the per-candidate ``tasks.jsonl`` rescan in
+    ``build_proof_target_queue``: read the known locations, never rescan the tree.
+
+    Paths are returned sorted and are not checked for existence; callers already
+    filter with ``is_file()``.
+    """
+
+    synthesis = work_dir / "source-synthesis"
+    paths = [synthesis / "plugin-attempts.jsonl"]
+    vacuum = synthesis / "vacuum"
+    if vacuum.is_dir():
+        paths.extend(child / "plugin-attempts.jsonl" for child in vacuum.iterdir())
+    return sorted(paths)
+
+
 def load_near_miss_maps(work_dir: Path) -> NearMissMaps:
     """Return best positive objdiff difference and latest mismatch class per function."""
 
@@ -321,7 +351,7 @@ def load_near_miss_maps(work_dir: Path) -> NearMissMaps:
     class_by_entry: dict[str, str] = {}
     work_dir = work_dir.resolve()
     attempt_paths = [work_dir / "source-synthesis" / "attempts.jsonl"]
-    attempt_paths.extend(sorted(work_dir.glob("source-synthesis/**/plugin-attempts.jsonl")))
+    attempt_paths.extend(plugin_attempt_paths(work_dir))
     seen_paths: set[Path] = set()
     for attempts in attempt_paths:
         if not attempts.is_file() or attempts in seen_paths:

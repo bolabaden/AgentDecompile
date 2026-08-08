@@ -18,16 +18,37 @@ On disk a project called `Odyssey` is::
         versioned/                    server-side item tree, same shape
         user/
 
+A Ghidra *server repository* is the same item tree with the wrapper stripped off:
+the repository directory is itself the filesystem root, so the storage
+subdirectories sit directly inside it::
+
+    _odyssey/                         one repository on a Ghidra server
+        ~index.dat                    folder index
+        userAccess.acl
+        00/
+            0000000b.prp
+            ~0000000b.db/
+                db.1.gbf
+
+`IndexedLocalFileSystem.isIndexed` calls a directory holding `~index.dat` a
+filesystem root, and that is exactly the difference: in a local project the file
+sits in `idata/`, in a server repository it sits at the top. Both shapes are
+walked the same way from there.
+
 Two deliberate choices:
 
 *Glob the `.prp` files, do not parse `~index.dat`.* The index is a journalled
 cache that Ghidra rebuilds; it can lag the filesystem, and its `~journal.bak`
 sibling shows it does. The `.prp` files are the items themselves, so a directory
-walk cannot report a program that is not there or miss one that is.
+walk cannot report a program that is not there or miss one that is. Nothing is
+lost by ignoring it: each `.prp` carries its own `NAME` and `PARENT`, so an item
+knows its folder without the index.
 
 *Search `versioned/` as well as `idata/`.* Ghidra's own test project keeps its
 programs only under `versioned/`; looking in `idata/` alone finds nothing there
-and would report a perfectly good project as empty.
+and would report a perfectly good project as empty. A server repository has
+neither, so the repository directory itself is searched -- see
+`item_storage_roots`.
 
 Read-only. Nothing here creates, deletes or writes any file, `.lock` files
 included: a lock means another process may be *writing*, and since this module
@@ -58,8 +79,12 @@ DATABASE_FILE_PREFIX = "db."
 BUFFER_FILE_EXTENSION = ".gbf"
 _DATABASE_FILE_PATTERN = re.compile(r"^db\.(\d+)\.gbf$")
 
-# Item data roots, in the order a caller would expect to find a program.
+# Item data roots inside a local project, in the order a caller would expect to
+# find a program. A server repository has none of these: it is a root itself.
 DATA_ROOTS = ("idata", "data", "versioned")
+
+# IndexedLocalFileSystem.INDEX_FILE -- marks the root of an item filesystem.
+INDEX_FILE = "~index.dat"
 
 PROGRAM_CONTENT_TYPE = "Program"
 
@@ -119,8 +144,36 @@ def storage_subdirectory(storage_name: str) -> str:
     return storage_name[-3:-1]
 
 
+def is_item_filesystem_root(path: Path | str) -> bool:
+    """Whether a directory is itself an item filesystem root.
+
+    `IndexedLocalFileSystem.isIndexed`: a root is a directory holding
+    `~index.dat`. A server repository is one; a local `.rep` is not (its roots
+    are `idata/` and `versioned/`).
+    """
+
+    return (Path(path) / INDEX_FILE).exists()
+
+
+def item_storage_roots(root: Path) -> list[Path]:
+    """Directories whose subdirectories hold `.prp` items, in search order.
+
+    A local project keeps its item trees in `idata/`, `data/` and `versioned/`.
+    A server repository *is* an item tree, so its storage subdirectories (`00/`,
+    `01/`, ...) sit directly in the repository directory and there is no wrapper
+    to look inside. Resolving the root is therefore not enough on its own: the
+    walk has to be told the root is also a scan base, or a server repository
+    enumerates as empty.
+    """
+
+    bases = [root / data_root for data_root in DATA_ROOTS if (root / data_root).is_dir()]
+    if is_item_filesystem_root(root):
+        bases.append(root)
+    return bases
+
+
 def resolve_project_root(path: Path | str) -> Path:
-    """Resolve a `.gpr`, `.rep` or project directory to the `.rep` directory.
+    """Resolve a `.gpr`, `.rep`, project directory or server repository to its root.
 
     The `.gpr` file is only a marker -- it is routinely zero bytes -- so it is
     never opened; only its name is used to find the sibling `.rep`.
@@ -140,11 +193,14 @@ def resolve_project_root(path: Path | str) -> Path:
     if candidate.is_dir():
         if candidate.suffix == PROJECT_DIR_SUFFIX:
             return candidate
-        # A bare project directory: accept it if it looks like one.
+        # A bare project directory, or a server repository: accept either shape.
         if any((candidate / root).is_dir() for root in DATA_ROOTS):
             return candidate
+        if is_item_filesystem_root(candidate):
+            return candidate
         raise ProjectLayoutError(
-            f"{candidate}: not a Ghidra project directory (no {'/, '.join(DATA_ROOTS)}/ inside)"
+            f"{candidate}: not a Ghidra project directory or server repository "
+            f"(no {'/, '.join(DATA_ROOTS)}/ and no {INDEX_FILE} inside)"
         )
 
     raise ProjectLayoutError(f"{candidate}: no such project file or directory")
@@ -217,10 +273,7 @@ def iter_program_entries(
 
     root = resolve_project_root(path)
 
-    for data_root in DATA_ROOTS:
-        base = root / data_root
-        if not base.is_dir():
-            continue
+    for base in item_storage_roots(root):
         for property_file in sorted(base.glob(f"*/*{PROPERTY_SUFFIX}")):
             if property_file.name.startswith(HIDDEN_DIR_PREFIX):
                 continue

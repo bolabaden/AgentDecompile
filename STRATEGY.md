@@ -2,7 +2,7 @@
 name: AgentDecompile
 last_updated: 2026-08-08
 charter: VISION.md
-active_living_plan: docs/plans/2026-08-08-001-feat-vision-substrate-mcp-context-plan.md
+active_living_plan: docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md
 ---
 
 # AgentDecompile Strategy
@@ -54,7 +54,7 @@ One product name: **AgentDecompile**. Recovery runs from this repo only — not 
 
 ### Acquisition and dismantling
 
-Unpackers, section/resource trees, package/install layouts, fingerprint-keyed acquisition bundles — first-class MCP/CLI capabilities (`export-context`, `acquisition-query`, acquire), not buried recover-only stages.
+Unpackers, section/resource trees, package/install layouts, fingerprint-keyed acquisition bundles — first-class capabilities. MCP peers in this substrate slice: `export-context`, `acquisition-query`. `acquire` remains CLI/recovery until a follow-up elevates it.
 
 ### Context fusion
 

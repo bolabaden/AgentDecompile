@@ -5,6 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import subprocess
+import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,6 +20,10 @@ _SUPPORTED_TOOLS = frozenset({"m2c", "objdiff", "permuter"})
 _DEFAULT_BUNDLE_TOOLS = ("objdiff", "m2c", "permuter")
 _DEFAULT_OUTPUT_LIMIT = 200
 _DEFAULT_TIMEOUT_MS = 120_000
+_ABORT_POLL_SECONDS = 0.1
+# Kept well under a canceller's own join budget (the background coordinator waits 5s) so a
+# terminate that needs escalating still returns before the caller gives up on the task.
+_TERMINATE_GRACE_SECONDS = 2.0
 
 CommandRunner = Callable[..., dict[str, Any]]
 
@@ -277,17 +285,108 @@ def _build_permuter_command(
     return command
 
 
+def _terminate_process(process: subprocess.Popen[Any]) -> None:
+    """Ask the child to exit, escalating to a kill if it does not go promptly."""
+    process.terminate()
+    try:
+        process.wait(timeout=_TERMINATE_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def _wait_for_process(
+    process: subprocess.Popen[Any],
+    *,
+    deadline: float,
+    abort_event: threading.Event,
+) -> str | None:
+    """Poll until the child exits, the caller aborts, or the timeout expires.
+
+    Returns None when the child exited on its own, otherwise the "error" reason to report.
+    """
+    while True:
+        try:
+            process.wait(timeout=_ABORT_POLL_SECONDS)
+            return None
+        except subprocess.TimeoutExpired:
+            pass
+        if abort_event.is_set():
+            reason = "aborted"
+            break
+        if time.monotonic() >= deadline:
+            reason = "timeout"
+            break
+    _terminate_process(process)
+    return reason
+
+
+def _run_command_with_abort(
+    command: list[str],
+    *,
+    cwd: Path | None,
+    timeout_ms: int,
+    abort_event: threading.Event,
+) -> dict[str, Any]:
+    """Run a command with the same result shape as _run_command, but cancellable.
+
+    A caller that sets abort_event (e.g. the background permuter's coordinator during
+    cancel_all) gets the child terminated instead of waiting out its timeout. Output is
+    captured to temp files rather than pipes so the poll loop cannot deadlock on a full
+    pipe buffer for a chatty long-running tool.
+    """
+    base: dict[str, Any] = {"command": command}
+    if cwd is not None:
+        base["cwd"] = str(cwd)
+    if abort_event.is_set():
+        return {**base, "exitCode": None, "stdout": "", "stderr": "", "available": True, "error": "aborted"}
+
+    deadline = time.monotonic() + max(1.0, timeout_ms / 1000.0)
+    with (
+        tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stdout_file,
+        tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr_file,
+    ):
+        try:
+            process = subprocess.Popen(command, stdout=stdout_file, stderr=stderr_file, cwd=str(cwd) if cwd else None)
+        except FileNotFoundError:
+            return {
+                **base,
+                "exitCode": None,
+                "stdout": "",
+                "stderr": "",
+                "available": False,
+                "skipped": "binary not on PATH",
+            }
+        error = _wait_for_process(process, deadline=deadline, abort_event=abort_event)
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        scan: dict[str, Any] = {
+            **base,
+            "exitCode": process.returncode,
+            "stdout": stdout_file.read().strip(),
+            "stderr": stderr_file.read().strip(),
+            "available": True,
+        }
+    if error is not None:
+        scan["error"] = error
+    return scan
+
+
 def _run_with_cwd(
     command: list[str],
     *,
     cwd: Path | None,
     timeout_ms: int,
     command_runner: CommandRunner,
+    abort_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    if cwd is None or command_runner is not _default_run_command:
+    # Injected runners own their own subprocess semantics, so abort/cwd handling below
+    # applies only to the default runner.
+    if command_runner is not _default_run_command or (cwd is None and abort_event is None):
         return command_runner(command, timeout_ms=timeout_ms)
 
-    import subprocess
+    if abort_event is not None:
+        return _run_command_with_abort(command, cwd=cwd, timeout_ms=timeout_ms, abort_event=abort_event)
 
     try:
         completed = subprocess.run(
@@ -489,6 +588,7 @@ def _build_permuter_result(
     output_limit: int,
     timeout_ms: int,
     command_runner: CommandRunner,
+    abort_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     directory = permuter_dir.expanduser().resolve()
     if not directory.is_dir():
@@ -504,7 +604,13 @@ def _build_permuter_result(
     except FileNotFoundError:
         return _missing_tool_result("permuter", binaries=("permuter.py", "permuter"))
 
-    scan = command_runner(command, timeout_ms=timeout_ms)
+    scan = _run_with_cwd(
+        command,
+        cwd=None,
+        timeout_ms=timeout_ms,
+        command_runner=command_runner,
+        abort_event=abort_event,
+    )
     stdout = scan.get("stdout") or ""
     stderr = scan.get("stderr") or ""
     lines, total = _truncate_lines(stdout + "\n" + stderr, output_limit)
@@ -562,8 +668,14 @@ def build_decomp_match_payload(
     output_limit: int = _DEFAULT_OUTPUT_LIMIT,
     timeout_ms: int = _DEFAULT_TIMEOUT_MS,
     command_runner: CommandRunner | None = None,
+    abort_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Run one decomp-matching tool and return unified Tier 1 JSON."""
+    """Run one decomp-matching tool and return unified Tier 1 JSON.
+
+    abort_event is optional and only honoured by the permuter path (the one tool that runs
+    long enough for a caller to want it back): when it fires, the child is terminated and
+    the scan reports error="aborted".
+    """
     tool_name = _normalize_tool_name(tool)
     runner = command_runner or _default_run_command
 
@@ -587,6 +699,7 @@ def build_decomp_match_payload(
             output_limit=output_limit,
             timeout_ms=timeout_ms,
             command_runner=runner,
+            abort_event=abort_event,
         )
 
     asm = Path(assembly_path).expanduser().resolve() if assembly_path else None
@@ -629,6 +742,7 @@ def build_decomp_match_payload(
             output_limit=output_limit,
             timeout_ms=timeout_ms,
             command_runner=runner,
+            abort_event=abort_event,
         )
 
     return {
@@ -667,6 +781,7 @@ def build_decomp_match_bundle_payload(
     output_limit: int = _DEFAULT_OUTPUT_LIMIT,
     timeout_ms: int = _DEFAULT_TIMEOUT_MS,
     command_runner: CommandRunner | None = None,
+    abort_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Run multiple decomp-matching tools when inputs are available."""
     tool_names = _normalize_tools_list(tools)
@@ -747,6 +862,7 @@ def build_decomp_match_bundle_payload(
                     output_limit=output_limit,
                     timeout_ms=timeout_ms,
                     command_runner=runner,
+                    abort_event=abort_event,
                 )
             if scans[name].get("scan", {}).get("available", True):
                 ran += 1

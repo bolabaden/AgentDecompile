@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .curated_enrichment import msvc_thiscall_to_fastcall
+
 
 def _publish_advisory_candidate(out_dir: Path, task: dict[str, Any], source_path: Path) -> None:
     """Best-effort dual-write into run_dir/advisory/ for claim-visible partial runs."""
@@ -141,7 +143,11 @@ def generate_source_candidates(
             generated_candidate = generated_candidate_from_target_bytes(task, target_slice_bytes)
             if fact and fact.get("decompiled"):
                 case_dir.mkdir(parents=True, exist_ok=True)
-                source = str(fact["decompiled"]).rstrip() + "\n"
+                # A curated `__thiscall` prototype reaches the decompiler and
+                # comes back as a signature MSVC will not compile in either C or
+                # C++; `__fastcall` with a dead EDX argument is the same 32-bit
+                # ABI and does compile. No-op for every other candidate.
+                source = msvc_thiscall_to_fastcall(str(fact["decompiled"])).rstrip() + "\n"
                 source_path = case_dir / "candidate.c"
                 source_path.write_text(source, encoding="utf-8")
                 source_quality = "high-level-c"

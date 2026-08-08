@@ -1,11 +1,11 @@
 ---
 title: Vision substrate — elevate dismantling/context to MCP
 date: 2026-08-08
-status: active
-origin: VISION.md + .mission/notes/18-vision-* + 19-adversarial-critic-expand-in-place-claim.md
+status: completed
+origin: VISION.md + research notes under .mission/notes/ (18-vision-*, 19-adversarial-critic-expand-in-place-claim)
 ---
 
-# Vision substrate MCP context (U1)
+# Vision substrate MCP context (slice)
 
 ## Objective
 
@@ -28,8 +28,9 @@ flowchart TD
 - **R2.** MCP tools `export-context` and `acquisition-query` exist, Tier 0, no open Ghidra program required, advertised on default surface.
 - **R3.** Tools live in a **new** provider (not `recovery.py`, which stays reconstruct/status/claim-report only).
 - **R4.** Handlers call existing recovery islands (`context_export.export_context`, `acquisition_mcp.query_bundle` / registry resolve) — no funnel coupling.
-- **R5.** Responses carry explicit `claimBoundary` (advisory / layout context, not proof).
+- **R5.** Responses carry explicit `claimBoundary` aligned with VISION claim layers: these tools emit **Advisory** (layout/evidence) only — never Verified or byte-authoritative promotion language.
 - **R6.** Unit tests cover tier, advertisement, and provider happy paths with temp dirs / fake bundles.
+- **R7.** Canonical docs (`TOOLS_LIST.md`, advertised counts) name both tools; parity tests stay fail-closed on registry drift.
 
 ## Non-goals
 
@@ -65,3 +66,11 @@ flowchart TD
 
 - Large real installers: keep MCP defaults conservative (`maxFiles`, light analysis) so agents do not hang.
 - TOOLS_LIST / capability resource counts update via `len(Tool)` — verify parity tests.
+
+## Completion notes (2026-08-08)
+
+U1–U3 landed on `feat/vision-substrate-mcp-context` ([PR #171](https://github.com/bodecloud/AgentDecompile/pull/171)): `ContextSubstrateToolProvider`, Tier-0 tools, tests, STRATEGY under VISION. Public docs (`README`, `TOOLS_LIST`, `.cursorrules`) updated to **72 / 68** advertised.
+
+**Follow-ups (not this slice):** NSIS unpacker strength, navigable PE `.rsrc` forests, deeper acquisition MCP bridging, freeze megamodule accretion — without growing the reconstruct funnel.
+
+**Wedge bar:** U1–U3 prove islands are MCP-addressable without funnel growth. Charter gravity shift (initialize preamble, AGENTS reconstruct salience, optional `acquire` MCP, package extract) is deferred and tracked — this slice is not VISION redesign closure.

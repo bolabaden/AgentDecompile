@@ -109,16 +109,33 @@ def _best_difference_count_from_results(attempt_results: list[Any]) -> int | Non
 def _default_permuter_runner(config: dict[str, Any], abort_event: threading.Event) -> dict[str, Any]:
     from agentdecompile_cli.mcp_utils.decomp_match import build_decomp_match_payload
 
+    # Cancellation can land before the pool starts this task, and permuter runs for minutes
+    # once started -- so check up front and hand the event down for the subprocess wait loop.
+    if abort_event.is_set():
+        return _aborted_result(None)
+
     result = build_decomp_match_payload(
         tool="permuter",
         permuter_dir=config["permuter_dir"],
         jobs=config.get("jobs"),
         timeout_ms=config.get("timeout_ms", 300_000),
+        abort_event=abort_event,
     )
     scan = result.get("scan") or {}
+    if scan.get("error") == "aborted":
+        return _aborted_result(result)
     matched = scan.get("exitCode") == 0 and "Found" in str(scan.get("stdout") or "")
     return {
         "matched": bool(matched),
         "differences": 0 if matched else 1,
         "raw": result,
+    }
+
+
+def _aborted_result(raw: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "matched": False,
+        "differences": 1,
+        "aborted": True,
+        "raw": raw,
     }
