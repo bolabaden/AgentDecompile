@@ -461,3 +461,16 @@ split_complex_comprehension = true
 split_penalty_after_opening_bracket = 50
 split_penalty_excess_character = 75 # Lower penalty for going over the column limit
 split_penalty_for_added_line_split = 100 # Discourage adding new line splits
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+skip_empty = true
+
+[tool.coverage.xml]
+output = "coverage.xml"

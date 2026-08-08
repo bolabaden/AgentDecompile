@@ -361,3 +361,9 @@ test_shared_project/
 
 # Compound Engineering machine-local config
 .compound-engineering/*.local.yaml
+
+# Coverage reports
+coverage.xml
+.coverage
+.coverage.*
+htmlcov/

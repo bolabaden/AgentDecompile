@@ -40,4 +40,31 @@ jobs:
         run: bash scripts/check-anonymization.sh
 
       - name: Run unit tests
-        run: uv run pytest -m unit -q --timeout=120 --tb=short
+        run: uv run pytest -m unit -q --timeout=120 --tb=short --cov=src --cov-report=xml:coverage.xml
+
+      - name: Upload coverage artifact
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report-python
+          path: coverage.xml
+
+  upload-coverage-python:
+    needs: unit
+    if: ${{ !cancelled() && needs.unit.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      code-quality: write
+
+    steps:
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-report-python
+
+      - uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage.xml
+          language: Python
+          label: code-coverage-agent
