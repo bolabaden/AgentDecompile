@@ -200,15 +200,30 @@ def run_steamless(
     timeout: int = 900,
     keepbind: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    """Run Steamless with cwd set to the CLI directory so plugins resolve."""
+    """Run Steamless with cwd set to the CLI directory so plugins resolve.
+
+    Before invoking Steamless, this function reads and preserves the Rich header
+    from *binary*.  Steamless is known to zero bytes 0x40-0xD0 of the output
+    (the region where the Rich header lives), silently destroying the compiler
+    identification data.  The preserved header is written to
+    ``<output>.rich_header.json`` so downstream stages can still identify the
+    toolchain even after unpacking.
+
+    A ``rich_header_warning`` key is included in that sidecar when the output's
+    Rich region is zeroed but the input's was not.
+    """
 
     cli = ensure_steamless_layout(cli)
     binary = binary.resolve()
+
+    # Capture Rich header before the destructive unpack step.
+    pre_rich = _read_rich_header_bytes(binary)
+
     args = ["mono", str(cli), "--quiet"]
     if keepbind:
         args.append("--keepbind")
     args.extend(["--dumppayload", "--dumpdrmp", str(binary)])
-    return subprocess.run(
+    result = subprocess.run(
         args,
         cwd=str(cli.parent),
         text=True,
@@ -216,6 +231,113 @@ def run_steamless(
         check=False,
         timeout=timeout,
     )
+
+    # Write sidecar with pre-unpack Rich header (and warning if it was zeroed).
+    output = steamless_output_path(binary)
+    _write_rich_header_sidecar(binary, output, pre_rich)
+
+    return result
+
+
+def _read_rich_header_bytes(binary: Path) -> dict | None:
+    """Return the Rich header from *binary* as a dict, or None if not present.
+
+    The dict contains:
+      - ``raw_hex``: hex of the raw (XOR-encoded) Rich region bytes
+      - ``xor_key``: the 32-bit XOR key (int)
+      - ``offset``: byte offset in the file where the DanS block starts
+      - ``entries``: decoded list of {comp_id, count}
+    """
+    import struct as _struct
+
+    try:
+        data = binary.read_bytes()
+    except OSError:
+        return None
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return None
+    try:
+        pe_offset = _struct.unpack_from("<I", data, 0x3C)[0]
+    except _struct.error:
+        return None
+    stub = data[0x40:pe_offset] if pe_offset > 0x40 else b""
+    rich_pos = stub.rfind(b"Rich")
+    if rich_pos == -1:
+        return None
+    rich_abs = 0x40 + rich_pos
+    if rich_abs + 8 > len(data):
+        return None
+    try:
+        xor_key = _struct.unpack_from("<I", data, rich_abs + 4)[0]
+    except _struct.error:
+        return None
+    dans_abs: int | None = None
+    dans_word = _struct.unpack_from("<I", b"DanS\x00", 0)[0]
+    for off in range(rich_abs - 4, 0x3C - 1, -4):
+        try:
+            candidate = _struct.unpack_from("<I", data, off)[0] ^ xor_key
+        except _struct.error:
+            break
+        if candidate == dans_word:
+            dans_abs = off
+            break
+    if dans_abs is None:
+        return None
+    raw = data[dans_abs : rich_abs + 8]
+    region_len = rich_abs - dans_abs  # bytes from DanS to Rich (exclusive)
+    entries = []
+    for i in range(4, region_len // 4, 2):
+        if i * 4 + 8 > region_len:
+            break
+        try:
+            w0, w1 = _struct.unpack_from("<II", raw, i * 4)
+        except _struct.error:
+            break
+        entries.append({"comp_id": w0 ^ xor_key, "count": w1 ^ xor_key})
+    return {"raw_hex": raw.hex(), "xor_key": xor_key, "offset": dans_abs, "entries": entries}
+
+
+def _rich_region_zeroed(data: bytes) -> bool:
+    """Return True when bytes 0x40-0xD0 of *data* are all zeros."""
+    if len(data) < 0xD0:
+        return False
+    return all(b == 0 for b in data[0x40:0xD0])
+
+
+def _write_rich_header_sidecar(
+    packed: Path,
+    unpacked: Path,
+    pre_rich: dict | None,
+) -> None:
+    """Write ``<unpacked>.rich_header.json`` with pre-unpack Rich header data.
+
+    If the unpacked output exists and its Rich region is zeroed while the
+    input had a Rich header, a warning is included in the sidecar so that
+    any reader knows to consult this file rather than the unpacked binary.
+    """
+    sidecar: dict = {
+        "source_binary": str(packed),
+        "unpacked_binary": str(unpacked),
+        "pre_unpack_rich_header": pre_rich,
+    }
+    if pre_rich is not None:
+        try:
+            out_data = unpacked.read_bytes()
+            if _rich_region_zeroed(out_data):
+                sidecar["rich_header_warning"] = (
+                    "Steamless zeroed bytes 0x40-0xD0 of the unpacked output. "
+                    "The Rich header (compiler identification data) from the "
+                    "packed input has been destroyed in the unpacked binary. "
+                    "Use 'pre_unpack_rich_header' in this sidecar for compiler "
+                    "identification instead of reading the unpacked file."
+                )
+        except OSError:
+            pass
+    sidecar_path = Path(str(unpacked) + ".rich_header.json")
+    try:
+        sidecar_path.write_text(json.dumps(sidecar, indent=2))
+    except OSError:
+        pass
 
 
 def steamless_output_path(binary: Path) -> Path:
