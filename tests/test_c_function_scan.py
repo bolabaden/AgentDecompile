@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 
+from agentdecompile_recovery.ast_grep_cli import resolve_ast_grep_binary
 from agentdecompile_recovery.c_function_scan import scan_c_functions
 
 pytestmark = pytest.mark.unit
 
-_HAS_AST_GREP = shutil.which("ast-grep") is not None or shutil.which("sg") is not None
+_HAS_AST_GREP = resolve_ast_grep_binary() is not None
 
 
 def test_returns_empty_list_when_binary_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

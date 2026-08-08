@@ -6,14 +6,20 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from .acquire import acquire_context
 from .acquisition_mcp import main as acquisition_mcp_main
 from .claim_report import build_claim_report, write_claim_report
 from .context_batch import main as context_batch_main
 from .context_export import ExportConfig, export_context
+
+# Module-level on purpose: tests monkeypatch `cli.project_input_error` to prove
+# run_acquire never validates a project that was not asked for. A function-local
+# import (frontdoor.py's pattern) would bypass the patch.
+from .ghidra_context import project_input_error
 from .package_sweep import sweep_recovered_source_package
-from .package_verify import verify_recovered_source_package
+from .package_verify import resolve_vc_root_option, verify_recovered_source_package
 from .pipeline import RecoveryConfig, RecoveryRunner
 from .source_cleanup import cleanup_recovered_source_package, propose_source_cleanup
 from .source_parity_profile_corpus import main as source_parity_profile_corpus_main
@@ -33,6 +39,57 @@ def default_work_dir(target_path: Path) -> Path:
     return Path("target/agentdecompile-recover") / identity.stable_id
 
 
+def add_unity_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register Unity reconstruction flags shared by `recover` and the front door.
+
+    Every one of these has a derived default (see `unity_probe`); they exist to
+    override a derivation that was wrong for a given host, not to make the user
+    supply facts the shipped player already encodes.
+    """
+
+    group = parser.add_argument_group("unity reconstruction")
+    group.add_argument(
+        "--unity-project-out",
+        type=Path,
+        help="Compose an openable Unity project at this directory. Enables the Unity stages when the target is a Unity game.",
+    )
+    group.add_argument("--unity-editor", type=Path, help="Unity Editor executable. Defaults to the best Unity Hub match for the game's own version.")
+    group.add_argument("--unity-editor-version", help="Editor version to prefer. Defaults to the version read from the shipped player.")
+    group.add_argument("--unity-max-memory-gb", type=float, help="Memory budget for asset export. Defaults to a fraction of host available RAM.")
+    group.add_argument(
+        "--unity-include-resources-assets",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Force inclusion/exclusion of resources.assets. Default derives from the memory budget.",
+    )
+    group.add_argument("--unity-repair-attempts", type=int, default=3, help="Maximum validate/repair iterations before reporting unresolved errors.")
+    group.add_argument("--unity-editor-timeout", type=int, default=3600, help="Timeout in seconds for each headless Editor invocation.")
+    group.add_argument("--unity-assetripper-cli", type=Path, help="AssetRipper binary. Defaults to env/repo-managed discovery.")
+    group.add_argument("--unity-ilspycmd", type=Path, help="ilspycmd binary. Defaults to env/PATH/dotnet-tools discovery.")
+    group.add_argument(
+        "--unity-install-mcp-bridge",
+        action="store_true",
+        help="Also install the MCP-for-Unity editor bridge into the composed project so agents can drive it interactively afterwards.",
+    )
+
+
+def unity_config_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    """Map parsed Unity flags onto RecoveryConfig fields."""
+
+    return {
+        "unity_project_out": getattr(args, "unity_project_out", None),
+        "unity_editor": getattr(args, "unity_editor", None),
+        "unity_editor_version": getattr(args, "unity_editor_version", None),
+        "unity_max_memory_gb": getattr(args, "unity_max_memory_gb", None),
+        "unity_include_resources_assets": getattr(args, "unity_include_resources_assets", None),
+        "unity_repair_attempts": int(getattr(args, "unity_repair_attempts", 3) or 3),
+        "unity_editor_timeout": int(getattr(args, "unity_editor_timeout", 3600) or 3600),
+        "unity_assetripper_cli": getattr(args, "unity_assetripper_cli", None),
+        "unity_ilspycmd": getattr(args, "unity_ilspycmd", None),
+        "unity_install_mcp_bridge": bool(getattr(args, "unity_install_mcp_bridge", False)),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentdecompile-recover", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     sub = parser.add_subparsers(dest="command")
@@ -50,6 +107,17 @@ def build_parser() -> argparse.ArgumentParser:
     acquire.add_argument("--out-dir", type=Path, required=True, help="Directory for acquisition receipts and bundles.")
     acquire.add_argument("--preferred-name")
     acquire.add_argument("--no-register", action="store_true", help="Do not write the fingerprint registry entry.")
+    # Help text matches agentdecompile-reconstruct's flags verbatim so the two
+    # entrypoints document the same thing.
+    acquire.add_argument(
+        "--project",
+        type=Path,
+        help="Existing Ghidra project (.gpr file or .rep directory) to open read-only via ghidra_db for curated names.",
+    )
+    acquire.add_argument(
+        "--project-program",
+        help="Program name/path within --project to open when the project holds more than one.",
+    )
 
     claim = sub.add_parser("claim-report", help="Emit an honest claim summary for a reconstruct/recover work directory.")
     claim.add_argument("work_dir", type=Path, help="Run directory containing verified/, advisory/, and/or reports.")
@@ -109,7 +177,8 @@ def build_parser() -> argparse.ArgumentParser:
     recover.add_argument("--work-dir", type=Path, help="Run/state directory. Defaults to target/agentdecompile-recover/<stable-target-id>.")
     recover.add_argument("--resume", action="store_true", help="Reuse complete stage receipts with matching config.")
     recover.add_argument("--force", action="store_true", help="Rerun selected stages even when receipts exist.")
-    recover.add_argument("--stop-after", choices=["discover", "inspect-capabilities", "prepare-analysis-image", "export-context", "inventory-binary", "discover-functions", "analyze-functions", "enrich-decompile", "generate-source-candidates", "synthesize-source-tasks", "plan-strategy", "byte-authority", "legacy-adapter", "snapshot-existing-recovery", "report"])
+    recover.add_argument("--stop-after", choices=["discover", "inspect-capabilities", "prepare-analysis-image", "export-context", "inventory-binary", "discover-functions", "analyze-functions", "enrich-decompile", "generate-source-candidates", "synthesize-source-tasks", "plan-strategy", "byte-authority", "legacy-adapter", "snapshot-existing-recovery", "unity-probe", "unity-plan", "unity-export-assets", "unity-decompile-managed", "unity-compose-project", "unity-editor-validate", "unity-repair", "report"])
+    add_unity_arguments(recover)
     recover.add_argument("--skip-enrichment", action="store_true", help="Skip PyGhidra enrich-decompile before source generation.")
     recover.add_argument("--json", action="store_true", help="Emit progress as JSON lines.")
     recover.add_argument("--progress-width", type=int, default=24)
@@ -140,7 +209,11 @@ def build_parser() -> argparse.ArgumentParser:
     recover.add_argument("--source-synthesis-upgrade-packaged-source", action="store_true", help="When verifying packaged source tasks, try regenerated semantic candidates before falling back to packaged source.")
     recover.add_argument("--source-synthesis-strategies", help="Comma-separated strategy/tag/rule filter for automatic source synthesis.")
     recover.add_argument("--source-synthesis-source-quality", action="append", default=[], help="Only verify generated candidates with this source quality during automatic source synthesis. Repeat or comma-separate.")
-    recover.add_argument("--source-synthesis-vc-root", type=Path, help="MSVC/VC Toolkit root used by source synthesis.")
+    recover.add_argument(
+        "--source-synthesis-vc-root",
+        type=Path,
+        help="MSVC/VC Toolkit root used by source synthesis. Takes a path or a profile name: vc71, vc80.",
+    )
     recover.add_argument("--source-synthesis-wine", default="wine", help="Wine executable used by MSVC source synthesis.")
     recover.add_argument("--source-synthesis-wineprefix", type=Path, help="Wine prefix used by MSVC source synthesis.")
     recover.add_argument("--steamless-cli", type=Path, help="Steamless CLI used to prepare PE analysis images when applicable.")
@@ -347,6 +420,7 @@ def build_parser() -> argparse.ArgumentParser:
     decomp_atlas.add_argument("--index-root", type=Path, default=Path("target/source-parity-index"), help="Feature-index root directory.")
     decomp_atlas.add_argument("--top-k", type=int, default=5, help="Maximum results to return.")
     decomp_atlas.add_argument("--write-prompt", action="store_true", help="Update <prompt>/prompt.md with a Similar Examples section.")
+    decomp_atlas.add_argument("--min-match-percent", type=float, help="With --semantic-index-root, keep only functions whose decompilation reached at least this objdiff similarity.")
     decomp_atlas.add_argument(
         "--semantic-index-root",
         type=Path,
@@ -361,14 +435,18 @@ def build_parser() -> argparse.ArgumentParser:
         "index-codebase",
         help="Scan a decomp project's asm/C source tree into a decomp-function-index.json corpus.",
     )
-    index_codebase.add_argument("--project-root", type=Path, required=True, help="Project root directory.")
-    index_codebase.add_argument("--map-file", type=Path, required=True, help="GNU ld map file for object-path resolution.")
-    index_codebase.add_argument("--platform", choices=["arm", "mips"], required=True, help="Target ISA family.")
+    index_codebase.add_argument("--project-root", type=Path, required=True, help="Project root directory. With --work-dir this is only where the index file is written.")
+    index_codebase.add_argument("--map-file", type=Path, help="GNU ld map file for object-path resolution. Decomp-project mode only.")
+    index_codebase.add_argument("--platform", choices=["arm", "mips", "x86", "x86_64"], required=True, help="Target ISA family.")
+    index_codebase.add_argument("--work-dir", type=Path, help="Index a source-parity work dir's synthesis cases instead of a decomp project source tree. Reads objdiff outcomes from each case, so indexed functions carry a match percentage.")
+    index_codebase.add_argument("--min-match-percent", type=float, help="With --work-dir, keep only cases whose best profile scored at least this objdiff similarity.")
+    index_codebase.add_argument("--include-byte-emission", action="store_true", help="With --work-dir, keep MASM byte-emission cases. They always score 100%% because they copy the target bytes, so they are excluded by default.")
     index_codebase.add_argument("--matching-asm-dir", action="append", default=[], dest="matching_asm_dirs", help="Directory (relative to project root) of per-function matched .s files. Repeatable.")
     index_codebase.add_argument("--non-matching-asm-dir", action="append", default=[], dest="non_matching_asm_dirs", help="Directory (relative to project root) of unmatched .s files. Repeatable.")
     index_codebase.add_argument("--c-source-dir", action="append", default=[], dest="c_source_dirs", help="Directory (relative to project root) to scan for C function definitions via ast-grep. Repeatable.")
     index_codebase.add_argument("--exclude", action="append", default=[], dest="exclude_from_scan", help="Directory (relative to project root) to exclude from C-function scanning. Repeatable.")
     index_codebase.add_argument("--skip-embeddings", action="store_true", help="Skip embedding generation for new/changed functions.")
+    index_codebase.add_argument("--embedder", choices=["default", "structural"], default="default", help="'default' uses the chromadb model from agentdecompile[semantic]. 'structural' hashes normalized instruction shingles, needs no extra dependency, and is deterministic.")
 
     atlas_serve = sub.add_parser(
         "atlas-serve",
@@ -464,7 +542,7 @@ def run_recover(args: argparse.Namespace) -> int:
                 }
             )
         ),
-        source_synthesis_vc_root=args.source_synthesis_vc_root,
+        source_synthesis_vc_root=resolve_vc_root_option(args.source_synthesis_vc_root),
         source_synthesis_wine=args.source_synthesis_wine,
         source_synthesis_wineprefix=args.source_synthesis_wineprefix,
         steamless_cli=args.steamless_cli,
@@ -477,6 +555,7 @@ def run_recover(args: argparse.Namespace) -> int:
         context_extract_containers=not args.no_context_extract_containers,
         context_include_low_signal_members=args.context_include_low_signal_members,
         skip_enrichment=bool(getattr(args, "skip_enrichment", False)),
+        **unity_config_kwargs(args),
     )
     return RecoveryRunner(config).run()
 
@@ -821,12 +900,25 @@ def parse_clang_profiles(values: list[str]) -> list[list[str]]:
 
 def run_acquire(args: argparse.Namespace) -> int:
     context_paths = list(args.context or [])
+
+    # Pre-flight only when --project was actually given: a bad path must fail as
+    # one stderr line, not a traceback out of the Ghidra layer. The project is
+    # opened read-only downstream; nothing here writes to it.
+    project = getattr(args, "project", None)
+    if project is not None:
+        problem = project_input_error(project)
+        if problem:
+            print(f"agentdecompile-recovery: --project error: {problem}", file=sys.stderr)
+            return 2
+
     receipt = acquire_context(
         target_input=args.input,
         context_paths=context_paths,
         out_dir=args.out_dir,
         preferred_name=args.preferred_name,
         repo_root=Path.cwd(),
+        project=project,
+        project_program=getattr(args, "project_program", None),
         register=not args.no_register,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))
@@ -923,6 +1015,7 @@ def run_decomp_atlas_command(args: argparse.Namespace) -> int:
         write_prompt=args.write_prompt,
         corpus=corpus,
         embedder=embedder,
+        min_match_percent=args.min_match_percent,
     )
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0 if receipt.get("status") in {"complete", "no-local-examples"} else 1
@@ -932,8 +1025,19 @@ def run_index_codebase_command(args: argparse.Namespace) -> int:
     from dataclasses import asdict
 
     from .c_function_scan import scan_c_functions
-    from .decomp_indexer import IndexCodebaseConfig, index_codebase, load_existing_index, write_index
+    from .decomp_indexer import (
+        IndexCodebaseConfig,
+        ParityCaseIndexConfig,
+        index_codebase,
+        index_parity_work_dir,
+        load_existing_index,
+        write_index,
+    )
     from .semantic_embedder import SemanticEmbedder
+
+    if args.work_dir is None and args.map_file is None:
+        print(json.dumps({"schema": "agentdecompile.index-codebase.v1", "status": "error", "reason": "--map-file is required unless --work-dir is given"}, indent=2, sort_keys=True))
+        return 1
 
     project_root = args.project_root
     existing_dump, existing_content_hashes = load_existing_index(project_root)
@@ -941,33 +1045,55 @@ def run_index_codebase_command(args: argparse.Namespace) -> int:
     embedder = None
     if not args.skip_embeddings:
         try:
-            embedder = SemanticEmbedder()
+            if args.embedder == "structural":
+                from .asm_embedding import structural_embedding_backend
+
+                embedder = SemanticEmbedder(structural_embedding_backend(args.platform))
+            else:
+                embedder = SemanticEmbedder()
         except ImportError as exc:
             print(json.dumps({"schema": "agentdecompile.index-codebase.v1", "status": "error", "reason": str(exc)}, indent=2, sort_keys=True))
             return 1
 
-    config = IndexCodebaseConfig(
-        project_root=project_root,
-        map_file_path=args.map_file,
-        platform=args.platform,
-        non_matching_asm_folders=args.non_matching_asm_dirs,
-        matching_asm_folders=args.matching_asm_dirs,
-        exclude_from_scan=args.exclude_from_scan,
-        c_functions=scan_c_functions(project_root, args.c_source_dirs),
-    )
-
     def on_progress(progress) -> None:
         print(f"[{progress.phase}] {progress.message}", file=sys.stderr)
 
-    result = index_codebase(
-        config,
-        existing_dump=existing_dump,
-        existing_content_hashes=existing_content_hashes,
-        embedder=embedder,
-        on_progress=on_progress,
-    )
+    if args.work_dir is not None:
+        try:
+            result = index_parity_work_dir(
+                ParityCaseIndexConfig(
+                    work_dir=args.work_dir,
+                    platform=args.platform,
+                    min_match_percent=args.min_match_percent,
+                    exclude_byte_emission_rules=not args.include_byte_emission,
+                ),
+                existing_dump=existing_dump,
+                existing_content_hashes=existing_content_hashes,
+                embedder=embedder,
+                on_progress=on_progress,
+            )
+        except ValueError as exc:
+            print(json.dumps({"schema": "agentdecompile.index-codebase.v1", "status": "error", "reason": str(exc)}, indent=2, sort_keys=True))
+            return 1
+    else:
+        result = index_codebase(
+            IndexCodebaseConfig(
+                project_root=project_root,
+                map_file_path=args.map_file,
+                platform=args.platform,
+                non_matching_asm_folders=args.non_matching_asm_dirs,
+                matching_asm_folders=args.matching_asm_dirs,
+                exclude_from_scan=args.exclude_from_scan,
+                c_functions=scan_c_functions(project_root, args.c_source_dirs),
+            ),
+            existing_dump=existing_dump,
+            existing_content_hashes=existing_content_hashes,
+            embedder=embedder,
+            on_progress=on_progress,
+        )
     write_index(project_root, result.dump, result.content_hashes)
 
+    scored = [fn for fn in result.dump.functions if fn.match_percent is not None]
     receipt = {
         "schema": "agentdecompile.index-codebase.v1",
         "status": "complete",
@@ -975,6 +1101,8 @@ def run_index_codebase_command(args: argparse.Namespace) -> int:
         "stats": asdict(result.stats),
         "functionCount": len(result.dump.functions),
         "vectorCount": len(result.dump.vectors),
+        "withMatchOutcome": len(scored),
+        "atObjdiffZero": sum(1 for fn in scored if fn.match_percent is not None and fn.match_percent >= 100.0),
     }
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0

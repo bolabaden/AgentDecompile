@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from agentdecompile_recovery.artifact_layout import publish_verified_artifact
 from agentdecompile_recovery.claim_report import build_claim_report
 from agentdecompile_recovery.proof_ladder import (
     RUNGS,
@@ -98,6 +99,107 @@ def test_proof_ladder_empty_and_bare_verified(tmp_path: Path) -> None:
     ladder = build_proof_ladder(bare)
     assert ladder["numerator"] == 0
     assert ladder["rung"] == "below-1"
+
+
+def test_published_artifact_counts_once(tmp_path: Path) -> None:
+    """One published artifact is one function, even though publish writes two JSON files."""
+
+    work = tmp_path / "once"
+    work.mkdir()
+    _write_candidates(work, 100)
+    src = tmp_path / "fn.c"
+    src.write_text("int fn(void){return 0;}\n", encoding="utf-8")
+
+    publish_verified_artifact(
+        work,
+        stem="fn_00401000",
+        source=src,
+        metadata={"name": "fn", "entry": "0x401000", "differences": 0},
+    )
+
+    verified = work / "verified"
+    assert (verified / "fn_00401000.json").is_file()
+    assert (verified / "fn_00401000.objdiff-verified.json").is_file()
+    assert build_proof_ladder(work)["numerator"] == 1
+
+
+def test_non_allowlisted_proof_tier_is_not_counted(tmp_path: Path) -> None:
+    """A tier outside _OBJDIFF_PROOF_TIERS never reaches the numerator, receipt or not."""
+
+    work = tmp_path / "weak-tier"
+    work.mkdir()
+    _write_candidates(work, 100)
+    verified = work / "verified"
+    verified.mkdir()
+    (verified / "fn_0.c").write_text("int x(void){return 0;}\n", encoding="utf-8")
+    row = {
+        "name": "fn_0",
+        "entry": "0x401000",
+        "status": "code-slice-matched",
+        "differences": 0,
+        "proofTier": "synthetic-target-coff-objdiff",
+    }
+    atomic_write_json(verified / "fn_0.json", row)
+    atomic_write_json(
+        verified / "fn_0.objdiff-verified.json",
+        {**row, "count": 1, "functions": [{"name": "fn_0", "entry": "0x401000"}]},
+    )
+
+    assert build_proof_ladder(work)["numerator"] == 0
+
+
+@pytest.mark.parametrize(
+    "tier",
+    ["synthetic-target-object-objdiff", "synthetic-target-coff-objdiff"],
+)
+@pytest.mark.parametrize("status", ["source-parity-accepted", "matched", "code-slice-matched"])
+def test_synthetic_target_tiers_never_count_as_full_object(
+    tmp_path: Path, tier: str, status: str
+) -> None:
+    """Neither synthetic lane counts: a self-assembled target object is not a target object.
+
+    ``synthetic-target-object-objdiff`` (clang/ELF) and ``synthetic-target-coff-objdiff``
+    (MSVC and clang-cl PE) build the target side from target slice bytes and record the
+    same producer boundary -- code-slice evidence, not full target-object source parity.
+    The ELF tier used to be allowlisted and the PE tier was not, so identical evidence
+    reported 1 in one lane and 0 in the other.
+    """
+
+    work = tmp_path / f"{tier}-{status}"
+    work.mkdir()
+    _write_candidates(work, 100)
+    verified = work / "verified"
+    verified.mkdir()
+    row = {
+        "name": "fn_0",
+        "entry": "0x401000",
+        "status": status,
+        "differences": 0,
+        "proofTier": tier,
+    }
+    atomic_write_json(verified / "fn_0.json", row)
+    atomic_write_json(
+        verified / "fn_0.objdiff-verified.json",
+        {**row, "count": 1, "functions": [{"name": "fn_0", "entry": "0x401000"}]},
+    )
+
+    assert build_proof_ladder(work)["numerator"] == 0
+
+
+def test_receipt_filename_alone_is_not_proof(tmp_path: Path) -> None:
+    """"objdiff" in a file name is a naming convention, not evidence of a tier."""
+
+    work = tmp_path / "filename"
+    work.mkdir()
+    _write_candidates(work, 100)
+    verified = work / "verified"
+    verified.mkdir()
+    atomic_write_json(
+        verified / "batch.objdiff-verified.json",
+        {"count": 5, "functions": [{"name": f"fn_{i}", "entry": f"0x40100{i}"} for i in range(5)]},
+    )
+
+    assert build_proof_ladder(work)["numerator"] == 0
 
 
 def test_proof_ladder_skips_corrupt_candidate_file(tmp_path: Path) -> None:

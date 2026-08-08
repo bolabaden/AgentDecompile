@@ -538,6 +538,8 @@ class PluginPipeline:
             # Memory is an optimization; a prompt without exemplars still works.
             exemplars = []
 
+        codebase_exemplars = self._retrieve_codebase_exemplars(work_dir, function_name)
+
         pack = build_context_pack(
             function_name=function_name,
             entry=str(row.get("entry") or ""),
@@ -547,8 +549,51 @@ class PluginPipeline:
             mismatch_histogram=decision.get("mismatchHistogram"),
             compiler_profile=compiler_profile,
             exemplars=exemplars,
+            codebase_exemplars=codebase_exemplars,
         )
         self._fulfill_rewrite_in_process(work_dir, request_id, pack)
+
+    @staticmethod
+    def _retrieve_codebase_exemplars(work_dir: Path, function_name: str) -> list[dict[str, Any]]:
+        """Load structural neighbours from decomp-function-index.json when present.
+
+        Failures are swallowed: retrieval is advisory and must never block a
+        rewrite that would otherwise run without exemplars.
+        """
+        if not function_name:
+            return []
+        try:
+            from .codebase_context import get_func_context
+            from .decomp_function_corpus import DecompFunctionCorpus
+            from .decomp_indexer import load_existing_index
+
+            dump, _hashes = load_existing_index(work_dir)
+            if dump is None:
+                return []
+            corpus = DecompFunctionCorpus.from_dump(dump)
+            # Prefer id == name (indexer uses bare function names as ids).
+            function_id = function_name
+            if corpus.get_function_by_id(function_id) is None:
+                return []
+            context = get_func_context(
+                corpus,
+                function_id,
+                exemplar_limit=3,
+                min_match_percent=80.0,
+            )
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return []
+        return [
+            {
+                "name": sample.name,
+                "cCode": sample.c_code,
+                "asmCode": sample.asm_code,
+                "matchPercent": sample.match_percent,
+                "callsTarget": sample.calls_target,
+            }
+            for sample in context.sampling
+            if sample.c_code
+        ]
 
     def run_post_match(self, context: dict[str, Any]) -> AttemptResult | None:
         if not self.post_match_plugins:

@@ -23,7 +23,8 @@ from .acquire import acquire_context
 from .autonomy_budget import budget_from_args
 from .claim_report import write_claim_report
 from .critical_path import write_critical_path
-from .cli import main as legacy_main
+from .cli import add_unity_arguments, main as legacy_main, unity_config_kwargs
+from .package_verify import resolve_vc_root_option
 from .pipeline import RecoveryConfig, RecoveryRunner, resolve_source_synthesis_mode
 from .targets import identify_binary
 from .tools import inspect_capabilities, resolve_script_asset
@@ -140,6 +141,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit acquisition-bundle directory (skips rediscovery from target fingerprint).",
     )
     parser.add_argument(
+        "--project",
+        type=Path,
+        help="Existing Ghidra project (.gpr file or .rep directory) to open read-only via ghidra_db for curated names.",
+    )
+    parser.add_argument(
+        "--project-program",
+        help="Program name/path within --project to open when the project holds more than one.",
+    )
+    parser.add_argument(
         "--autonomous",
         action="store_true",
         help="Enable bounded vacuum/repair autonomy after the core recovery stages (advanced).",
@@ -213,10 +223,18 @@ def build_parser() -> argparse.ArgumentParser:
             "byte-authority",
             "legacy-adapter",
             "snapshot-existing-recovery",
+            "unity-probe",
+            "unity-plan",
+            "unity-export-assets",
+            "unity-decompile-managed",
+            "unity-compose-project",
+            "unity-editor-validate",
+            "unity-repair",
             "report",
         ],
         help="Stop after a named stage for bounded runs.",
     )
+    add_unity_arguments(parser)
     parser.add_argument(
         "--skip-enrichment",
         action="store_true",
@@ -256,7 +274,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Only verify generated candidates with this source quality. Repeat or comma-separate.",
     )
-    parser.add_argument("--source-synthesis-vc-root", type=Path, help="MSVC/VC Toolkit root used by source synthesis.")
+    parser.add_argument(
+        "--source-synthesis-vc-root",
+        type=Path,
+        help="MSVC/VC Toolkit root used by source synthesis. Takes a path or a profile name: vc71, vc80.",
+    )
     parser.add_argument(
         "--vc-root",
         type=Path,
@@ -375,6 +397,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
         args.resume = False
     if getattr(args, "vc_root", None) and not getattr(args, "source_synthesis_vc_root", None):
         args.source_synthesis_vc_root = args.vc_root
+    args.source_synthesis_vc_root = resolve_vc_root_option(getattr(args, "source_synthesis_vc_root", None))
     work_dir = args.work_dir or default_work_dir(args.input, args.preferred_name)
     work_dir.mkdir(parents=True, exist_ok=True)
     if getattr(args, "autonomous", False):
@@ -398,8 +421,17 @@ def run_one_shot(args: argparse.Namespace) -> int:
     context_paths = merge_context_paths(getattr(args, "context_positional", None), getattr(args, "context", None))
     args.context = context_paths
 
+    project = getattr(args, "project", None)
+    if project is not None:
+        from .ghidra_context import project_input_error
+
+        problem = project_input_error(project)
+        if problem:
+            print(f"agentdecompile-reconstruct: --project error: {problem}", file=sys.stderr)
+            return 2
+
     acquisition_receipt = None
-    if context_paths:
+    if context_paths or project is not None:
         from .context_pack import materialize_context_seeds, write_placement_summary
 
         acquisition_receipt = acquire_context(
@@ -408,6 +440,8 @@ def run_one_shot(args: argparse.Namespace) -> int:
             out_dir=work_dir / "acquisition",
             preferred_name=args.preferred_name,
             repo_root=repo_root(),
+            project=project,
+            project_program=getattr(args, "project_program", None),
         )
         receipt_path = work_dir / "acquisition" / "acquire.json"
         receipt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -451,6 +485,24 @@ def run_one_shot(args: argparse.Namespace) -> int:
                     },
                     indent=2,
                 )
+            )
+
+    if project is not None:
+        from .curated_project import extract_curated_project_data
+
+        curated_receipt = extract_curated_project_data(
+            project=project,
+            work_dir=work_dir,
+            project_program=getattr(args, "project_program", None),
+        )
+        (work_dir / "curated-project-extract.json").write_text(
+            json.dumps(curated_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        if curated_receipt.get("status") != "complete":
+            print(
+                f"agentdecompile-reconstruct: warning: curated project extraction failed "
+                f"(continuing without curated names/hints): {curated_receipt.get('reason')}",
+                file=sys.stderr,
             )
 
     config = RecoveryConfig(
@@ -497,6 +549,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
         context_extract_containers=not args.no_context_extract_containers,
         context_include_low_signal_members=args.context_include_low_signal_members,
         skip_enrichment=False,
+        **unity_config_kwargs(args),
     )
     rc = RecoveryRunner(config).run()
     write_critical_path(work_dir)
@@ -740,6 +793,10 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
             module_hints = dict(payload.get("entries") or {})
         except (OSError, json.JSONDecodeError, TypeError):
             module_hints = {}
+    from .curated_project import load_curated_hints, load_curated_names_by_entry_hex
+
+    curated_hints = load_curated_hints(work_dir)
+    curated_names = load_curated_names_by_entry_hex(work_dir)
     manifest = dump_source_tree(
         out_dir=out_dir,
         summaries=unique,
@@ -750,7 +807,19 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         layers=dump_layers,
         profile=profile_slug,
         module_hints=module_hints,
+        curated_hints=curated_hints,
+        curated_names=curated_names,
     )
+
+    from .readability_rewrite import rewrite_advisory_tree, rewrite_verified_tree
+
+    readable_receipt = rewrite_verified_tree(out_dir / "verified", out_dir / "readable")
+    # Separate tier, separate directory, separate claimBoundary. The advisory
+    # tier is where ~all of the output actually lives, and it is not parity.
+    readable_advisory_receipt = rewrite_advisory_tree(
+        out_dir / "advisory" / "ghidra", out_dir / "readable-advisory"
+    )
+
     receipt = {
         "schema": "agentdecompile.dump-source.v1",
         "status": manifest.get("status"),
@@ -764,6 +833,10 @@ def run_dump_source(args: argparse.Namespace, work_dir: Path) -> int:
         "matchedCount": manifest.get("matchedCount"),
         "codeSliceMatchedCount": manifest.get("codeSliceMatchedCount"),
         "ghidraCount": manifest.get("ghidraCount"),
+        "curatedHintsApplied": len(curated_hints) if curated_hints else 0,
+        "curatedNamesAvailable": len(curated_names) if curated_names else 0,
+        "readableRewrite": readable_receipt,
+        "readableAdvisoryRewrite": readable_advisory_receipt,
         "claimBoundary": manifest.get("claimBoundary"),
     }
     (work_dir / "dump-source.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")

@@ -34,6 +34,7 @@ from .decomp_match import DecompMatchToolProvider
 from .prompts import PromptToolProvider
 from .static_analysis import StaticAnalysisToolProvider
 from .recovery import RecoveryToolProvider
+from .context_substrate import ContextSubstrateToolProvider
 
 __all__ = [
     "BookmarkToolProvider",
@@ -42,6 +43,7 @@ __all__ = [
     "CommentToolProvider",
     "ConflictResolutionToolProvider",
     "ConstantSearchToolProvider",
+    "ContextSubstrateToolProvider",
     "CrossReferencesToolProvider",
     "DataFlowToolProvider",
     "DataToolProvider",

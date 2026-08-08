@@ -17,15 +17,18 @@ from typing import Any
 
 from .plugin_pipeline import PluginResult, now_ms
 
+_DEFAULT_TIMEOUT_SECONDS = 300
+
 
 class GetContextPlugin:
     id = "get-context"
     name = "Get Context"
     description = "Executes get_context_script to generate context content"
 
-    def __init__(self, get_context_script: str, project_root: Path) -> None:
+    def __init__(self, get_context_script: str, project_root: Path, timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS) -> None:
         self._get_context_script = get_context_script
         self._project_root = project_root
+        self._timeout_seconds = timeout_seconds
         self._tmp_dir: Path | None = None
 
     def execute(self, context: dict[str, Any]) -> tuple[PluginResult, dict[str, Any]]:
@@ -59,13 +62,27 @@ class GetContextPlugin:
         script_path.write_text("set -e\n" + rendered_script, encoding="utf-8")
 
         bash = shutil.which("bash") or "bash"
-        result = subprocess.run(
-            [bash, str(script_path)],
-            cwd=str(self._project_root),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                [bash, str(script_path)],
+                cwd=str(self._project_root),
+                capture_output=True,
+                text=True,
+                timeout=self._timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self.cleanup()
+            return (
+                PluginResult(
+                    self.id,
+                    self.name,
+                    "failure",
+                    now_ms() - start,
+                    error=f"get_context_script timed out after {self._timeout_seconds}s",
+                ),
+                context,
+            )
         if result.returncode != 0:
             error_message = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
             self.cleanup()

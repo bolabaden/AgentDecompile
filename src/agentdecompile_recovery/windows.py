@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from .curated_project import load_curated_hints
 from .package_sweep import sweep_recovered_source_package
 from .package_verify import resolve_msvc_root, verify_recovered_source_package
 from .pipeline import RecoveryConfig, RecoveryRunner
@@ -227,7 +228,11 @@ def build_and_verify_cleaned_source_package(
         }
     cleaned_dir = base_dir / "cleaned-source"
     try:
-        cleaned = cleanup_recovered_source_package(package_dir=package_dir, out_dir=cleaned_dir)
+        cleaned = cleanup_recovered_source_package(
+            package_dir=package_dir,
+            out_dir=cleaned_dir,
+            curated_hints=load_curated_hints(base_dir),
+        )
         verification = verify_recovered_source_package(
             cleaned_dir,
             out_dir=cleaned_dir / "verification-msvc",

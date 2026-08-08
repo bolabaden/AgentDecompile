@@ -377,6 +377,8 @@ TIER01_RUN_TOOLS = (
     "reconstruct",
     "status",
     "claim-report",
+    "export-context",
+    "acquisition-query",
 )
 
 

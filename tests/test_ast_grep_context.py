@@ -8,9 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from agentdecompile_recovery.ast_grep_cli import resolve_ast_grep_binary
 from agentdecompile_recovery.ast_grep_context import find_codebase_context
 
 pytestmark = pytest.mark.unit
+
+_HAS_AST_GREP = resolve_ast_grep_binary() is not None
 
 
 def _sg_json_item(text: str) -> dict:
@@ -92,7 +95,10 @@ def test_missing_binary_never_invokes_command_runner(monkeypatch: pytest.MonkeyP
 
 
 def test_finds_target_and_called_function_declarations(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}" if name == "ast-grep" else None)
+    monkeypatch.setattr(
+        "agentdecompile_recovery.ast_grep_context._resolve_binary",
+        lambda: "/usr/bin/ast-grep",
+    )
 
     target_decl = "int target_func(Foo *f, u32 val);"
     helper_decl = "int helper_func(Foo *f, u32 val);"
@@ -118,7 +124,10 @@ def test_finds_target_and_called_function_declarations(monkeypatch: pytest.Monke
 
 
 def test_ignores_primitive_typedef_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}" if name == "ast-grep" else None)
+    monkeypatch.setattr(
+        "agentdecompile_recovery.ast_grep_context._resolve_binary",
+        lambda: "/usr/bin/ast-grep",
+    )
 
     target_decl = "int target_func(u32 val);"
 
@@ -146,7 +155,10 @@ def test_ignores_primitive_typedef_names(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_no_declarations_found_yields_empty_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}" if name == "ast-grep" else None)
+    monkeypatch.setattr(
+        "agentdecompile_recovery.ast_grep_context._resolve_binary",
+        lambda: "/usr/bin/ast-grep",
+    )
 
     def runner(command: list[str], *, timeout_ms: int, input_text: str | None = None) -> dict:
         return {"command": command, "exitCode": 0, "stdout": "[]", "stderr": "", "available": True}
@@ -159,7 +171,10 @@ def test_no_declarations_found_yields_empty_result(monkeypatch: pytest.MonkeyPat
 
 
 def test_non_json_stdout_is_treated_as_no_matches(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}" if name == "ast-grep" else None)
+    monkeypatch.setattr(
+        "agentdecompile_recovery.ast_grep_context._resolve_binary",
+        lambda: "/usr/bin/ast-grep",
+    )
 
     def runner(command: list[str], *, timeout_ms: int, input_text: str | None = None) -> dict:
         return {"command": command, "exitCode": 1, "stdout": "not json", "stderr": "boom", "available": True}
@@ -171,7 +186,7 @@ def test_non_json_stdout_is_treated_as_no_matches(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.skipif(
-    shutil.which("ast-grep") is None and shutil.which("sg") is None,
+    not _HAS_AST_GREP,
     reason="ast-grep CLI not installed in this environment",
 )
 def test_real_ast_grep_cli_finds_declarations_and_type_defs(tmp_path: Path) -> None:

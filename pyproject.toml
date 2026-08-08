@@ -49,7 +49,9 @@ dependencies = [
     "ghidrecomp>=0.5.9; python_version >= '3.10'",
     "httpx-sse>=0.4.3",
     "httpx>=0.28.1,<1.0",
-    "mcp",
+    # MCP 2.0 removed low-level Server.list_tools/call_tool decorators (on_* ctor kwargs).
+    # Keep 1.x until server.py / bridge.py / stdio_bridge.py are migrated.
+    "mcp>=1.26.0,<2",
     "packaging>=26.1",
     "pip>=26.1.2",
     "psutil>=7.2.2",

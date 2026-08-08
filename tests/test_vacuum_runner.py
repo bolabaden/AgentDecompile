@@ -144,6 +144,93 @@ def test_run_vacuum_prompt_uses_plugin_pipeline(monkeypatch: pytest.MonkeyPatch,
     assert any(path.name.endswith(".c") for path in (work / "verified").iterdir())
 
 
+def _vacuum_pipeline_stub(src: Path, rows: list[dict[str, Any]]) -> Any:
+    def fake_pipeline(config: Any) -> dict[str, Any]:
+        out = Path(config.out_dir)
+        matches = out / "plugin-code-slice-matches.jsonl"
+        matches.parent.mkdir(parents=True, exist_ok=True)
+        matches.write_text(
+            "".join(json.dumps({**row, "source": str(src)}) + "\n" for row in rows),
+            encoding="utf-8",
+        )
+        return {
+            "status": "complete",
+            "successfulFunctions": 1,
+            "failedFunctions": 0,
+            "inspectedFunctions": 1,
+            "codeSliceMatchesPath": str(matches),
+        }
+
+    return fake_pipeline
+
+
+def _seed_vacuum_work_dir(tmp_path: Path) -> tuple[Path, Path]:
+    work = tmp_path / "run"
+    gen = work / "source-generation"
+    gen.mkdir(parents=True)
+    slice_path = gen / "slice.bin"
+    slice_path.write_bytes(b"\x90\x90\xc3\x00")
+    src = gen / "candidate.c"
+    src.write_text("int alpha(void){return 0;}\n", encoding="utf-8")
+    task = _task("alpha")
+    task["source"] = str(src)
+    task["targetSlice"]["bytesPath"] = str(slice_path)
+    (gen / "tasks.jsonl").write_text(json.dumps(task) + "\n", encoding="utf-8")
+    return work, src
+
+
+def test_run_vacuum_prompt_does_not_publish_rows_without_objdiff_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A non-accept row must not reach verified/ just because the pipeline reported success."""
+
+    work, src = _seed_vacuum_work_dir(tmp_path)
+    monkeypatch.setattr(
+        "agentdecompile_recovery.vacuum_runner.run_source_plugin_pipeline",
+        _vacuum_pipeline_stub(
+            src,
+            [{"name": "alpha", "entry": "0x401000", "differences": 3, "status": "mismatched"}],
+        ),
+    )
+
+    run_vacuum_prompt(work_dir=work, name="alpha", max_attempts=1)
+
+    assert not (work / "verified").exists()
+
+
+def test_run_vacuum_prompt_routes_code_slice_row_to_code_slice_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    work, src = _seed_vacuum_work_dir(tmp_path)
+    boundary = "this is code-slice evidence, not full target-object source parity"
+    monkeypatch.setattr(
+        "agentdecompile_recovery.vacuum_runner.run_source_plugin_pipeline",
+        _vacuum_pipeline_stub(
+            src,
+            [
+                {
+                    "name": "alpha",
+                    "entry": "0x401000",
+                    "differences": 0,
+                    "status": "code-slice-matched",
+                    "verificationTier": "synthetic-target-coff-objdiff",
+                    "claimBoundary": boundary,
+                }
+            ],
+        ),
+    )
+
+    run_vacuum_prompt(work_dir=work, name="alpha", max_attempts=1)
+
+    slice_dir = work / "verified" / "code-slice"
+    assert not list((work / "verified").glob("alpha_*"))
+    metadata = json.loads((slice_dir / "alpha_401000.json").read_text(encoding="utf-8"))
+    assert metadata["proofTier"] == "synthetic-target-coff-objdiff"
+    assert boundary in metadata["claimBoundary"]
+
+
 def test_reconstruct_vacuum_runner_command_includes_vc_root_and_wineprefix(tmp_path: Path) -> None:
     cmd = reconstruct_vacuum_runner_command(
         tmp_path,

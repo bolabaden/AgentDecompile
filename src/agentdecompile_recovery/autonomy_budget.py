@@ -113,11 +113,19 @@ def reconstruct_vacuum_runner_command(
     max_attempts: int = 3,
     vc_root: Path | None = None,
     wineprefix: Path | None = None,
+    source_shape_search: bool = False,
 ) -> str:
     """Shell command template for vacuum.sh --runner-command placeholders.
 
     Placeholders stay quoted so vacuum's {{name}}/{{promptDir}} substitution remains
     safe under ``bash -lc`` when paths contain spaces.
+
+    ``source_shape_search`` propagates the mechanism-2 escalation into the
+    autonomous loop. Without it every vacuum attempt records
+    ``sourceShapeSearch: false``, and since
+    ``autonomous_policy.choose_next_action`` gates ``try-rewrite-request`` on
+    that flag, mechanism 3 can never be selected no matter how much rewrite
+    budget remains.
     """
 
     work = str(work_dir.resolve())
@@ -132,6 +140,8 @@ def reconstruct_vacuum_runner_command(
         command += f" --vc-root {shlex.quote(str(vc_root))}"
     if wineprefix is not None:
         command += f" --wineprefix {shlex.quote(str(wineprefix))}"
+    if source_shape_search:
+        command += " --source-shape-search"
     return command
 
 

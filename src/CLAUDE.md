@@ -7,7 +7,7 @@ This file provides guidance for Claude Code when working with the AgentDecompile
 | Item | Value |
 |------|-------|
 | **Implementation Language** | Python 3.10+ |
-| **MCP SDK Version** | `mcp>=1.26.0` |
+| **MCP SDK Version** | `mcp>=1.26.0,<2` (2.0 drops `Server.list_tools` decorators) |
 | **PyGhidra Version** | `pyghidra>=3.0.2` |
 | **Ghidra Version** | 12.0 or higher |
 | **Primary Test Framework** | pytest |

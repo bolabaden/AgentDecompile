@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .match_cache import is_proven_zero
-from .source_cleanup import format_source_text
+from .source_cleanup import clean_source_text, format_source_text
 from .source_export import (
     claim_boundary_for,
     dedupe_best_matches,
@@ -333,7 +333,7 @@ def collect_ghidra(facts: Path | None) -> list[dict[str, Any]]:
     rows = []
     for row in iter_rows(facts):
         if row.get("entityKind") not in {None, "function"} and row.get("kind") not in {None, "function"}:
-            # Accept both agentdecompile and Mizuchi fact shapes.
+            # Accept both agentdecompile and upstream-reference fact shapes.
             if not row.get("decompiled"):
                 continue
         if not row.get("decompiled"):
@@ -413,6 +413,117 @@ def parse_dump_layers(raw: str | Iterable[str] | None) -> set[str]:
     return selected or allowed
 
 
+# Ghidra's generated function spellings: `FUN_00401060`, `sub_1060`, and the
+# `range_.textU_1000` shape the inventory emits for unclaimed ranges. Only
+# these are eligible for curated renaming.
+_GENERATED_NAME_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:FUN_[0-9a-fA-F]+|sub_[0-9a-fA-F]+|range_[.\w]*)(?![A-Za-z0-9_])"
+)
+
+
+# Longest curated name accepted as a C identifier. Real MSVC-mangled C++ names
+# stay well under this; anything longer is corruption, not a name.
+_MAX_CURATED_NAME_LEN = 120
+# Filesystem limit is 255 bytes per component; leave room for the entry prefix
+# and the suffix.
+_MAX_FILE_STEM_LEN = 180
+
+
+def sanitize_curated_name(name: str) -> str:
+    """Drop a non-ASCII marker that the curated project's tooling injected.
+
+    Measured on the K1 database, 213 of 24,060 curated names carry one or more
+    copies of `控制` -- e.g. `CExoArrayList_SetSize控制`. This is *not* a bad
+    read: for all 213, the record's declared string length exactly equals the
+    UTF-8 byte length of the decoded name, so the marker is genuinely stored in
+    the curated project. The repetition histogram (98 names carry one copy, 44
+    two, 16 three, tailing to a handful with 60+) is the signature of a rename
+    script that appends a marker and was run repeatedly over the same symbols.
+
+    Usually the marker lands at the end, but in three cases it sits before a
+    real suffix (`ExecuteCommand控制_MainGate`), so trimming only the tail would
+    leave those unusable. Deleting non-ASCII wherever it appears is safe here
+    and not merely expedient: a C identifier is ASCII by definition, so no
+    non-ASCII code point in one of these names can be load-bearing. The
+    surviving ASCII is the name the project meant to record.
+    """
+
+    return "".join(char for char in name if char.isascii()).strip()
+
+
+def is_usable_curated_name(name: str) -> bool:
+    """Whether a curated name is safe to substitute into emitted C.
+
+    Rejects non-ASCII outright: real C/C++ identifiers and MSVC-mangled names
+    are ASCII. Callers that want the trailing-suffix names recovered rather
+    than discarded pass the name through `sanitize_curated_name` first.
+    """
+
+    if not name or len(name) > _MAX_CURATED_NAME_LEN:
+        return False
+    if not name.isascii() or not name.isprintable():
+        return False
+    return name[0].isalpha() or name[0] in "_~"
+
+
+def safe_file_stem(stem: str) -> str:
+    """Bound a generated filename component so writing it cannot raise ENAMETOOLONG."""
+
+    cleaned = "".join(c for c in stem if c.isprintable() and c not in '/\\\0')
+    if len(cleaned.encode("utf-8")) <= _MAX_FILE_STEM_LEN:
+        return cleaned
+    truncated = cleaned.encode("utf-8")[:_MAX_FILE_STEM_LEN].decode("utf-8", "ignore")
+    return truncated
+
+
+def build_curated_rename_map(
+    rows: Iterable[dict[str, Any]],
+    curated_names: dict[str, str],
+) -> dict[str, str]:
+    """`{generatedName: curatedName}` for rows whose entry has a curated name.
+
+    Keyed by the row's *current* name rather than by address, so call-site
+    substitution needs no knowledge of the image base: the generated
+    spellings (`sub_1060`, `FUN_00401060`) are relative to it, the curated map
+    is absolute, and the rows themselves are the only place both are already
+    joined. Only default-shaped generated names are remapped -- a row that
+    already carries a real name is left alone, so this never overwrites better
+    naming evidence that an earlier enrich stage established.
+    """
+
+    renames: dict[str, str] = {}
+    for row in rows:
+        entry = normalize_entry_hex(row.get("entryOffset") or row.get("entry") or 0)
+        if not entry:
+            continue
+        curated = sanitize_curated_name(curated_names.get(entry) or "")
+        if not curated or not is_usable_curated_name(curated):
+            continue
+        current = str(row.get("name") or "").strip()
+        if not current or current == curated:
+            continue
+        if not _GENERATED_NAME_RE.fullmatch(current):
+            continue
+        renames[current] = curated
+    return renames
+
+
+def apply_curated_renames(text: str, renames: dict[str, str]) -> str:
+    """Substitute generated function names with curated ones, on word boundaries.
+
+    Matches the generated *token shape* once and resolves each hit through
+    `renames`, rather than compiling an alternation of every known name. On a
+    real target that alternation is ~7,700 branches applied across ~12,700
+    bodies, which is quadratic enough to stall the dump outright; this form is
+    a single linear pass per body regardless of how many names are curated.
+    """
+
+    if not renames or not text:
+        return text
+
+    return _GENERATED_NAME_RE.sub(lambda m: renames.get(m.group(0), m.group(0)), text)
+
+
 def dump_source_tree(
     *,
     out_dir: Path,
@@ -425,8 +536,29 @@ def dump_source_tree(
     layers: str | Iterable[str] | None = None,
     profile: str = "binary",
     module_hints: dict[str, dict[str, Any]] | None = None,
+    curated_hints: dict[str, dict[str, Any]] | None = None,
+    curated_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Write verified/ + advisory/ghidra/ + Port/CODE + README/MANIFEST/CLAIMS."""
+    """Write verified/ + advisory/ghidra/ + Port/CODE + README/MANIFEST/CLAIMS.
+
+    `curated_hints` is the `{entryHex: {"locals": [...], "plateComment": ...}}`
+    shape from `curated_enrichment.curated_hints_to_json` -- when present for
+    an entry, curated parameter names are substituted for `param_N`-style
+    Ghidra identifiers in that function's emitted body and prototype, and a
+    curated Plate/EOL/Pre comment is added as a header line. Entries with no
+    curated hint are emitted exactly as before.
+
+    `curated_names` is `{entryHex: functionName}` (the on-disk form of
+    `GhidraProgram.names_by_entry()`). It renames functions *at emit time*,
+    which the enrich-stage naming tier
+    (`pyghidra_enrich.build_names_by_entry`) cannot do for an already-built
+    facts file: that tier only runs during a full pyghidra re-analysis, so a
+    dump over existing facts would otherwise keep the generated
+    `sub_1060`/`FUN_00401060` spellings even when the curated project knows
+    the real name. Renaming here also rewrites *call sites*, because the
+    old->new mapping is applied to every emitted body -- which is what turns
+    a call graph of `sub_12abe0(...)` into `CreateServer(...)`.
+    """
 
     from .module_resolver import passes_readability_gate
 
@@ -435,6 +567,8 @@ def dump_source_tree(
     write_port = "port" in selected_layers
     write_advisory = "advisory" in selected_layers
     hints = module_hints or {}
+    curated = curated_hints or {}
+    curated_name_map = curated_names or {}
 
     matched = collect_matched(summaries)
     ghidra_rows = collect_ghidra(ghidra_facts) if write_advisory else []
@@ -480,6 +614,15 @@ def dump_source_tree(
         deduped_ghidra[entry] = row
     ghidra_rows = list(deduped_ghidra.values())
 
+    # One rename map over every row in the dump, so a call site in function A
+    # resolves to a curated name even when the callee B lives in the other
+    # collection (matched vs advisory).
+    curated_renames = (
+        build_curated_rename_map([*matched, *ghidra_rows], curated_name_map)
+        if curated_name_map
+        else {}
+    )
+
     # Build into a sibling temp dir and swap on success, so a mid-build crash
     # never destroys the previous good dump (destroy-before-write hazard).
     final_dir = out_dir
@@ -504,7 +647,26 @@ def dump_source_tree(
     pending = PendingWrites()
     source_texts = prefetch_matched_sources(matched)
 
-    buckets: dict[tuple[str, str], list[tuple[dict[str, Any], str]]] = defaultdict(list)
+    def manifest_authority(row: dict[str, Any], fallback: str) -> str:
+        """Authority recorded in MANIFEST.json for a written unit.
+
+        Mirrors the demotions the Port/CODE bucket loop used to apply, so
+        counting every written unit (rather than only the Port-bucketed ones)
+        can never inflate a proof tier.
+        """
+
+        authority = authority_label(row) if row.get("status") else fallback
+        if row.get("decompiled") and not is_exportable_match(row):
+            authority = "ghidra-advisory"
+        return authority
+
+    # One record per unit actually written to disk, created at the point of
+    # write. Port/CODE membership is recorded separately as `portSource`, so
+    # the counters describe the dump rather than the Port tier.
+    unit_records: list[dict[str, Any]] = []
+    buckets: dict[tuple[str, str], list[tuple[dict[str, Any], str, dict[str, Any]]]] = defaultdict(
+        list
+    )
     rejected_emitters = 0
     verified_count = 0
     code_slice_count = 0
@@ -527,28 +689,60 @@ def dump_source_tree(
         module_provenance = str(hint.get("moduleProvenance") or "fallback")
         stem = file_stem_for(kind, authority, rule=str(row.get("rule") or ""))
         styled = style_c_source(source)
-        header = "\n".join(
-            [
-                f"/* {row.get('name')} entry={entry} kind={kind}",
-                f" * Authority: {authority} ({claim_boundary_for(row)}).",
-                f" * ModuleProvenance: {module_provenance}",
-                " */",
-                "",
-            ]
-        )
+        if curated_renames:
+            styled = apply_curated_renames(styled, curated_renames)
+            renamed = curated_renames.get(str(row.get("name") or ""))
+            if renamed:
+                # Rebind a copy so the header, the verified/ shard filename, and
+                # the Port/CODE manifest all agree on the curated spelling.
+                row = {**row, "name": renamed}
+        curated_row = curated.get(normalize_entry_hex(entry)) or {}
+        curated_locals = curated_row.get("locals") or []
+        if curated_locals:
+            styled, _ = clean_source_text(styled, {"locals": curated_locals})
+        header_lines = [
+            f"/* {row.get('name')} entry={entry} kind={kind}",
+            f" * Authority: {authority} ({claim_boundary_for(row)}).",
+            f" * ModuleProvenance: {module_provenance}",
+        ]
+        if curated_row.get("plateComment"):
+            header_lines.append(f" * Comment: {curated_row['plateComment']}")
+        header_lines.extend([" */", ""])
+        header = "\n".join(header_lines)
         body = header + styled
-        if write_port:
-            buckets[(module, stem)].append((row, body))
 
         # Per-function verified shard (objdiff 0 full-object only).
+        shard_rel: Path | None = None
         if write_verified and authority == "objdiff-matched":
             verified_count += 1
-            shard = verified_dir / f"{entry}_{row.get('name')}.c"
-            pending.add(shard, body)
+            shard_rel = Path("verified") / (safe_file_stem(f"{entry}_{row.get('name')}") + ".c")
+            pending.add(build_dir / shard_rel, body)
         elif write_verified and authority == "code-slice-matched":
             code_slice_count += 1
-            shard = verified_dir / "code-slice" / f"{entry}_{row.get('name')}.c"
-            pending.add(shard, body.replace("Authority:", "Authority (code-slice):", 1))
+            shard_rel = (
+                Path("verified")
+                / "code-slice"
+                / (safe_file_stem(f"{entry}_{row.get('name')}") + ".c")
+            )
+            pending.add(
+                build_dir / shard_rel,
+                body.replace("Authority:", "Authority (code-slice):", 1),
+            )
+
+        if shard_rel is not None or write_port:
+            record: dict[str, Any] = {
+                "name": str(row.get("name")),
+                "entry": entry or f"{int(row.get('entryOffset') or 0):08x}",
+                "module": module,
+                "source": str(shard_rel) if shard_rel is not None else "",
+                "portSource": None,
+                "authority": manifest_authority(row, authority),
+                "kind": row.get("kind") or row.get("rule") or row.get("tool"),
+                "sourceQuality": row.get("sourceQuality"),
+            }
+            unit_records.append(record)
+            if write_port:
+                buckets[(module, stem)].append((row, body, record))
 
     verified_entries = {
         normalize_entry_hex(m.get("entry")) for m in matched if is_proven_zero(m)
@@ -563,70 +757,82 @@ def dump_source_tree(
         module = str(hint.get("module") or module_for_entry(entry, "ghidra", profile=profile))
         module_provenance = str(hint.get("moduleProvenance") or "fallback")
         name = str(row.get("name") or f"FUN_{entry}")
+        if curated_renames:
+            # Rename this function, then rewrite every call site in its body.
+            name = curated_renames.get(name, name)
+            decompiled = apply_curated_renames(decompiled, curated_renames)
         if not str(name).startswith("FUN_"):
             named_count += 1
         if module_provenance not in {"fallback", ""} and module != "recovered/unmapped":
             module_resolved_count += 1
         stem = file_stem_for("ghidra", "ghidra-advisory")
-        header = "\n".join(
-            [
-                f"/* {name} entry={entry} bodyBytes={row.get('bodyBytes')}",
-                " * Authority: Ghidra / agentdecompile-cli advisory — NOT objdiff-matched.",
-                f" * Prototype: {row.get('prototype')}",
-                f" * ModuleProvenance: {module_provenance}",
-                " * claimBoundary: readability only.",
-                " */",
-                "",
-            ]
-        )
+        curated_row = curated.get(entry) or {}
+        curated_locals = curated_row.get("locals") or []
+        prototype = row.get("prototype")
+        if curated_renames and prototype:
+            prototype = apply_curated_renames(str(prototype), curated_renames)
+        if curated_locals:
+            decompiled, _ = clean_source_text(decompiled, {"locals": curated_locals})
+            if prototype:
+                prototype, _ = clean_source_text(str(prototype), {"locals": curated_locals})
+        header_lines = [
+            f"/* {name} entry={entry} bodyBytes={row.get('bodyBytes')}",
+            " * Authority: Ghidra / agentdecompile-cli advisory — NOT objdiff-matched.",
+            f" * Prototype: {prototype}",
+            f" * ModuleProvenance: {module_provenance}",
+        ]
+        if curated_row.get("plateComment"):
+            header_lines.append(f" * Comment: {curated_row['plateComment']}")
+        header_lines.extend([" * claimBoundary: readability only.", " */", ""])
+        header = "\n".join(header_lines)
         body = header + decompiled
+        adv_rel = Path("advisory") / "ghidra" / (safe_file_stem(f"{entry}_{name}") + ".c")
+        pending.add(build_dir / adv_rel, body)
+        record = {
+            "name": name,
+            "entry": entry,
+            "module": module,
+            "source": str(adv_rel),
+            "portSource": None,
+            "authority": manifest_authority(row, "ghidra-advisory"),
+            "kind": row.get("kind") or row.get("rule") or row.get("tool"),
+            "sourceQuality": row.get("sourceQuality"),
+        }
+        unit_records.append(record)
         if write_port:
             if not passes_readability_gate(
                 name=name, module=module, module_provenance=module_provenance
             ):
                 readability_excluded += 1
             else:
-                buckets[(module, stem)].append((row, body))
-        adv_path = advisory_out / f"{entry}_{name}.c"
-        pending.add(adv_path, body)
+                buckets[(module, stem)].append(({**row, "name": name}, body, record))
 
     if not write_port:
         buckets.clear()
 
-    manifest_functions: list[dict[str, Any]] = []
-    written_files: list[str] = []
+    manifest_functions: list[dict[str, Any]] = unit_records
+    port_files: list[str] = []
     for (module, stem), items in sorted(buckets.items()):
         cpp_rel = Path(module) / f"{stem}.cpp"
         hdr_name = f"{stem}.h"
         hdr_rel = Path(module) / "include" / hdr_name
+        # Dump-root-relative spellings, so MANIFEST paths from every tier can be
+        # joined against `outDir` the same way.
+        cpp_root_rel = Path("Port") / "CODE" / cpp_rel
+        hdr_root_rel = Path("Port") / "CODE" / hdr_rel
         prototypes: list[str] = []
         bodies: list[str] = []
-        for row, body in items:
+        for _row, body, record in items:
             bodies.append(body.rstrip() + "\n")
             proto = prototype_from_source(body)
             if proto:
                 prototypes.append(proto)
-            name = str(row.get("name"))
-            entry = str(row.get("entry") or f"{int(row.get('entryOffset') or 0):08x}")
-            authority = authority_label(row) if row.get("status") else "ghidra-advisory"
-            if row.get("decompiled") and not is_exportable_match(row):
-                authority = "ghidra-advisory"
-            manifest_functions.append(
-                {
-                    "name": name,
-                    "entry": entry,
-                    "module": module,
-                    "source": str(cpp_rel),
-                    "authority": authority,
-                    "kind": row.get("kind") or row.get("rule") or row.get("tool"),
-                    "sourceQuality": row.get("sourceQuality"),
-                }
-            )
-        authorities = {
-            mf["authority"]
-            for mf in manifest_functions
-            if mf["module"] == module and Path(mf["source"]).stem == stem
-        }
+            record["portSource"] = str(cpp_root_rel)
+            if not record["source"]:
+                # No verified/advisory shard was written for this unit, so the
+                # Port module is the only file that carries it.
+                record["source"] = str(cpp_root_rel)
+        authorities = {record["authority"] for _row, _body, record in items}
         has_verified = bool(authorities & {"objdiff-matched", "code-slice-matched"})
         has_advisory = "ghidra-advisory" in authorities
         banner = [
@@ -646,7 +852,12 @@ def dump_source_tree(
             code / cpp_rel,
             render_cpp_module(banner, bodies, f"include/{hdr_name}"),
         )
-        written_files.extend([str(cpp_rel), str(hdr_rel)])
+        port_files.extend([str(cpp_root_rel), str(hdr_root_rel)])
+
+    # Every file this dump wrote that carries a function body, dump-root-relative.
+    written_files: list[str] = sorted(
+        {str(r["source"]) for r in unit_records if r["source"]} | set(port_files)
+    )
 
     ref = reference_root
     ghidra_count = sum(1 for f in manifest_functions if f["authority"] == "ghidra-advisory")
@@ -670,6 +881,7 @@ def dump_source_tree(
                 f"- Full-object matched: {matched_count}",
                 f"- Code-slice matched: {slice_count}",
                 f"- Ghidra advisory: {ghidra_count}",
+                f"- Advisory units held out of Port/CODE by the readability gate: {readability_excluded}",
                 f"- Rejected byte-emitters: {rejected_emitters}",
                 f"- Reference tree: `{ref}`",
                 "",
@@ -744,7 +956,10 @@ def dump_source_tree(
             "objdiff-matched units are full-object verified C. "
             "code-slice-matched units reproduce the target function code slice at objdiff zero. "
             "Ghidra units are advisory. This is not whole-program rebuild parity. "
-            "Readability metrics (namedCount / moduleResolvedCount) are advisory and do not inflate proof."
+            "Readability metrics (namedCount / moduleResolvedCount) are advisory and do not inflate proof. "
+            "functions[] / files[] enumerate every unit and file this dump wrote, across all "
+            "enabled layers; functions[].portSource is null for units that were not also "
+            "emitted into Port/CODE. Counting a unit here asserts nothing beyond its own authority."
         ),
     }
     pending.add(

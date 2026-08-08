@@ -44,7 +44,9 @@ class TestGnuCCompilerRealToolchain:
     def test_reports_compilation_errors_for_invalid_c(self, tmp_path: Path):
         compiler = self._compiler(tmp_path)
 
-        result = compiler.compile("broken", "int broken(void) { return ; }", "")
+        # Use unambiguously invalid syntax: older GCC versions only *warn* on
+        # `return ;` in a non-void function, which would falsely pass this test.
+        result = compiler.compile("broken", "int broken(void) { !!!not_valid_c!!! }", "")
 
         assert result.success is False
         assert result.error_message
@@ -77,3 +79,26 @@ def test_reports_error_when_cpp_binary_missing(tmp_path: Path, monkeypatch: pyte
 
     assert result.success is False
     assert "cpp" in (result.error_message or "")
+
+
+def test_reports_timeout_when_cpp_hangs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    slow_cpp = tmp_path / "slow-cpp"
+    slow_cpp.write_text("#!/bin/sh\nsleep 10\n", encoding="utf-8")
+    slow_cpp.chmod(0o755)
+    monkeypatch.setattr("agentdecompile_recovery.gnu_c_compiler.shutil.which", lambda name: str(slow_cpp))
+    compiler = GnuCCompiler("true\n", tmp_path, timeout_seconds=1)
+
+    result = compiler.compile("f", "int f(void) { return 1; }", "")
+
+    assert result.success is False
+    assert "timed out" in (result.error_message or "")
+
+
+@pytest.mark.skipif(shutil.which("cpp") is None, reason="requires cpp on PATH")
+def test_reports_timeout_when_compiler_script_hangs(tmp_path: Path):
+    compiler = GnuCCompiler("sleep 10\n", tmp_path, timeout_seconds=1)
+
+    result = compiler.compile("f", "int f(void) { return 1; }", "")
+
+    assert result.success is False
+    assert "timed out" in (result.error_message or "")

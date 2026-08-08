@@ -304,6 +304,41 @@ Order of leverage, largest first:
 The 1% rung is 129 functions. With 5,119 tasks in the MSVC lane the population
 is finally large enough for that to be reachable; before these fixes it was not.
 
+### F11 — the autonomous loop could not reach mechanisms 2 or 3 (P0)
+
+Found after F1–F10 were fixed and the rewrite lane still never fired.
+
+`run_vacuum_prompt` defaults `source_shape_search=False`; the `vacuum_runner`
+CLI exposed no flag for it; `reconstruct_vacuum_runner_command` never emitted
+one. So the autonomous vacuum loop — the primary driver of the proof ladder —
+ran every function with shape search off.
+
+That silently disabled two of the three challenger-lane mechanisms. Mechanism 2
+(idiom permutation) never engaged, and because `choose_next_action` computes
+
+```python
+shape_search_exhausted = bool(context.get("sourceShapeSearch"))
+```
+
+mechanism 3 could never be selected regardless of remaining rewrite budget.
+
+**Every fix in F1–F5 was unreachable from the autonomous driver.** Enabling the
+rewrite budget (F1) gave campaigns a budget they were structurally incapable of
+spending.
+
+Live evidence: every vacuum receipt recorded `"sourceShapeSearch": false`
+alongside `"status": "unmatched"`, and `state/rewrite-queue.json` was never
+created on the primary work dir.
+
+Fixed in `3658a0e`. `proof_campaign` now enables shape search whenever the
+budget carries rewrite requests.
+
+**Lesson worth keeping:** F1 and F11 are the same class of defect — a
+capability gated off by a default that no caller ever overrode. Enabling a
+budget is not the same as enabling the path that spends it. When a feature is
+"on" but produces no observable effect, verify the whole call chain reaches it
+before concluding the feature works.
+
 ## Open items
 
 - **F7** — `source_parity_synthesize.py` at 23,118 lines. Recorded, not

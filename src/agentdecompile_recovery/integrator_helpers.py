@@ -18,9 +18,24 @@ class IntegratorError(Exception):
 
 
 class IntegratorHelpers:
-    def __init__(self, project_root: Path) -> None:
-        self._project_root = project_root
+    """File-editing helpers handed to a user integrator module.
+
+    `root` is the directory every operation is relative to. Upstream binds this
+    to the git worktree, never the main tree, so a failed integration is
+    discarded with the worktree. The `project_root` keyword is kept as an alias
+    for callers that predate worktree isolation.
+    """
+
+    def __init__(self, root: Path | None = None, *, project_root: Path | None = None) -> None:
+        resolved = root if root is not None else project_root
+        if resolved is None:
+            raise TypeError("IntegratorHelpers requires a root directory")
+        self._project_root = resolved
         self.logs: list[str] = []
+
+    @property
+    def root(self) -> Path:
+        return self._project_root
 
     def find_source_file(self, function_name: str) -> Path:
         src_dir = self._project_root / "src"

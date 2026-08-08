@@ -13,6 +13,7 @@ from agentdecompile_recovery.proof_target import (
     build_proof_target_queue,
     load_near_miss_maps,
     near_miss_score_bonus,
+    plugin_attempt_paths,
     proof_target_vacuum_entries,
     write_proof_target_queue,
 )
@@ -222,6 +223,72 @@ def test_near_miss_map_reads_plugin_attempts(tmp_path: Path) -> None:
     maps = load_near_miss_maps(work)
     assert maps.by_name["fn_a"] == 4
     assert maps.class_by_name["fn_a"] == "operand"
+
+
+def _write_attempts_row(path: Path, **row: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+
+def test_plugin_attempt_paths_skips_the_case_compile_tree(tmp_path: Path) -> None:
+    """A recursive walk of source-synthesis/ costs an hour on a real work dir.
+
+    ``source-synthesis/cases/`` holds one directory per compile attempt --
+    thousands of them, several levels deep. Only the synthesis root and the
+    per-function vacuum directories ever receive ``plugin-attempts.jsonl``, so
+    reintroducing ``source-synthesis/**/plugin-attempts.jsonl`` here would pick
+    up the decoy below and stall the ``report`` stage again.
+    """
+
+    work = tmp_path / "case-tree"
+    synthesis = work / "source-synthesis"
+    _write_attempts_row(synthesis / "plugin-attempts.jsonl", status="mismatched", differences=3, name="root_fn")
+    _write_attempts_row(
+        synthesis / "vacuum" / "fn_a" / "plugin-attempts.jsonl", status="mismatched", differences=4, name="vacuum_fn"
+    )
+    _write_attempts_row(
+        synthesis / "cases" / "0x401000_sub_1000_packaged" / "profile_00_O2" / "plugin-attempts.jsonl",
+        status="mismatched",
+        differences=5,
+        name="decoy_fn",
+    )
+
+    paths = plugin_attempt_paths(work)
+
+    assert paths == [
+        synthesis / "plugin-attempts.jsonl",
+        synthesis / "vacuum" / "fn_a" / "plugin-attempts.jsonl",
+    ]
+    maps = load_near_miss_maps(work)
+    assert maps.by_name == {"root_fn": 3, "vacuum_fn": 4}
+
+
+def test_load_near_miss_maps_issues_no_recursive_glob(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    work = tmp_path / "no-recursive-glob"
+    _write_attempts_row(
+        work / "source-synthesis" / "vacuum" / "fn_a" / "plugin-attempts.jsonl",
+        status="mismatched",
+        differences=4,
+        name="fn_a",
+    )
+    patterns: list[str] = []
+    real_glob = Path.glob
+
+    def recording_glob(self: Path, pattern: str, *args: object, **kwargs: object):
+        patterns.append(pattern)
+        return real_glob(self, pattern, *args, **kwargs)
+
+    def rejecting_rglob(self: Path, pattern: str, *args: object, **kwargs: object):
+        patterns.append(f"**/{pattern}")
+        return iter(())
+
+    monkeypatch.setattr(Path, "glob", recording_glob)
+    monkeypatch.setattr(Path, "rglob", rejecting_rglob)
+
+    maps = load_near_miss_maps(work)
+
+    assert maps.by_name == {"fn_a": 4}
+    assert [pattern for pattern in patterns if "**" in pattern] == []
 
 
 def test_proof_target_queue_boosts_near_miss_retry(tmp_path: Path) -> None:
