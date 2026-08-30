@@ -118,6 +118,10 @@ PROTECTOR_SIGNATURES: dict[str, tuple[bool, list[bytes]]] = {
     "MPRESS": (True, [b".MPRESS1", b".MPRESS2"]),
     "Petite": (True, [b".petite"]),
     "tElock": (True, [b"tElock"]),
+    # SteamStub (Steam DRM) — recoverable with Steamless; carries a .bind section
+    # plus a steam_api import. NOTE: unpacking destroys the Rich header region
+    # (bytes 0x40-0xD0); the pre-unpack header must be captured before unpacking.
+    "SteamStub": (True, [b"SteamStub", b"steam_api", b"SteamAPI_Init"]),
     # Virtualizers — NOT recoverable to original source (code is gone).
     "VMProtect": (False, [b".vmp0", b".vmp1", b".vmp2", b"VMProtect"]),
     "Themida/WinLicense": (False, [b".themida", b"Themida", b".winlice", b"WinLicense"]),
@@ -125,8 +129,11 @@ PROTECTOR_SIGNATURES: dict[str, tuple[bool, list[bytes]]] = {
 }
 
 # Section names that, when present, strongly imply a protector even w/o strings.
+# Note: .bind appears in both SteamStub and SecuROM binaries.  The detector
+# refines the attribution in detect() by checking for SteamStub signatures
+# first; only fall back to SecuROM when no SteamStub evidence is found.
 SUSPECT_SECTION_NAMES = {
-    ".bind": "SecuROM",
+    ".bind": "SteamStub",  # primary: SteamStub; detect() may override to SecuROM
     ".vmp0": "VMProtect",
     ".vmp1": "VMProtect",
     ".themida": "Themida/WinLicense",
@@ -135,6 +142,77 @@ SUSPECT_SECTION_NAMES = {
 }
 
 HIGH_ENTROPY = 7.2  # bits/byte; code sections normally ~6.0-6.6
+
+# Rich header lives between the MZ stub and the PE signature.
+# The XOR key is stored as the DWORD immediately after the "Rich" marker.
+RICH_MAGIC = b"Rich"
+DANS_MAGIC = b"DanS"
+
+
+def read_rich_header(data: bytes) -> dict | None:
+    """
+    Parse the Rich header from a PE binary.
+
+    Returns a dict with keys:
+      - ``raw_hex``: hex-encoded raw (XOR-encoded) bytes of the Rich region
+      - ``xor_key``: the 32-bit XOR key (integer)
+      - ``entries``: list of {comp_id, count} dicts (decoded)
+      - ``offset``: byte offset in *data* where the "Rich" marker begins
+    or None if no Rich header is present.
+
+    The Rich header is located between the MZ stub and the PE signature
+    (offsets 0x40–0xD0 in typical binaries). It begins with the XOR-encoded
+    "DanS" marker and ends with the plaintext "Rich" marker followed by
+    the 4-byte XOR key.
+    """
+    if data[:2] != b"MZ":
+        return None
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    # Search for "Rich" marker in the stub region only (before PE header).
+    stub = data[0x40:pe_offset] if pe_offset > 0x40 else b""
+    rich_pos = stub.rfind(RICH_MAGIC)
+    if rich_pos == -1:
+        return None
+    rich_abs = 0x40 + rich_pos
+    if rich_abs + 8 > len(data):
+        return None
+    xor_key = struct.unpack_from("<I", data, rich_abs + 4)[0]
+    # Verify "DanS" is present at the start of the XOR block.
+    # Walk backwards from "Rich" in 4-byte steps to find "DanS".
+    dans_word = struct.unpack_from("<I", DANS_MAGIC + b"\0", 0)[0]
+    dans_abs: int | None = None
+    for off in range(rich_abs - 4, 0x3C - 1, -4):
+        candidate = struct.unpack_from("<I", data, off)[0] ^ xor_key
+        if candidate == dans_word:
+            dans_abs = off
+            break
+    if dans_abs is None:
+        return None
+    raw = data[dans_abs : rich_abs + 8]
+    region_len = rich_abs - dans_abs  # bytes from DanS to Rich (exclusive)
+    # Decode entries (each 8 bytes after the DanS+3*padding block).
+    entries = []
+    for i in range(4, region_len // 4, 2):
+        if i * 4 + 8 > region_len:
+            break
+        word = struct.unpack_from("<II", raw, i * 4)
+        comp_id = word[0] ^ xor_key
+        count = word[1] ^ xor_key
+        entries.append({"comp_id": comp_id, "count": count})
+    return {
+        "raw_hex": raw.hex(),
+        "xor_key": xor_key,
+        "entries": entries,
+        "offset": dans_abs,
+    }
+
+
+def _rich_region_zeroed(data: bytes) -> bool:
+    """Return True when the canonical Rich header region (0x40-0xD0) is all zeros."""
+    if len(data) < 0xD0:
+        return False
+    region = data[0x40:0xD0]
+    return all(b == 0 for b in region)
 
 
 @dataclass
@@ -159,10 +237,18 @@ def detect(data: bytes, pe: PEInfo) -> Detection:
                 evidence.append(f"signature {sig!r} -> {prot}")
                 break
 
-    # 2. suspect section names
+    # 2. suspect section names — refine .bind: prefer SteamStub when SteamStub
+    # signatures were already found; fall back to SecuROM when SecuROM signatures
+    # were found; otherwise keep SteamStub as the default (the more common .bind owner).
     for s in pe.sections:
         if s.name in SUSPECT_SECTION_NAMES:
             prot = SUSPECT_SECTION_NAMES[s.name]
+            if s.name == ".bind":
+                # Distinguish SteamStub from SecuROM: if we already found SecuROM
+                # strings (PauseAndPlay / .securom) and no SteamStub strings, treat
+                # .bind as SecuROM; otherwise keep the SteamStub default.
+                if "SecuROM" in found and "SteamStub" not in found:
+                    prot = "SecuROM"
             found.setdefault(prot, PROTECTOR_SIGNATURES.get(prot, (True, []))[0])
             evidence.append(f"section {s.name!r} -> {prot}")
 
@@ -364,9 +450,30 @@ def main() -> int:
         print(json.dumps(report, indent=2))
         return 2
 
+    # Capture the Rich header BEFORE unpacking — some unpackers (including
+    # Steamless for SteamStub) zero bytes 0x40-0xD0 in the output, which is
+    # exactly where the Rich header lives.  Record what was there so compiler
+    # identification can still use the pre-unpack data even after the binary
+    # has been modified.
+    pre_rich = read_rich_header(data)
+    report["pre_unpack_rich_header"] = pre_rich  # None if absent
+
     out = args.out or (args.binary + ".unpacked.exe")
     if det.protector == "UPX":
         ok, msg = unpack_upx(args.binary, out)
+    elif det.protector == "SteamStub":
+        # Steamless is invoked externally; normalize-binary does not shell out to
+        # it directly.  Flag this so callers know which tool to invoke.
+        report["action"] = "unpack"
+        report["unpack_ok"] = False
+        report["unpack_detail"] = (
+            "SteamStub detected — use Steamless (run_steamless) to unpack. "
+            "WARNING: Steamless zeroes bytes 0x40-0xD0 (the Rich header region) "
+            "in the output. The pre-unpack Rich header is preserved in "
+            "'pre_unpack_rich_header' above for compiler identification."
+        )
+        print(json.dumps(report, indent=2))
+        return 3
     else:
         ok, msg = unpack_dynamic_wine(args.binary, out, pe, det, args.timeout)
 
@@ -382,6 +489,15 @@ def main() -> int:
             report["post_entropy"] = {
                 s.name: round(s.entropy, 3) for s in npe.sections if s.name in det.encrypted_code_sections
             }
+        # Warn when the unpacker zeroed the Rich header region.
+        if pre_rich is not None and _rich_region_zeroed(nd):
+            report["rich_header_warning"] = (
+                "The unpacker zeroed bytes 0x40-0xD0 of the output binary. "
+                "The Rich header (compiler identification data) that was present "
+                "in the packed input has been destroyed in the unpacked output. "
+                "Use 'pre_unpack_rich_header' from this report for compiler "
+                "identification instead of reading the unpacked binary."
+            )
     print(json.dumps(report, indent=2))
     return 0 if ok else 3
 

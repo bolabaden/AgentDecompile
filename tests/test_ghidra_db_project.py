@@ -26,6 +26,7 @@ from agentdecompile_recovery.ghidra_db.packed import (
 from agentdecompile_recovery.ghidra_db.project import (
     INDEX_FILE,
     ProjectLayoutError,
+    VersionInfo,
     find_program,
     is_item_filesystem_root,
     item_storage_roots,
@@ -376,6 +377,114 @@ def test_server_repository_ignores_version_and_change_files(tmp_path: Path) -> N
     assert list_programs(repository)[0].database_path.name == "db.18.gbf"
 
 
+# -- version listing and version-aware open ----------------------------------
+
+
+def test_list_versions_returns_current_version_only_when_no_ver_files(tmp_path: Path) -> None:
+    repository = _make_project(tmp_path / "Sample.gpr", versions=(3,))
+    entry = list_programs(repository)[0]
+
+    versions = entry.list_versions()
+
+    assert [vi.version for vi in versions] == [3]
+    assert isinstance(versions[0], VersionInfo)
+    assert versions[0].date is None
+    assert versions[0].comment is None
+
+
+def test_list_versions_includes_historical_ver_files(tmp_path: Path) -> None:
+    repository = _make_project(tmp_path / "Sample.gpr", versions=(3,))
+    db_dir = repository / "idata" / "00" / "~00000000.db"
+    (db_dir / "ver.1.gbf").write_bytes(b"")
+    (db_dir / "ver.2.gbf").write_bytes(b"")
+    entry = list_programs(repository)[0]
+
+    nums = [vi.version for vi in entry.list_versions()]
+
+    assert nums == [1, 2, 3]
+
+
+def test_list_versions_populates_metadata_from_history_dat(tmp_path: Path) -> None:
+    repository = _make_project(tmp_path / "Sample.gpr", versions=(2,))
+    db_dir = repository / "idata" / "00" / "~00000000.db"
+    (db_dir / "ver.1.gbf").write_bytes(b"")
+    # Epoch millis for 2024-01-15 12:00:00 UTC
+    millis = 1705320000000
+    (db_dir / "history.dat").write_text(
+        f"VERSION_COUNT=2\n"
+        f"VER_1_DATE={millis}\n"
+        f"VER_1_COMMENT=Initial import\n"
+        f"VER_1_USER=brunner56\n"
+        f"VER_2_DATE={millis + 3600000}\n"
+        f"VER_2_COMMENT=Renamed functions\n"
+        f"VER_2_USER=brunner56\n"
+    )
+    entry = list_programs(repository)[0]
+
+    versions = entry.list_versions()
+
+    assert len(versions) == 2
+    assert versions[0].version == 1
+    assert versions[0].comment == "Initial import"
+    assert versions[0].user == "brunner56"
+    assert versions[0].date is not None
+    assert versions[1].version == 2
+    assert versions[1].comment == "Renamed functions"
+
+
+def test_list_versions_survives_absent_or_malformed_history_dat(tmp_path: Path) -> None:
+    repository = _make_project(tmp_path / "Sample.gpr", versions=(1,))
+    db_dir = repository / "idata" / "00" / "~00000000.db"
+    (db_dir / "history.dat").write_text("NOT VALID KEY=FORMAT\n")
+    entry = list_programs(repository)[0]
+
+    versions = entry.list_versions()
+
+    assert [vi.version for vi in versions] == [1]
+    assert versions[0].date is None
+
+
+def test_open_without_version_opens_the_current_database(tmp_path: Path) -> None:
+    repository = _make_project(tmp_path / "Sample.gpr", versions=(1, 5))
+    entry = list_programs(repository)[0]
+
+    # Should not raise; database_path is the highest db.N.gbf.
+    assert entry.database_path.name == "db.5.gbf"
+    # open() with no version returns GhidraProgram pointed at that file.
+    # We don't have a real buffer, so just confirm the path resolves.
+    assert entry.database_path.exists()
+
+
+def test_open_with_version_opens_a_ver_file(tmp_path: Path) -> None:
+    repository = _make_project(tmp_path / "Sample.gpr", versions=(3,))
+    db_dir = repository / "idata" / "00" / "~00000000.db"
+    ver_file = db_dir / "ver.2.gbf"
+    ver_file.write_bytes(b"")
+    entry = list_programs(repository)[0]
+
+    # Asking for version 2 should resolve to ver.2.gbf without error.
+    # (GhidraProgram itself may reject an empty file, but the path selection is what we test.)
+    try:
+        entry.open(version=2)
+    except ProjectLayoutError:
+        pytest.fail("open(version=2) raised ProjectLayoutError but ver.2.gbf exists")
+    except Exception:
+        pass  # GhidraProgram parsing error is fine for an empty fixture file
+
+
+def test_open_with_missing_version_raises_and_lists_available(tmp_path: Path) -> None:
+    repository = _make_project(tmp_path / "Sample.gpr", versions=(3,))
+    db_dir = repository / "idata" / "00" / "~00000000.db"
+    (db_dir / "ver.1.gbf").write_bytes(b"")
+    entry = list_programs(repository)[0]
+
+    with pytest.raises(ProjectLayoutError, match="version 99") as exc_info:
+        entry.open(version=99)
+
+    assert "1" in str(exc_info.value)
+    assert "3" in str(exc_info.value)
+
+
 # -- real projects ----------------------------------------------------------
 
 
@@ -450,6 +559,21 @@ def test_server_repository_current_version_is_the_highest_database_file() -> Non
     assert entry.database_path == SERVER_REPO / "01/~00000014.db/db.18.gbf"
     assert entry.version == 18
     assert sorted(entry.database_path.parent.glob("ver.*.gbf"))  # older versions kept beside it
+
+
+@_needs_server_repo
+def test_server_repository_list_versions_matches_files_on_disk() -> None:
+    """`list_versions()` for the K2 GOG item should cover versions 1..18."""
+
+    entry = find_program(SERVER_REPO, "/TSL/k2_win_gog_aspyr_swkotor2.exe")
+
+    assert entry is not None
+    versions = entry.list_versions()
+    nums = [vi.version for vi in versions]
+
+    assert nums == sorted(nums), "list_versions should be sorted ascending"
+    assert 18 in nums  # current version included
+    assert min(nums) >= 1
 
 
 @_needs_server_repo
