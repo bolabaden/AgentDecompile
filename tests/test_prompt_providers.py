@@ -24,6 +24,9 @@ def test_get_prompt_renders_analysis_target() -> None:
     text = result.messages[0].content.text
     assert "save/load serialization" in text
     assert "{analysis_target}" not in text
+    assert "untrusted evidence" in text
+    assert "continuation ledger" in text
+    assert "Do NOT summarise or truncate" not in text
 
 
 @pytest.mark.unit
@@ -87,3 +90,29 @@ def test_list_prompts_advertises_nine_prompts() -> None:
         "re-convergence-orchestrator",
         "re-iterative-verifier",
     }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name", [prompt["name"] for prompt in prompt_providers._PROMPTS])
+def test_workflow_prompts_use_bounded_evidence_contracts(name: str) -> None:
+    prompt_def = prompt_providers._find_prompt_definition(name)
+    assert prompt_def is not None
+    arguments = {
+        item["name"]: "fixture"
+        for item in prompt_def["arguments"]
+        if item.get("required")
+    }
+
+    text = prompt_providers.get_prompt(name, arguments).messages[0].content.text
+
+    assert "untrusted evidence" in text
+    assert "continuation ledger" in text
+    assert "Do NOT" not in text
+    assert "Be EXHAUSTIVE" not in text
+    assert "CRITICAL:" not in text
+    assert "EVERYTHING" not in text
+    assert "BROAD SWEEP" not in text
+    assert "DEEP DIVE" not in text
+    assert "INDEPENDENTLY" not in text
+    assert "verbatim" not in text.lower()
+    assert "nicknamed" not in text.lower()

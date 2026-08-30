@@ -2,6 +2,15 @@
 
 Shared domain vocabulary for this project — entities, named processes, and status concepts with project-specific meaning. Seeded with core domain vocabulary, then accretes as ce-compound and ce-compound-refresh process learnings; direct edits are fine. Glossary only, not a spec or catch-all.
 
+```mermaid
+flowchart LR
+  substrate[Substrate] --> corpus[Corpus pipeline]
+  substrate --> reconstruct[Single-binary reconstruct]
+  corpus --> compile[Complete linked executable]
+  compile --> xmatch[Cross-match compiling C]
+  xmatch --> bytes[Byte accuracy]
+```
+
 ## Binary-as-context substrate
 
 ### Substrate
@@ -19,8 +28,14 @@ An explicit statement on an artifact or tool response that limits what may be as
 ### Matching recovery (recipe)
 An optional operator path that inventorizes, synthesizes candidates, and proves functions with compile+objdiff. Powerful when chosen; not the charter of the substrate.
 
+### Corpus pipeline
+The main multi-binary recovery path: extract → identify → merge knowledge → generate projects → recover source → apply cross-build → compile → verify byte accuracy. Source is copied only after compile. Machine-code wrappers are not source.
+
+### Debug donor
+The registered binary that still carries STABS or DWARF source paths. It owns the workspace folder layout. Other binaries inherit that layout through identity bindings.
+
 ### Reconstruct funnel
-The one-shot reconstruct / CRITICAL_PATH stage chain. Useful as a recipe; growing it is not how substrate capabilities should ship.
+The one-shot reconstruct / CRITICAL_PATH stage chain for a single binary. Useful as a recipe; the corpus pipeline is how a set of binaries is recovered together.
 
 ## Flagged ambiguities
 

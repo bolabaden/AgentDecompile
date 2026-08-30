@@ -1,6 +1,14 @@
 # Recovery critical path
 
-Packed Windows PE targets use a **bounded checkpoint loop** inside `agentdecompile-reconstruct`. There is no separate `acquire` or `vacuum` CLI — use reconstruct flags instead.
+The **main multi-binary recovery path** is the corpus pipeline
+([CORPUS_PIPELINE.md](CORPUS_PIPELINE.md)): extract → identify → merge
+knowledge → generate projects → recover source → preparse → compile → apply
+cross-build → optional llm-cleanup → verify. CLI: `agentdecompile-corpus` (also `agentdecompile-reconstruct corpus`).
+Default stop is a complete linked executable from the debug donor.
+
+Packed Windows PE targets still use a **bounded checkpoint loop** inside
+`agentdecompile-reconstruct` for a single binary. There is no separate
+`acquire` or `vacuum` CLI — use reconstruct flags instead.
 
 ELF targets (format detected from the binary) use `.eh_frame` as the authoritative inventory denominator, then a single PyGhidra enrich+decompile session, optional reference-corpus naming, evidence-based module mapping, and native clang/objdiff verification.
 

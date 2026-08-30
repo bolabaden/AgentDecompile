@@ -16,6 +16,8 @@ reconstruct run can reload later without reopening the project database:
       uninitialised `in_ECX` read for the ~8,600 `__thiscall` methods this
       corpus annotates. Only prototypes that survive the `ret N` arity gate
       appear with a `signature`; the rest keep their name and nothing else.
+    * `curated-types.json` -- prompt-only C renderings of Ghidra composite
+      layouts, including stored field offsets and total sizes.
 
 `extract_curated_project_data` never raises -- extraction is an optional
 readability enhancement, so any failure (unreadable project, ambiguous
@@ -34,6 +36,7 @@ from typing import Any
 CURATED_NAMES_FILENAME = "curated-names.json"
 CURATED_HINTS_FILENAME = "curated-hints.json"
 CURATED_SIGNATURES_FILENAME = "curated-signatures.json"
+CURATED_TYPES_FILENAME = "curated-types.json"
 
 SCHEMA = "agentdecompile.curated-project-extract.v1"
 
@@ -53,6 +56,8 @@ def extract_curated_project_data(
     from .curated_enrichment import (
         build_curated_hints,
         build_curated_signatures,
+        build_curated_type_definitions,
+        CuratedTypeIndex,
         curated_hints_to_json,
         curated_signatures_to_json,
     )
@@ -62,7 +67,9 @@ def extract_curated_project_data(
         with resolve_curated_program(source=project, program_name=project_program) as program:
             names = program.names_by_entry(curated_only=True)
             hints = build_curated_hints(program)
-            signatures = build_curated_signatures(program)
+            type_index = CuratedTypeIndex.from_program(program)
+            signatures = build_curated_signatures(program, types=type_index)
+            type_definitions = build_curated_type_definitions(program, types=type_index)
     except Exception as exc:  # noqa: BLE001 - optional enhancement, never hard-fails the run
         return {
             "schema": SCHEMA,
@@ -85,6 +92,9 @@ def extract_curated_project_data(
     signatures_path = work_dir / CURATED_SIGNATURES_FILENAME
     signatures_path.write_text(json.dumps(signatures_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    types_path = work_dir / CURATED_TYPES_FILENAME
+    types_path.write_text(json.dumps(type_definitions, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     return {
         "schema": SCHEMA,
         "status": "complete",
@@ -92,9 +102,11 @@ def extract_curated_project_data(
         "namesPath": str(names_path),
         "hintsPath": str(hints_path),
         "signaturesPath": str(signatures_path),
+        "typesPath": str(types_path),
         "nameCount": len(names_payload),
         "hintCount": len(hints_payload),
         "signatureCount": len(signatures_payload),
+        "typeDefinitionCount": len(type_definitions),
         "prototypeCount": sum(1 for row in signatures_payload.values() if row.get("signature")),
         "arityContradictedCount": sum(
             1 for row in signatures_payload.values() if row.get("arityCheck") == "contradicted"
@@ -177,6 +189,20 @@ def load_curated_signatures(work_dir: Path) -> dict[int, dict[str, Any]] | None:
             continue
         signatures[entry] = value
     return signatures or None
+
+
+def load_curated_type_definitions(work_dir: Path) -> dict[str, str] | None:
+    """Load prompt-only Ghidra composite layouts, keyed by stored type name."""
+
+    payload = _load_entry_keyed_json(work_dir / CURATED_TYPES_FILENAME)
+    if not payload:
+        return None
+    definitions = {
+        str(name): str(definition)
+        for name, definition in payload.items()
+        if name and isinstance(definition, str) and definition.strip()
+    }
+    return definitions or None
 
 
 def _load_entry_keyed_json(path: Path) -> dict[str, Any] | None:
@@ -321,10 +347,12 @@ __all__ = [
     "CURATED_HINTS_FILENAME",
     "CURATED_NAMES_FILENAME",
     "CURATED_SIGNATURES_FILENAME",
+    "CURATED_TYPES_FILENAME",
     "apply_curated_names_to_facts_jsonl",
     "extract_curated_project_data",
     "load_curated_hints",
     "load_curated_names",
     "load_curated_names_by_entry_hex",
     "load_curated_signatures",
+    "load_curated_type_definitions",
 ]

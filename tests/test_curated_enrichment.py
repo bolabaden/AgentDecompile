@@ -16,6 +16,7 @@ import pytest
 from agentdecompile_recovery.curated_enrichment import (
     CuratedFunctionHints,
     CuratedTypeIndex,
+    build_curated_type_definitions,
     build_curated_hints,
     build_curated_signatures,
     curated_hints_to_json,
@@ -603,7 +604,33 @@ _TYPE_TABLES: dict[str, list[dict[str, object]]] = {
         {"Data Type ID": _INT_ID, "Name": "int"},
         {"Data Type ID": _UNDEFINED4_ID, "Name": "undefined4"},
     ],
-    "Composite Data Types": [{"Data Type ID": _COMPOSITE_ID, "Name": "CExoString"}],
+    "Composite Data Types": [
+        {
+            "Data Type ID": _COMPOSITE_ID,
+            "Name": "CExoString",
+            "Is Union": False,
+            "Length": 8,
+            "Number Of Components": 2,
+        }
+    ],
+    "Component Data Types": [
+        {
+            "Parent": _COMPOSITE_ID,
+            "Offset": 0,
+            "Data Type ID": _INT_ID,
+            "Field Name": "stringData",
+            "Component Size": 4,
+            "Ordinal": 0,
+        },
+        {
+            "Parent": _COMPOSITE_ID,
+            "Offset": 4,
+            "Data Type ID": _INT_ID,
+            "Field Name": "length",
+            "Component Size": 4,
+            "Ordinal": 1,
+        },
+    ],
     "Pointers": [{"Pointer ID": _POINTER_TO_COMPOSITE_ID, "Data Type ID": _COMPOSITE_ID}],
     "Typedefs": [{"Typedef ID": _TYPEDEF_ID, "Data Type ID": _INT_ID, "Name": "BOOL"}],
     "Arrays": [{"Array ID": _ARRAY_ID, "Data Type ID": _INT_ID, "Dimension": 4}],
@@ -632,6 +659,33 @@ def test_type_index_resolves_each_data_type_table() -> None:
     assert types.type_name(_TYPEDEF_ID) == "BOOL"
     assert types.type_name(_ARRAY_ID) == "int[4]"
     assert types.type_name(_ENUM_ID) == "GFFFieldTypes"
+
+
+def test_build_curated_type_definitions_preserves_fields_offsets_and_size() -> None:
+    program = FakeSignatureProgram(tables=_TYPE_TABLES, symbols=[], functions=[])
+
+    definitions = build_curated_type_definitions(program)
+
+    assert definitions["CExoString"] == (
+        "typedef struct CExoString {\n"
+        "    int stringData; /* 0x0 */\n"
+        "    int length; /* 0x4 */\n"
+        "} CExoString; /* size: 0x8 */"
+    )
+
+
+def test_build_curated_type_definitions_skips_empty_zero_size_composite() -> None:
+    tables = dict(_TYPE_TABLES)
+    tables["Composite Data Types"] = [
+        {"Data Type ID": _COMPOSITE_ID, "Name": "Empty", "Length": 0}
+    ]
+    tables["Component Data Types"] = []
+
+    definitions = build_curated_type_definitions(
+        FakeSignatureProgram(tables=tables, symbols=[], functions=[])
+    )
+
+    assert definitions == {}
 
 
 def test_type_index_reports_ghidra_placeholder_and_unknown_distinctly() -> None:

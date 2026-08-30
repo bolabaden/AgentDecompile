@@ -219,6 +219,9 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Local web-research captures (untrusted fetched content; never commit).
+.firecrawl/
+
 # PyPI configuration file
 .pypirc
 

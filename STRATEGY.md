@@ -1,8 +1,8 @@
 ---
 name: AgentDecompile
-last_updated: 2026-08-08
+last_updated: 2026-08-30
 charter: VISION.md
-active_living_plan: docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md
+active_living_plan: docs/plans/2026-08-30-corpus-semantic-pipeline-living-plan.md
 ---
 
 # AgentDecompile Strategy
@@ -66,7 +66,24 @@ Session-stable PyGhidra MCP/CLI with real analysis gates so agents and humans sh
 
 ### Matching recovery (recipe track)
 
-Compiler-profile corpus, relocation-aware objects, candidate generation, vacuum/repair loop. `agentdecompile-reconstruct` remains the operator one-shot recipe (enrich-before-decompile by default; `--skip-enrichment` for inventory/match-only). Scale with match cache and parallel workers. Record stage timings. **Do not treat this track as the only valid use of the product.**
+The **main recovery pipeline** is corpus-wide semantic decompilation
+([docs/CORPUS_PIPELINE.md](docs/CORPUS_PIPELINE.md), CLI
+`agentdecompile-corpus`). Stages in order: extract, identify, merge
+knowledge, generate projects, recover source, preparse, compile, apply
+cross-build knowledge (compiling C only), optional LLM cleanup, verify
+byte accuracy. Adding another binary is
+`agentdecompile-corpus add-binary` plus an optional `--donor` STABS/DWARF
+layout source.
+
+Priorities: (1) one debug-stem project links to a complete executable,
+(2) cross-match compiling C onto the other binaries, (3) independent
+byte-accuracy, (4) graphs/UI/docs.
+
+`agentdecompile-reconstruct <binary>` remains the single-binary one-shot
+(enrich-before-decompile by default). It does not replace the corpus
+pipeline when more than one build is in scope. Per-function compile+objdiff
+is still how a function is *proven*; it is not how a dashboard label
+completes a corpus.
 
 ### Multi-format export
 

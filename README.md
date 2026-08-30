@@ -16,7 +16,37 @@ flowchart TD
   C --> D
   D --> E[PyGhidra and Ghidra projects]
   D --> F[72 canonical tools and 3 resources]
+  D --> G[Corpus pipeline]
+  G --> H[extract]
+  H --> I[identify]
+  I --> J[merge knowledge]
+  J --> K[generate projects]
+  K --> L[recover source]
+  L --> P[preparse]
+  P --> N[compile and link]
+  N --> M[apply compiling C]
+  M --> O[verify byte accuracy]
 ```
+
+## Corpus recovery (main multi-binary pipeline)
+
+When you have more than one build, use `agentdecompile-corpus`. Register each
+binary. Mark the STABS/DWARF build as `--donor`. First goal is a **complete
+linked executable** from that donor project. Second is copying C that already
+compiles onto the other builds. Third is byte-accuracy. Dashboard 8791 and
+Decomp Atlas 5173 can stay up; their labels are not proof.
+
+```bash
+uv run agentdecompile-corpus init --id my-corpus --out target/corpus.json
+uv run agentdecompile-corpus add-binary --corpus target/corpus.json \
+  --id debug-build --path /path/to/debug-binary --debug stabs --donor
+uv run agentdecompile-corpus add-binary --corpus target/corpus.json \
+  --id release-build --path /path/to/release-binary
+uv run agentdecompile-corpus run --corpus target/corpus.json \
+  --snapshot-dir target/extracts --work-dir target/corpus-run --stop-after compile
+```
+
+Full contract: [docs/CORPUS_PIPELINE.md](docs/CORPUS_PIPELINE.md). Folder flow: [docs/corpus/README.md](docs/corpus/README.md).
 
 ## Session-Validated Commands
 
