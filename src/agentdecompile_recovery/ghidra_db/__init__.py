@@ -53,6 +53,7 @@ from .program import (
 from .project import (
     ProgramEntry,
     ProjectLayoutError,
+    VersionInfo,
     find_program,
     iter_program_entries,
     list_programs,
@@ -76,6 +77,7 @@ __all__ = [
     "ProgramEntry",
     "ProgramMetadata",
     "ProjectLayoutError",
+    "VersionInfo",
     "Symbol",
     "SymbolType",
     "census_names",

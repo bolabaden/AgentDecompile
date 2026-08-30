@@ -59,7 +59,8 @@ from __future__ import annotations
 
 import re
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 from xml.etree import ElementTree
@@ -79,6 +80,21 @@ DATABASE_FILE_PREFIX = "db."
 BUFFER_FILE_EXTENSION = ".gbf"
 _DATABASE_FILE_PATTERN = re.compile(r"^db\.(\d+)\.gbf$")
 
+# LocalVersionedItem version files alongside the current database.
+# ver.N.gbf holds the older database snapshot for version N.
+VERSION_FILE_PREFIX = "ver."
+_VERSION_FILE_PATTERN = re.compile(r"^ver\.(\d+)\.gbf$")
+
+# history.dat lives in the same .db directory and stores check-in metadata.
+HISTORY_DAT = "history.dat"
+
+# Keys written by Ghidra's VersionInfo.writeHistory (Java properties format).
+_HISTORY_COUNT_RE = re.compile(r"^VERSION_COUNT\s*=\s*(\d+)", re.MULTILINE)
+_HISTORY_ENTRY_RE = re.compile(
+    r"^VER_(?P<num>\d+)_(?P<key>DATE|COMMENT|USER)\s*=\s*(?P<val>.*)$",
+    re.MULTILINE,
+)
+
 # Item data roots inside a local project, in the order a caller would expect to
 # find a program. A server repository has none of these: it is a root itself.
 DATA_ROOTS = ("idata", "data", "versioned")
@@ -91,6 +107,75 @@ PROGRAM_CONTENT_TYPE = "Program"
 
 class ProjectLayoutError(Exception):
     """Raised when a path is not a readable Ghidra project."""
+
+
+@dataclass(frozen=True)
+class VersionInfo:
+    """Metadata for one check-in version of a program item.
+
+    ``date`` is ``None`` when ``history.dat`` is absent or does not parse.
+    ``comment`` is ``None`` likewise.
+    """
+
+    version: int
+    date: datetime | None = field(default=None)
+    comment: str | None = field(default=None)
+    user: str | None = field(default=None)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "date": self.date.isoformat() if self.date is not None else None,
+            "comment": self.comment,
+            "user": self.user,
+        }
+
+
+def _parse_history_dat(database_dir: Path) -> dict[int, dict[str, str]]:
+    """Parse ``history.dat`` inside a database directory.
+
+    Returns a mapping of version number → ``{DATE, COMMENT, USER}`` strings.
+    Returns an empty dict if the file is absent or cannot be parsed, so callers
+    always get clean metadata rather than an error.
+
+    Ghidra writes ``history.dat`` with ``VersionInfo.writeHistory``; the format
+    is a flat Java-properties-style text file::
+
+        VERSION_COUNT=N
+        VER_1_DATE=<epoch-millis>
+        VER_1_COMMENT=<text>
+        VER_1_USER=<username>
+        ...
+    """
+
+    history_file = database_dir / HISTORY_DAT
+    if not history_file.is_file():
+        return {}
+    try:
+        text = history_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+
+    entries: dict[int, dict[str, str]] = {}
+    for m in _HISTORY_ENTRY_RE.finditer(text):
+        num = int(m.group("num"))
+        key = m.group("key")
+        val = m.group("val").strip()
+        entries.setdefault(num, {})[key] = val
+    return entries
+
+
+def _epoch_millis_to_datetime(value: str) -> datetime | None:
+    """Convert a string epoch-millisecond value to an aware ``datetime``.
+
+    Returns ``None`` on any parse failure so callers degrade gracefully.
+    """
+
+    try:
+        millis = int(value)
+        return datetime.fromtimestamp(millis / 1000.0, tz=timezone.utc)
+    except (ValueError, OSError, OverflowError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -113,10 +198,81 @@ class ProgramEntry:
         folder = self.folder_path if self.folder_path.startswith("/") else f"/{self.folder_path}"
         return f"{folder.rstrip('/')}/{self.name}"
 
-    def open(self) -> GhidraProgram:
-        """Open the program database this entry points at."""
+    @property
+    def database_dir(self) -> Path:
+        """The `~XXXXXXXX.db` directory containing the database files."""
 
-        return GhidraProgram(self.database_path)
+        return self.database_path.parent
+
+    def list_versions(self) -> list[VersionInfo]:
+        """All available version numbers for this item, sorted ascending.
+
+        Includes both historical ``ver.N.gbf`` snapshots and the current
+        ``db.N.gbf``.  Dates and comments are populated from ``history.dat``
+        when that file is present and parseable; otherwise they are ``None``.
+        """
+
+        db_dir = self.database_dir
+        available: set[int] = set()
+
+        # Single pass: collect both current (db.N.gbf) and historical (ver.N.gbf) files.
+        for entry in db_dir.iterdir():
+            if not entry.is_file():
+                continue
+            m = _DATABASE_FILE_PATTERN.match(entry.name)
+            if m:
+                available.add(int(m.group(1)))
+                continue
+            m = _VERSION_FILE_PATTERN.match(entry.name)
+            if m:
+                available.add(int(m.group(1)))
+
+        history = _parse_history_dat(db_dir)
+
+        result: list[VersionInfo] = []
+        for num in sorted(available):
+            meta = history.get(num, {})
+            date_str = meta.get("DATE")
+            result.append(
+                VersionInfo(
+                    version=num,
+                    date=_epoch_millis_to_datetime(date_str) if date_str else None,
+                    comment=meta.get("COMMENT") or None,
+                    user=meta.get("USER") or None,
+                )
+            )
+        return result
+
+    def open(self, version: int | None = None) -> GhidraProgram:
+        """Open the program database for the given version, or the current one.
+
+        ``version=None`` opens the highest-numbered ``db.N.gbf`` (the current
+        version, matching the prior behaviour).  Any other value must correspond
+        to a ``db.N.gbf`` or ``ver.N.gbf`` file present in the database
+        directory; if it does not, ``ProjectLayoutError`` is raised with the
+        list of available versions.
+        """
+
+        if version is None:
+            return GhidraProgram(self.database_path)
+
+        db_dir = self.database_dir
+
+        # Current-generation file for this version number.
+        db_candidate = db_dir / f"{DATABASE_FILE_PREFIX}{version}{BUFFER_FILE_EXTENSION}"
+        if db_candidate.is_file():
+            return GhidraProgram(db_candidate)
+
+        # Historical snapshot.
+        ver_candidate = db_dir / f"{VERSION_FILE_PREFIX}{version}{BUFFER_FILE_EXTENSION}"
+        if ver_candidate.is_file():
+            return GhidraProgram(ver_candidate)
+
+        available = [vi.version for vi in self.list_versions()]
+        raise ProjectLayoutError(
+            f"{self.project_path}: version {version} is not present "
+            f"(available: {available})"
+        )
 
     def to_json(self) -> dict[str, Any]:
         return {
