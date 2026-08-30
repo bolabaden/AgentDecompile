@@ -31,8 +31,11 @@ silently produces wrong candidates and is worse than none.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Iterable
+
+from .c_rendering import c_identifier, safe_c_type
 
 from .ghidra_db.program import GhidraProgram, LocalVariable, SymbolType
 from .symbol_map import ARITY_CONTRADICTED, check_signature_arity
@@ -250,6 +253,7 @@ UNDEFINED_TYPE_NAME = "undefined"
 # Data-type table names, as written by the DataTypeManagerDB adapters.
 BUILTIN_TYPES_TABLE = "Built-in datatypes"
 COMPOSITE_TYPES_TABLE = "Composite Data Types"
+COMPONENT_TYPES_TABLE = "Component Data Types"
 ARRAY_TYPES_TABLE = "Arrays"
 POINTER_TYPES_TABLE = "Pointers"
 TYPEDEF_TYPES_TABLE = "Typedefs"
@@ -263,7 +267,6 @@ GENERIC_POINTER_NAME = "void *"
 
 # Guards a cyclic typedef/pointer chain; real chains are two or three deep.
 _MAX_TYPE_DEPTH = 8
-
 
 class CuratedTypeIndex:
     """Data-type ids resolved to source-level type names, for one program.
@@ -400,6 +403,90 @@ class CuratedTypeIndex:
         if convention_id is None:
             return None
         return self.calling_conventions.get(int(convention_id))
+
+
+def _field_declaration(type_name: str, field_name: str) -> str:
+    """Place an array dimension after the field name, as C requires."""
+
+    match = re.fullmatch(r"(.+?)(\[[0-9]+\])", type_name.strip())
+    if match:
+        return f"{match.group(1).strip()} {field_name}{match.group(2)}"
+    return f"{type_name.strip()} {field_name}"
+
+
+def build_curated_type_definitions(
+    program: GhidraProgram,
+    *,
+    types: CuratedTypeIndex | None = None,
+) -> dict[str, str]:
+    """Render Ghidra composite layouts as prompt-only C definitions.
+
+    Definitions preserve the stored field order, offsets, union/struct shape,
+    and total size. Unknown component types become byte arrays of the recorded
+    component size rather than a guessed scalar type. These definitions are
+    evidence for the model; they are deliberately not injected into ``ctx.h``.
+    """
+
+    if program.table(COMPOSITE_TYPES_TABLE) is None:
+        return {}
+    types = types or CuratedTypeIndex.from_program(program)
+    components: dict[int, list[dict[str, Any]]] = {}
+    if program.table(COMPONENT_TYPES_TABLE) is not None:
+        for row in program.rows(COMPONENT_TYPES_TABLE):
+            parent = row.get("Parent")
+            if parent is not None:
+                components.setdefault(int(parent), []).append(row)
+
+    definitions: dict[str, str] = {}
+    for row in program.rows(COMPOSITE_TYPES_TABLE):
+        datatype_id = row.get("Data Type ID")
+        raw_name = str(row.get("Name") or "")
+        if datatype_id is None or not raw_name:
+            continue
+        type_name = c_identifier(raw_name, fallback="AnonymousType")
+        is_union = bool(row.get("Is Union"))
+        kind = "union" if is_union else "struct"
+        try:
+            total_size = max(0, int(row.get("Length") or 0))
+        except (TypeError, ValueError):
+            total_size = 0
+        rows = sorted(
+            components.get(int(datatype_id), []),
+            key=lambda item: (int(item.get("Ordinal") or 0), int(item.get("Offset") or 0)),
+        )
+        body: list[str] = []
+        cursor = 0
+        for index, component in enumerate(rows):
+            try:
+                offset = max(0, int(component.get("Offset") or 0))
+                size = max(1, int(component.get("Component Size") or 1))
+            except (TypeError, ValueError):
+                continue
+            if not is_union and offset > cursor:
+                body.append(f"    unsigned char _padding_{cursor:x}[{offset - cursor}]; /* 0x{cursor:x} */")
+            field_name = c_identifier(component.get("Field Name"), fallback=f"field_{index}")
+            resolved = types.type_name(component.get("Data Type ID"))
+            if resolved in (None, UNDEFINED_TYPE_NAME):
+                declaration = f"unsigned char {field_name}[{size}]"
+            else:
+                declaration = _field_declaration(
+                    safe_c_type(resolved, fallback=UNDEFINED_TYPE_NAME), field_name
+                )
+            body.append(f"    {declaration}; /* 0x{offset:x} */")
+            if not is_union:
+                cursor = max(cursor, offset + size)
+        if not body and total_size:
+            body.append(f"    unsigned char _data[{total_size}]; /* 0x0 */")
+        elif not is_union and total_size > cursor:
+            body.append(f"    unsigned char _padding_{cursor:x}[{total_size - cursor}]; /* 0x{cursor:x} */")
+        if not body:
+            continue
+        definitions[raw_name] = (
+            f"typedef {kind} {type_name} {{\n"
+            + "\n".join(body)
+            + f"\n}} {type_name}; /* size: 0x{total_size:x} */"
+        )
+    return definitions
 
 
 @dataclass(frozen=True)
@@ -566,7 +653,11 @@ def build_curated_signature(
     )
 
 
-def build_curated_signatures(program: GhidraProgram) -> dict[int, CuratedSignature]:
+def build_curated_signatures(
+    program: GhidraProgram,
+    *,
+    types: CuratedTypeIndex | None = None,
+) -> dict[int, CuratedSignature]:
     """Curated prototypes keyed by function entry VA.
 
     Functions with an empty stored name are skipped: Ghidra synthesises their
@@ -574,7 +665,7 @@ def build_curated_signatures(program: GhidraProgram) -> dict[int, CuratedSignatu
     carry and the prototype alone would rename nothing.
     """
 
-    types = CuratedTypeIndex.from_program(program)
+    types = types or CuratedTypeIndex.from_program(program)
     namespaces = namespace_paths(program)
     parameters_by_symbol = parameter_symbols_by_function(program)
 

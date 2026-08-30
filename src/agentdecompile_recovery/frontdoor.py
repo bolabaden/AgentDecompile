@@ -1131,6 +1131,10 @@ def run_upstream_command_guard(command: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
+    if args and args[0] == "corpus":
+        from .corpus.cli import main as corpus_main
+
+        return corpus_main(args[1:])
     if args and args[0] == "self-check":
         return run_self_check(build_self_check_parser().parse_args(args[1:]))
     if args and args[0] == "upstream-status":

@@ -18,9 +18,12 @@ Package: `src/agentdecompile_recovery/` plus companion scripts under `scripts/`.
 
 Current integrated entrypoints:
 
+- `agentdecompile-corpus` → `agentdecompile_recovery.corpus.cli:main` (main multi-binary pipeline)
 - `agentdecompile-recover` → `agentdecompile_recovery.cli:main`
-- `agentdecompile-reconstruct` → `agentdecompile_recovery.frontdoor:main`
+- `agentdecompile-reconstruct` → `agentdecompile_recovery.frontdoor:main` (`corpus` subcommand delegates)
 - `scripts/decomp-cli.sh` → recovery/source-parity helper front door
+
+Corpus contract and stages: [docs/CORPUS_PIPELINE.md](docs/CORPUS_PIPELINE.md). Living plan: [docs/plans/2026-08-30-corpus-semantic-pipeline-living-plan.md](docs/plans/2026-08-30-corpus-semantic-pipeline-living-plan.md). Add binaries with `agentdecompile-corpus add-binary`; do not hardcode product stems. First priority is linking one STABS/DWARF donor project to a complete executable. Do not claim completion from dashboard 8791 or Atlas 5173.
 
 Fast recovery dump (AgentDecompile only): see [docs/CRITICAL_PATH.md](docs/CRITICAL_PATH.md) — `agentdecompile-reconstruct … --resume --dump-source DIR`. Default reconstruct runs PyGhidra enrich-decompile before source generation (`--skip-enrichment` to opt out). Never claim match without objdiff 0; never promote byte-emitters into `verified/`. Profiles are format/stem-derived (PE vs ELF); do not hardcode product binaries into recovery defaults.
 

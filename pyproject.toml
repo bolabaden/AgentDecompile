@@ -74,6 +74,7 @@ agentdecompile        = "agentdecompile_cli.cli:cli_entry_point"
 agentdecompile-cli    = "agentdecompile_cli.cli:cli_entry_point"
 agentdecompile-recover = "agentdecompile_recovery.cli:main"
 agentdecompile-reconstruct = "agentdecompile_recovery.frontdoor:main"
+agentdecompile-corpus = "agentdecompile_recovery.corpus.cli:main"
 agentdecompile-acquisition-query = "agentdecompile_recovery.acquisition_mcp:main"
 # MCP stdio entrypoint.
 agentdecompile-mcp    = "agentdecompile_cli.__main__:main"
