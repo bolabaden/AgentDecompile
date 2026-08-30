@@ -474,6 +474,29 @@ def build_parser() -> argparse.ArgumentParser:
     run_pipeline.add_argument("--get-context-script", default="", help="Setup-phase shell script generating context content (e.g. relevant type definitions) on stdout.")
     run_pipeline.add_argument("--integrator-module", type=Path, help="Post-match phase: Python module exporting integrate(function_name, generated_code, project_root, helpers) to insert matched code into the project source tree.")
     run_pipeline.add_argument("--integrator-build-command", help="Command to verify the project still builds after integration.")
+
+    census = sub.add_parser(
+        "name-census",
+        help="Report the curated-name quality of a Ghidra program database (no JVM required).",
+    )
+    census_src = census.add_mutually_exclusive_group(required=True)
+    census_src.add_argument(
+        "--db",
+        type=Path,
+        metavar="PATH",
+        help="Direct path to a Ghidra program database file (db.N.gbf).",
+    )
+    census_src.add_argument(
+        "--project",
+        type=Path,
+        help="Ghidra project (.gpr file or .rep directory) containing the target program.",
+    )
+    census.add_argument(
+        "--project-program",
+        metavar="NAME",
+        help="Program name/path within --project (required when the project holds more than one program).",
+    )
+
     return parser
 
 
@@ -496,6 +519,35 @@ def add_package_verify_args(parser: argparse.ArgumentParser) -> None:
 def run_inspect(args: argparse.Namespace) -> int:
     identity = identify_binary(args.input, args.preferred_name)
     print(json.dumps(identity.to_json(), indent=2, sort_keys=True))
+    return 0
+
+
+def run_name_census(args: argparse.Namespace) -> int:
+    from .ghidra_db import census_names, open_program
+    from .ghidra_db.project import list_programs, open_project_program
+
+    if args.db is not None:
+        program = open_program(args.db)
+    else:
+        if args.project_program:
+            program = open_project_program(args.project, args.project_program)
+        else:
+            programs = list_programs(args.project)
+            if len(programs) == 0:
+                print(json.dumps({"error": "no programs found in project"}, indent=2), file=sys.stderr)
+                return 1
+            if len(programs) > 1:
+                names = [p.project_path for p in programs]
+                print(
+                    json.dumps({"error": "multiple programs in project; use --project-program", "programs": names}, indent=2),
+                    file=sys.stderr,
+                )
+                return 1
+            program = programs[0].open()
+
+    with program:
+        result = census_names(program)
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 
@@ -1194,6 +1246,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_atlas_serve_command(args)
     if args.command == "run":
         return run_run_pipeline_command(args)
+    if args.command == "name-census":
+        return run_name_census(args)
     parser.print_help()
     return 2
 
