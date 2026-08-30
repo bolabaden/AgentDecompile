@@ -129,7 +129,7 @@ def sniff_path(path: Path) -> SniffResult:
         # Check for a sibling archive that the directory may be an incomplete
         # extraction of.  A silent "directory, nothing here" is worse than
         # explaining why it looks empty.
-        from .corpus_archive import check_extraction, find_sibling_archive  # lazy import
+        from .corpus.archive import check_extraction, find_sibling_archive  # lazy import
 
         sibling_zip = find_sibling_archive(resolved)
         if sibling_zip is not None:

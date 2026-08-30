@@ -14,6 +14,7 @@ def test_every_production_prompt_surface_has_complete_rationale() -> None:
         "integrator_build_fix",
         "matcher_prompt",
         "one_shot_source",
+        "llm_cleanup",
         "mcp_workflows",
     }
 

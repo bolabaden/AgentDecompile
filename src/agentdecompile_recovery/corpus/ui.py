@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import urllib.error
 import urllib.request
 from typing import Any
 
 from .contract import DEFAULT_ATLAS_PORT, DEFAULT_DASHBOARD_PORT, DEFAULT_REPORT_PORT
+from .io import write_json
 
 
 def probe_url(url: str, timeout: float = 2.0) -> dict[str, Any]:
@@ -45,5 +45,4 @@ def probe_live_ui(
 
 
 def write_ui_receipt(path, receipt: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    write_json(path, receipt)

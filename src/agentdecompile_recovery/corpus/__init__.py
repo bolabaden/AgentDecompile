@@ -19,5 +19,7 @@ __all__ = [
     "is_placeholder_name",
     "is_recovered_source",
     "load_corpus",
+    "resolve_members",
+    "sanitize_body",
     "save_corpus",
 ]

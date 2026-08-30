@@ -11,7 +11,6 @@ Covers:
 
 from __future__ import annotations
 
-import io
 import json
 import zipfile
 from pathlib import Path
@@ -19,9 +18,6 @@ from pathlib import Path
 import pytest
 
 from agentdecompile_recovery.corpus_archive import (
-    ArchiveEntry,
-    ArchiveSummary,
-    ExtractionReport,
     archive_summary,
     check_extraction,
     find_sibling_archive,

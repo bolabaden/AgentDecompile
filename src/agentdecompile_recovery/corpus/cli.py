@@ -7,9 +7,72 @@ import json
 import sys
 from pathlib import Path
 
+from .archive import check_extraction, list_archive, summarize_entries
 from .contract import PIPELINE_STAGES, PRIORITIES
 from .pipeline import run_corpus_pipeline
 from .registry import add_binary, load_corpus, new_corpus, save_corpus
+
+
+def run_list_archive_command(args: argparse.Namespace) -> int:
+    archive: Path = args.archive
+    if not archive.is_file():
+        print(f"error: {archive} is not a file", file=sys.stderr)
+        return 1
+
+    entries = list(list_archive(archive))
+    if getattr(args, "output_json", False):
+        summary = summarize_entries(archive, entries)
+        shown = [e.to_json() for e in entries if not (args.files_only and e.is_dir)]
+        print(json.dumps({"summary": summary.to_json(), "entries": shown}, indent=2))
+        return 0
+    total_files = 0
+    total_uncompressed = 0
+    for entry in entries:
+        if entry.is_dir and args.files_only:
+            continue
+        kind_tag = f"  [{entry.ghidra_kind}]" if entry.ghidra_kind else ""
+        if entry.is_dir:
+            print(f"         -  {entry.name.rstrip('/')}/{kind_tag}")
+        else:
+            print(f"  {entry.file_size:>12,}  {entry.name}{kind_tag}")
+            total_files += 1
+            total_uncompressed += entry.file_size
+    print(f"\n  {total_uncompressed:>12,}  {total_files} files")
+    return 0
+
+
+def run_check_extraction_command(args: argparse.Namespace) -> int:
+    archive: Path = args.archive
+    directory: Path = args.directory
+    if not archive.is_file():
+        print(f"error: {archive} is not a file", file=sys.stderr)
+        return 1
+    if not directory.is_dir():
+        print(f"error: {directory} is not a directory", file=sys.stderr)
+        return 1
+
+    report = check_extraction(archive, directory, check_extra=not args.no_extra)
+    if getattr(args, "output_json", False):
+        print(json.dumps(report.to_json(), indent=2))
+    else:
+        print(f"archive:   {archive}")
+        print(f"directory: {directory}")
+        print(f"status:    {report.status}")
+        if report.missing:
+            print(f"\nmissing ({len(report.missing)}):")
+            for name in report.missing:
+                print(f"  {name}")
+        if report.size_mismatch:
+            print(f"\nsize mismatch ({len(report.size_mismatch)}):")
+            for item in report.size_mismatch:
+                print(f"  {item['path']}  expected={item['expectedBytes']}  actual={item['actualBytes']}")
+        if report.extra:
+            print(f"\nextra ({len(report.extra)}):")
+            for name in report.extra:
+                print(f"  {name}")
+        if report.is_complete:
+            print("\nExtraction is complete.")
+    return 0 if report.is_complete else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,6 +127,20 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("stages", help="Print the contract stages and priorities")
 
+    list_archive = sub.add_parser("list-archive", help="List a corpus ZIP without extracting it")
+    list_archive.add_argument("archive", type=Path)
+    list_archive.add_argument("--json", action="store_true", dest="output_json")
+    list_archive.add_argument("--files-only", action="store_true")
+
+    check_extraction = sub.add_parser(
+        "check-extraction",
+        help="Compare an extracted directory against its source archive",
+    )
+    check_extraction.add_argument("archive", type=Path)
+    check_extraction.add_argument("directory", type=Path)
+    check_extraction.add_argument("--no-extra", action="store_true")
+    check_extraction.add_argument("--json", action="store_true", dest="output_json")
+
     args = parser.parse_args(argv)
     if args.cmd == "init":
         save_corpus(args.out, new_corpus(args.corpus_id))
@@ -78,12 +155,11 @@ def main(argv: list[str] | None = None) -> int:
             debug=args.debug,
             donor=args.donor,
             label=args.label,
+            arch=args.arch,
+            bits=args.bits,
+            format=args.file_format,
+            game=args.game,
         )
-        entry = corpus.binary(args.binary_id)
-        entry.arch = args.arch
-        entry.bits = args.bits
-        entry.format = args.file_format
-        entry.game = args.game
         if args.threshold_with:
             from .registry import PairThreshold
 
@@ -135,6 +211,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "stages":
         print(json.dumps({"stages": PIPELINE_STAGES, "priorities": PRIORITIES}, indent=2))
         return 0
+    if args.cmd == "list-archive":
+        return run_list_archive_command(args)
+    if args.cmd == "check-extraction":
+        return run_check_extraction_command(args)
     return 2
 
 

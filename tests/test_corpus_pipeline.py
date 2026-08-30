@@ -11,7 +11,7 @@ from agentdecompile_recovery.corpus.canon import canonicalize, is_eh_clone
 from agentdecompile_recovery.corpus.cli import main as corpus_main
 from agentdecompile_recovery.corpus.ghidra_sanitize import sanitize_body
 from agentdecompile_recovery.corpus.identity import bind_identities, propagate_compiling_source
-from agentdecompile_recovery.corpus.match_engine import match_binaries, score_features
+from agentdecompile_recovery.corpus.match_engine import PAIR_POLICY, match_binaries, score_features
 from agentdecompile_recovery.corpus.naming import choose_name, resolve_members
 from agentdecompile_recovery.corpus.pipeline import run_corpus_pipeline
 from agentdecompile_recovery.corpus.registry import add_binary, new_corpus, save_corpus
@@ -54,7 +54,8 @@ def test_machine_code_shim_is_not_source() -> None:
 
 
 def test_stabs_path_becomes_workspace_relative() -> None:
-    assert rel_source("/AspyrBuild/depot/KOTOR/PC Source/Dev/game/add.cpp") == "KOTOR/PC Source/Dev/game/add.cpp"
+    assert rel_source("/Users/dev/src/game/add.cpp") == "dev/src/game/add.cpp"
+    assert rel_source("/AspyrBuild/depot/game/add.cpp") == "AspyrBuild/depot/game/add.cpp"
     assert rel_source("/tmp/../etc/passwd.c") is None
 
 
@@ -71,6 +72,18 @@ def test_source_is_not_copied_until_compile(tmp_path: Path) -> None:
     placed = propagate_compiling_source(functions, bindings, compiled_ids={"a"})
     assert placed
     assert functions["other"][0]["source"] == ADD_C
+    assert functions["other"][0]["source_binary"] == "donor"
+
+
+def test_source_binary_follows_binding_when_ids_collide() -> None:
+    functions = {
+        "other": [{"id": "a", "name": "add_one", "size": 32, "source": ""}],
+        "donor": [{"id": "a", "name": "add_one", "size": 32, "source": ADD_C}],
+    }
+    bindings = bind_identities(functions)
+    propagate_compiling_source(functions, bindings, compiled_ids={"a"})
+    assert functions["other"][0]["source"] == ADD_C
+    assert functions["other"][0]["source_binary"] == "donor"
 
 
 def test_shim_never_propagates() -> None:
@@ -176,6 +189,34 @@ def test_cli_add_binary_and_stages(tmp_path: Path) -> None:
     data = json.loads(corpus.read_text(encoding="utf-8"))
     assert data["donorId"] == "mac-debug"
     assert data["binaries"][0]["debug"] == "stabs"
+    assert (
+        corpus_main(
+            [
+                "add-binary",
+                "--corpus",
+                str(corpus),
+                "--id",
+                "win-release",
+                "--path",
+                "/binaries/release",
+                "--arch",
+                "x86",
+                "--bits",
+                "32",
+                "--format",
+                "PE",
+                "--game",
+                "demo",
+            ]
+        )
+        == 0
+    )
+    data = json.loads(corpus.read_text(encoding="utf-8"))
+    member = next(item for item in data["binaries"] if item["id"] == "win-release")
+    assert member["arch"] == "x86"
+    assert member["bits"] == 32
+    assert member["format"] == "PE"
+    assert member["game"] == "demo"
     assert corpus_main(["stages"]) == 0
 
 
@@ -232,6 +273,15 @@ def test_matcher_accepts_shared_rare_string() -> None:
     assert score > 0.7
     hits = match_binaries(left, right, left_meta={"arch": "x86", "bits": 32, "format": "PE", "game": "g"}, right_meta={"arch": "x86", "bits": 32, "format": "PE", "game": "g"})
     assert hits and hits[0]["status"] == "auto"
+    bindings = bind_identities(
+        {"left": left, "right": right},
+        metas={
+            "left": {"arch": "x86", "bits": 32, "format": "PE", "game": "g"},
+            "right": {"arch": "x86", "bits": 32, "format": "PE", "game": "g"},
+        },
+    )
+    assert bindings
+    assert bindings[0]["threshold"] == PAIR_POLICY["same_platform"]["auto"][0]
 
 
 def test_canon_and_eh_clone() -> None:

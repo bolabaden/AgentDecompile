@@ -2,7 +2,7 @@
 
 **Status:** active  
 **Created:** 2026-08-30  
-**Last updated:** 2026-08-30 (kotorxid merge)  
+**Last updated:** 2026-08-30 (corpus layout cleanup)  
 **Code:** `src/agentdecompile_recovery/corpus/`  
 **CLI:** `agentdecompile-corpus`
 
@@ -42,6 +42,6 @@ flowchart TD
 
 ### Delta Update
 
-- Landed: kotorxid logic merged into `corpus/`: name precedence + resolve, real-C shim test (including symbol-alias exception), Mach-O STABS reader + `extract-stabs`, multi-signal matcher (`PAIR_POLICY`, content blocking, margin), Ghidra-C sanitizers (thiscall, templates, CONCAT/SUB, field spellings), EH-clone / canon keys, compile preamble. Fixture still links a complete executable.
+- Landed: archive inventory lives in `corpus/archive.py` (compat shim at `corpus_archive`); `list-archive` / `check-extraction` on `agentdecompile-corpus`; identity `source_binary` follows the binding; feature-match `threshold` is the PAIR_POLICY auto cutoff; workspace path strip is generic (`/Users/`, `/home/` only); compile no longer wipes `build/` unless compile is planned.
 - Partial: no kotorxid SQLite/`cl.exe` driver in-tree; Wine/MSVC compile remains the operator toolchain. Dashboard 8791 is still the kotorxid process. Byte-accuracy still a receipt.
 - Next: extract a real STABS donor with `extract-stabs`, register it `--donor`, `--stop-after compile`.
