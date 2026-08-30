@@ -47,6 +47,7 @@ from .program import (
     ProgramMetadata,
     Symbol,
     SymbolType,
+    census_names,
     open_program,
 )
 from .project import (
@@ -77,6 +78,7 @@ __all__ = [
     "ProjectLayoutError",
     "Symbol",
     "SymbolType",
+    "census_names",
     "extract_database",
     "find_program",
     "is_packed_file",
