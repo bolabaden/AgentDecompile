@@ -7,7 +7,6 @@ units compile. Byte-accuracy is last and is a separate property.
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -17,21 +16,13 @@ from .compile_link import compile_unit, find_c_compiler, link_executable
 from .contract import CLAIM_BOUNDARY, SCHEMA, stages_through
 from .ghidra_sanitize import compile_preamble, sanitize_body
 from .identity import bind_identities, propagate_compiling_source
+from .io import read_json, write_json
 from .llm_cleanup import cleanup_ghidra_c, function_identifier, program_path_for_row
 from .naming import choose_name, resolve_members
 from .registry import CorpusManifest
 from .source_claims import is_recovered_source
 from .ui import probe_live_ui, write_ui_receipt
 from .workspace import fill_function, write_skeleton
-
-
-def _read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def load_function_snapshot(corpus: CorpusManifest, snapshot_dir: Path) -> dict[str, list[dict[str, Any]]]:
@@ -43,7 +34,7 @@ def load_function_snapshot(corpus: CorpusManifest, snapshot_dir: Path) -> dict[s
             continue
         path = snapshot_dir / f"{entry.id}.functions.json"
         if path.is_file():
-            rows = _read_json(path)
+            rows = read_json(path)
             out[entry.id] = list(rows) if isinstance(rows, list) else list(rows.get("functions") or [])
         else:
             out[entry.id] = []
@@ -132,7 +123,7 @@ def run_corpus_pipeline(
             "functions": extracted,
             "total": sum(extracted.values()),
         }
-        _write_json(work_dir / "extract.json", receipts["extract"])
+        write_json(work_dir / "extract.json", receipts["extract"])
 
     if "identify" in planned:
         thresholds = {}
@@ -149,7 +140,7 @@ def run_corpus_pipeline(
         }
         bindings = bind_identities(functions, thresholds=thresholds, metas=metas)
         receipts["identify"] = {"bindings": len(bindings), "rows": bindings}
-        _write_json(work_dir / "identify.json", receipts["identify"])
+        write_json(work_dir / "identify.json", receipts["identify"])
 
     if "merge-knowledge" in planned:
         merge_names(functions)
@@ -167,30 +158,30 @@ def run_corpus_pipeline(
                 for row in members:
                     row["name"], row["name_tier"] = won["name"], won["tier"]
         receipts["merge-knowledge"] = {"named": sum(1 for rows in functions.values() for r in rows if r.get("name"))}
-        _write_json(work_dir / "merge-knowledge.json", receipts["merge-knowledge"])
+        write_json(work_dir / "merge-knowledge.json", receipts["merge-knowledge"])
 
     if "generate-projects" in planned:
         donor_rows = functions.get(donor.id, []) if donor else []
         skeleton = write_skeleton(workspace, donor_rows)
         receipts["generate-projects"] = skeleton
-        _write_json(work_dir / "generate-projects.json", skeleton)
+        write_json(work_dir / "generate-projects.json", skeleton)
 
     if "recover-source" in planned:
         receipts["recover-source"] = recover_units(functions)
-        _write_json(work_dir / "recover-source.json", receipts["recover-source"])
+        write_json(work_dir / "recover-source.json", receipts["recover-source"])
 
     if "preparse" in planned:
         receipts["preparse"] = preparse_units(functions, known_globals=corpus.known_globals)
-        _write_json(work_dir / "preparse.json", receipts["preparse"])
+        write_json(work_dir / "preparse.json", receipts["preparse"])
 
     objects: list[Path] = []
     cc = compiler or find_c_compiler()
     build_dir = work_dir / "build"
-    if build_dir.exists():
-        shutil.rmtree(build_dir)
-    build_dir.mkdir(parents=True, exist_ok=True)
 
     if "compile" in planned:
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
+        build_dir.mkdir(parents=True, exist_ok=True)
         compile_rows: list[dict[str, Any]] = []
         if not cc:
             receipts["compile"] = {"ok": False, "reason": "no C compiler on PATH"}
@@ -253,12 +244,12 @@ def run_corpus_pipeline(
                 "link": link,
                 "completeExecutable": bool(link.get("ok")),
             }
-        _write_json(work_dir / "compile.json", receipts["compile"])
+        write_json(work_dir / "compile.json", receipts["compile"])
 
     if "apply-cross-build" in planned:
         placements = propagate_compiling_source(functions, bindings, compiled_ids)
         receipts["apply-cross-build"] = {"placements": placements, "count": len(placements)}
-        _write_json(work_dir / "apply-cross-build.json", receipts["apply-cross-build"])
+        write_json(work_dir / "apply-cross-build.json", receipts["apply-cross-build"])
 
     if "llm-cleanup" in planned:
         leftover = [
@@ -281,7 +272,7 @@ def run_corpus_pipeline(
                 else "Pass --llm (and have a C compiler) to edit leftover Ghidra C with the local claude CLI."
             ),
         }
-        _write_json(work_dir / "llm-cleanup.json", receipts["llm-cleanup"])
+        write_json(work_dir / "llm-cleanup.json", receipts["llm-cleanup"])
 
     if "verify-byte-accuracy" in planned:
         receipts["verify-byte-accuracy"] = {
@@ -293,10 +284,10 @@ def run_corpus_pipeline(
                 "does not invent a match."
             ),
         }
-        _write_json(work_dir / "verify-byte-accuracy.json", receipts["verify-byte-accuracy"])
+        write_json(work_dir / "verify-byte-accuracy.json", receipts["verify-byte-accuracy"])
 
     graph = build_call_graph(functions, bindings)
-    _write_json(work_dir / "call-graph.json", graph)
+    write_json(work_dir / "call-graph.json", graph)
 
     summary = {
         "schema": SCHEMA,
@@ -308,8 +299,8 @@ def run_corpus_pipeline(
         "claimBoundary": CLAIM_BOUNDARY,
         "priority": "compile-complete-executable",
     }
-    _write_json(work_dir / "corpus-run.json", summary)
-    _write_json(work_dir / "functions-state.json", functions)
+    write_json(work_dir / "corpus-run.json", summary)
+    write_json(work_dir / "functions-state.json", functions)
     return summary
 
 

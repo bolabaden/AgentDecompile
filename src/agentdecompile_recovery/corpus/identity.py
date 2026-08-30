@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from .canon import is_eh_clone
-from .match_engine import match_binaries
+from .match_engine import PAIR_POLICY, match_binaries
 from .source_claims import is_recovered_source
 
 
@@ -63,7 +63,7 @@ def bind_identities(
                                 f"margin {match['margin']}",
                                 f"content {match['content']}",
                             ],
-                            "threshold": match["score"],
+                            "threshold": PAIR_POLICY[match["pair_class"]]["auto"][0],
                             "kind": "identity",
                         }
                     )
@@ -122,11 +122,7 @@ def propagate_compiling_source(
                 continue
             dest["source"] = body
             dest["source_from"] = src_id
-            dest["source_binary"] = next(
-                bid
-                for bid, rows in functions_by_binary.items()
-                if any(str(item.get("id")) == src_id for item in rows)
-            )
+            dest["source_binary"] = bind["left"]["binary"] if source is left else bind["right"]["binary"]
             placements.append(
                 {
                     "from": src_id,

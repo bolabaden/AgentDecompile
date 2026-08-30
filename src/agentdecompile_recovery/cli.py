@@ -1243,68 +1243,15 @@ def run_run_pipeline_command(args: argparse.Namespace) -> int:
 
 
 def run_list_archive_command(args: argparse.Namespace) -> int:
-    from .corpus_archive import archive_summary, list_archive
+    from .corpus.cli import run_list_archive_command as _run
 
-    archive: Path = args.archive
-    if not archive.is_file():
-        print(f"error: {archive} is not a file", file=sys.stderr)
-        return 1
-
-    if getattr(args, "output_json", False):
-        summary = archive_summary(archive)
-        entries = [e.to_json() for e in list_archive(archive) if not (args.files_only and e.is_dir)]
-        print(json.dumps({"summary": summary.to_json(), "entries": entries}, indent=2))
-    else:
-        total_files = 0
-        total_uncompressed = 0
-        for entry in list_archive(archive):
-            if entry.is_dir and args.files_only:
-                continue
-            kind_tag = f"  [{entry.ghidra_kind}]" if entry.ghidra_kind else ""
-            if entry.is_dir:
-                print(f"         -  {entry.name}/{kind_tag}")
-            else:
-                print(f"  {entry.file_size:>12,}  {entry.name}{kind_tag}")
-                total_files += 1
-                total_uncompressed += entry.file_size
-        print(f"\n  {total_uncompressed:>12,}  {total_files} files")
-    return 0
+    return _run(args)
 
 
 def run_check_extraction_command(args: argparse.Namespace) -> int:
-    from .corpus_archive import check_extraction
+    from .corpus.cli import run_check_extraction_command as _run
 
-    archive: Path = args.archive
-    directory: Path = args.directory
-    if not archive.is_file():
-        print(f"error: {archive} is not a file", file=sys.stderr)
-        return 1
-    if not directory.is_dir():
-        print(f"error: {directory} is not a directory", file=sys.stderr)
-        return 1
-
-    report = check_extraction(archive, directory, check_extra=not args.no_extra)
-    if getattr(args, "output_json", False):
-        print(json.dumps(report.to_json(), indent=2))
-    else:
-        print(f"archive:   {archive}")
-        print(f"directory: {directory}")
-        print(f"status:    {report.status}")
-        if report.missing:
-            print(f"\nmissing ({len(report.missing)}):")
-            for name in report.missing:
-                print(f"  {name}")
-        if report.size_mismatch:
-            print(f"\nsize mismatch ({len(report.size_mismatch)}):")
-            for item in report.size_mismatch:
-                print(f"  {item['path']}  expected={item['expectedBytes']}  actual={item['actualBytes']}")
-        if report.extra:
-            print(f"\nextra ({len(report.extra)}):")
-            for name in report.extra:
-                print(f"  {name}")
-        if report.is_complete:
-            print("\nExtraction is complete.")
-    return 0 if report.is_complete else 1
+    return _run(args)
 
 
 def run_survey_project(args: argparse.Namespace) -> int:
@@ -1332,9 +1279,12 @@ def run_survey_project(args: argparse.Namespace) -> int:
                 row["compilerSpecId"] = meta.compiler_spec_id
                 row["imageBase"] = f"0x{meta.image_base:x}"
                 if not args.metadata_only:
-                    func_count = sum(1 for _ in prog.functions())
-                    curated = prog.names_by_entry(curated_only=True)
-                    curated_count = len(curated)
+                    func_count = 0
+                    curated_count = 0
+                    for function in prog.functions():
+                        func_count += 1
+                        if function.has_curated_name and function.entry is not None:
+                            curated_count += 1
                     row["functionCount"] = func_count
                     row["curatedCount"] = curated_count
                     if func_count:

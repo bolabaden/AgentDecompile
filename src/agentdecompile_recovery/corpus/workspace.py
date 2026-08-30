@@ -15,8 +15,6 @@ SAFE_SEG = re.compile(r"^[A-Za-z0-9._+\- ]+$")
 SOURCE_SUFFIXES = (".c", ".cpp", ".cp", ".cc", ".cxx", ".h", ".hpp", ".m", ".mm")
 
 STRIP_PREFIXES = (
-    "/AspyrBuild/depot/",
-    "/AspyrBuild/",
     "/Users/",
     "/home/",
 )

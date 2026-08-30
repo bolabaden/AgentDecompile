@@ -45,6 +45,11 @@ PROMPT_RATIONALE: dict[str, tuple[PromptChange, ...]] = {
         PromptChange("Request one candidate.c and name the exact verifier outcome.", "The older prompt mixed file-delivery instructions across two sections.", "One output contract and one gate reduce format failures.", "A directly verifiable translation unit."),
         PromptChange("Mark byte-emitter source as reference evidence, never semantic truth.", "The claim boundary was only stated at the end.", "Authority labels should appear next to potentially misleading evidence.", "No invented semantic claims from byte replay artifacts."),
     ),
+    "llm_cleanup": (
+        PromptChange("Edit the already-preparsed Ghidra body so a C compiler accepts it; keep the same function and parameter count.", "Failed units were left as raw Ghidra C or rewritten from scratch.", "Mechanical preparse already ran; the model should repair that body, not invent a new function.", "A compiler-accepted edit of the given unit."),
+        PromptChange("Require the agentdecompile-cli get-function dump as the only Ghidra authority, and return one fenced C function.", "Cleanup had no labeled evidence or output contract.", "Names, types, and callees come from the live Ghidra view; one fence is mechanically extractable.", "An auditable compile retry, not a free rewrite."),
+        PromptChange("Ban __asm, naked, _emit, .byte, and incbin in the edit.", "The cleanup surface did not restate the real-C boundary.", "Compile success is not recovery if the body is a machine-code shim.", "Readable C that can still face the recovered-source claim."),
+    ),
     "mcp_workflows": (
         PromptChange("Give each workflow a concrete role, scope, ordered procedure, stop condition, and evidence-ledger format.", "Nine persona-heavy prompts relied on EXHAUSTIVE, ALL, verbatim-output, and nickname openings.", "Bounded procedures and explicit continuation records work within context limits; leftover shout-words and nicknames override the shared contract.", "Reproducible analysis with honest coverage."),
         PromptChange("Require addresses, tool provenance, confidence, unresolved items, and mutation receipts.", "Reports asked for volume more often than evidence quality.", "Claims need traceable support and mutations need before/after records.", "Auditable reverse-engineering findings."),

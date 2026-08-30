@@ -369,3 +369,10 @@ test_shared_project/
 .coverage
 coverage.xml
 htmlcov/
+
+# Local scratch and session dumps (never commit)
+clutter/
+codex-session-*.md
+node_modules/
+/package.json
+/package-lock.json

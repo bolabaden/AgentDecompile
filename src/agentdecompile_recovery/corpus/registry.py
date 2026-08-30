@@ -109,8 +109,8 @@ def load_corpus(path: Path) -> CorpusManifest:
     for row in raw.get("pairThresholds") or raw.get("pair_thresholds") or []:
         pairs.append(
             PairThreshold(
-                left=row.get("left") or row["left"],
-                right=row.get("right") or row["right"],
+                left=row["left"],
+                right=row["right"],
                 min_confidence=float(row.get("min_confidence", row.get("minConfidence", 0.55))),
                 reason=str(row.get("reason") or ""),
             )
@@ -133,7 +133,7 @@ def save_corpus(path: Path, corpus: CorpusManifest) -> None:
     path.write_text(json.dumps(corpus.to_json(), indent=2) + "\n", encoding="utf-8")
 
 
-def new_corpus(corpus_id: str, *, work_dir: Path | None = None) -> CorpusManifest:
+def new_corpus(corpus_id: str) -> CorpusManifest:
     return CorpusManifest(id=corpus_id)
 
 
@@ -146,18 +146,25 @@ def add_binary(
     role: str | None = None,
     label: str = "",
     donor: bool = False,
+    arch: str = "",
+    bits: int = 0,
+    format: str = "",
+    game: str = "",
 ) -> CorpusManifest:
     """Add or replace one binary. `donor=True` marks STABS/DWARF layout source."""
     resolved_role = role or ("donor" if donor or debug in ("stabs", "dwarf") else "member")
     if donor:
         resolved_role = "donor"
-        corpus.donor_id = binary_id
     entry = BinaryEntry(
         id=binary_id,
         path=str(path),
         debug=debug,
         role=resolved_role,
         label=label,
+        arch=arch,
+        bits=bits,
+        format=format,
+        game=game,
     )
     corpus.binaries = [item for item in corpus.binaries if item.id != binary_id]
     corpus.binaries.append(entry)
