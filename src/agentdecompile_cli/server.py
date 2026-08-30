@@ -536,7 +536,7 @@ def _setup_project_paths(parser: Any, args: Any) -> tuple[str, str, Path | None]
 def _initialize_pyghidra(verbose_analysis: bool) -> None:
     """Initialize PyGhidra and apply session/output patches."""
     logger.debug("diag.enter %s", "server.py:_initialize_pyghidra")
-    from agentdecompile_cli.mcp_session_patch import _apply_mcp_session_fix
+    from agentdecompile_cli.bridge import _apply_mcp_session_fix
 
     _apply_mcp_session_fix()
 
