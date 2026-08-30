@@ -8,8 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Helpers: minimal PE builder + Rich header builder
 # ---------------------------------------------------------------------------
@@ -197,7 +195,6 @@ class TestRichHeaderCapture:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
         from agentdecompile_recovery.tools import (
             _read_rich_header_bytes,
-            _rich_region_zeroed,
             _write_rich_header_sidecar,
         )
 

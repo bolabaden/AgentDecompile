@@ -28,6 +28,18 @@ def test_pe_with_toolchain_selects_msvc() -> None:
     assert resolve_source_synthesis_mode("auto", target_format="pe", vc_root_available=True) == "msvc"
 
 
+def test_msvc_compiler_hint_selects_msvc_even_without_format_hint() -> None:
+    assert (
+        resolve_source_synthesis_mode(
+            "auto",
+            target_format=None,
+            vc_root_available=True,
+            compiler_hint={"family": "msvc", "version": "7.0", "source": "rich-header"},
+        )
+        == "msvc"
+    )
+
+
 def test_pe_without_toolchain_falls_back_to_clang_cl() -> None:
     """clang-cl at least uses MSVC calling conventions and name decoration."""
 
