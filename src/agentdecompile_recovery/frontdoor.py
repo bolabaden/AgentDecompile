@@ -23,6 +23,7 @@ from .acquire import acquire_context
 from .autonomy_budget import budget_from_args
 from .claim_report import write_claim_report
 from .critical_path import write_critical_path
+from .inventory import detect_pe_compiler_hint
 from .cli import add_unity_arguments, main as legacy_main, unity_config_kwargs
 from .package_verify import resolve_vc_root_option
 from .pipeline import RecoveryConfig, RecoveryRunner, resolve_source_synthesis_mode
@@ -95,6 +96,16 @@ def target_format_hint(target_path: Path, preferred_name: str | None = None) -> 
         return identify_binary(target_path, preferred_name).format
     except (FileNotFoundError, OSError, ValueError):
         return None
+
+
+def target_compiler_hint(target_path: Path, preferred_name: str | None = None) -> dict[str, Any] | None:
+    try:
+        identity = identify_binary(target_path, preferred_name)
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+    if identity.format != "pe":
+        return None
+    return detect_pe_compiler_hint(identity.binary_path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -398,6 +409,9 @@ def run_one_shot(args: argparse.Namespace) -> int:
     if getattr(args, "vc_root", None) and not getattr(args, "source_synthesis_vc_root", None):
         args.source_synthesis_vc_root = args.vc_root
     args.source_synthesis_vc_root = resolve_vc_root_option(getattr(args, "source_synthesis_vc_root", None))
+    compiler_hint = target_compiler_hint(args.input, args.preferred_name)
+    if compiler_hint and not args.source_synthesis_vc_root:
+        args.source_synthesis_vc_root = resolve_vc_root_option(compiler_hint.get("profile"))
     work_dir = args.work_dir or default_work_dir(args.input, args.preferred_name)
     work_dir.mkdir(parents=True, exist_ok=True)
     if getattr(args, "autonomous", False):
@@ -529,6 +543,7 @@ def run_one_shot(args: argparse.Namespace) -> int:
             args.source_synthesis,
             target_format=target_format_hint(args.input, args.preferred_name),
             vc_root_available=bool(args.source_synthesis_vc_root or getattr(args, "vc_root", None)),
+            compiler_hint=compiler_hint,
         ),
         source_synthesis_limit=args.source_synthesis_limit,
         source_synthesis_max_variants=args.source_synthesis_max_variants,

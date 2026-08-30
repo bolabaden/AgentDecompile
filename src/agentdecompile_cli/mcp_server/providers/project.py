@@ -93,6 +93,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _shared_key_auth_config(username: str, environ: dict[str, str] | None = None) -> tuple[str, bool]:
+    """Resolve an existing shared-server identity key without exposing it."""
+    env = os.environ if environ is None else environ
+    keyfile = (
+        env.get("AGENT_DECOMPILE_GHIDRA_SERVER_KEYFILE")
+        or env.get("AGENTDECOMPILE_GHIDRA_SERVER_KEYFILE")
+        or ""
+    ).strip()
+    return keyfile, bool(username and keyfile and Path(keyfile).is_file())
+
+
 def _shared_connection_context(
     *,
     stage: str,
@@ -1194,7 +1205,13 @@ class ProjectToolProvider(ToolProvider):
                 path = repo_name.strip()
                 logger.info("[connect-shared-project] Using repositoryName=%r as path", path)
 
-        auth_provided = bool(server_username and server_password)
+        # Ghidra shared repositories can authenticate headless clients with an
+        # SSH private key.  Password-only handling made the CLI unusable for
+        # otherwise healthy key-authenticated repositories (including read-only
+        # analysis automation).  Keep the key in an environment variable so it
+        # never appears in MCP payloads, logs, generated prompts, or shell args.
+        server_keyfile, key_auth = _shared_key_auth_config(server_username)
+        auth_provided = bool((server_username and server_password) or key_auth)
         server_reachable = False
         logger.info(
             "[connect-shared-project] resolved: host=%s, port=%d, username=%s, path=%r, auth=%s",
@@ -1232,7 +1249,11 @@ class ProjectToolProvider(ToolProvider):
             )
 
         try:
-            from ghidra.framework.client import ClientUtil, PasswordClientAuthenticator  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+            from ghidra.framework.client import (  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+                ClientUtil,
+                HeadlessClientAuthenticator,
+                PasswordClientAuthenticator,
+            )
         except Exception:
             raise ActionableError(
                 "Connected to shared server endpoint, but local Ghidra runtime is unavailable for repository browsing.",
@@ -1272,7 +1293,12 @@ class ProjectToolProvider(ToolProvider):
             except Exception:
                 pass
 
-        if server_username and server_password:
+        if key_auth:
+            logger.info("[connect-shared-project] Installing headless key authenticator")
+            HeadlessClientAuthenticator.installHeadlessClientAuthenticator(
+                server_username, server_keyfile, False
+            )
+        elif server_username and server_password:
             logger.info("[connect-shared-project] Setting PasswordClientAuthenticator")
             ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(server_username, server_password))
 

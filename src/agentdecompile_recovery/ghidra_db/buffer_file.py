@@ -19,8 +19,13 @@ For a plain ``LocalBufferFile`` the buffer *id* equals its *index* -- see
 ``db.buffers.BufferMgr`` ("use source buffer id as index") -- so a read is a
 single seek with no indirection.
 
-Version chaining (``ver.N.gbf``) is out of scope: only the current database
-version is read.
+Version chaining (``ver.N.gbf``) files are present alongside ``db.N.gbf`` in
+the same item database directory and can be opened as standalone buffer files
+by ``GhidraProgram`` -- listing and selecting a version is handled by
+``project.ProgramEntry.list_versions`` and ``project.ProgramEntry.open``.
+Reconstructing an older database by replaying the change chain
+(``change.N.gbf``) against a base snapshot remains out of scope: opening a
+historical ``ver.N.gbf`` directly gives the complete snapshot for that version.
 """
 
 from __future__ import annotations
