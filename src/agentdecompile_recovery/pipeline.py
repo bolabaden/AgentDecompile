@@ -1305,6 +1305,7 @@ def resolve_source_synthesis_mode(
     *,
     target_format: str | None,
     vc_root_available: bool,
+    compiler_hint: dict[str, Any] | None = None,
 ) -> str:
     """Pick the compiler lane when `--source-synthesis` is left at `auto`.
 
@@ -1321,6 +1322,8 @@ def resolve_source_synthesis_mode(
 
     if mode and mode != "auto":
         return mode
+    if str((compiler_hint or {}).get("family") or "").strip().lower() == "msvc":
+        return "msvc" if vc_root_available else "clang-cl"
     if (target_format or "").strip().lower() == "pe":
         # clang-cl is the fallback rather than clang: it at least matches MSVC
         # calling conventions and name decoration.

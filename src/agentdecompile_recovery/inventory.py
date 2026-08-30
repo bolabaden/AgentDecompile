@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,182 @@ class BinaryView:
             raise InventoryError(f"read outside file: offset={offset} size={size} file={self.path}")
 
 
+_RICH_DANS = 0x536E6144
+_KNOWN_MSVC_BUILD_HINTS: dict[int, dict[str, str]] = {
+    9466: {"family": "msvc", "version": "7.0", "compilerVersion": "13.00.9466", "profile": "vc71"},
+    3052: {"family": "msvc", "version": "7.1", "compilerVersion": "13.10.3052", "profile": "vc71"},
+    50727: {"family": "msvc", "version": "8.0", "compilerVersion": "14.00.50727", "profile": "vc80"},
+}
+# Some toolchains and notes report compiler identity in _MSC_VER-like 12xx..16xx
+# space rather than raw Rich build numbers such as 3052/9466/50727. Keep that as
+# an explicit compatibility fallback instead of guessing unknown raw build values.
+_MSVC_COMPAT_BUILD_BANDS: tuple[tuple[int, int, str, str], ...] = (
+    (1200, 1300, "5.0", "vc71"),
+    (1300, 1400, "6.0", "vc71"),
+    (1400, 1500, "7.0", "vc71"),
+    (1500, 1600, "7.1", "vc71"),
+    (1600, 1700, "8.0", "vc80"),
+)
+
+
+def msvc_version_for_build(build: int) -> dict[str, str] | None:
+    """Return a conservative MSVC hint for a Rich-header build number.
+
+    Exact Rich build numbers win. The fallback 12xx..16xx bands only cover
+    compatibility values already expressed in that older compiler-version space.
+    """
+
+    exact = _KNOWN_MSVC_BUILD_HINTS.get(int(build))
+    if exact is not None:
+        return dict(exact)
+    for start, end, version, profile in _MSVC_COMPAT_BUILD_BANDS:
+        if start <= int(build) < end:
+            return {"family": "msvc", "version": version, "profile": profile}
+    return None
+
+
+def _rich_region_entropy(data: bytes) -> float:
+    if not data:
+        return 0.0
+    counts = [0] * 256
+    for byte in data:
+        counts[byte] += 1
+    total = len(data)
+    entropy = 0.0
+    for count in counts:
+        if count:
+            probability = count / total
+            entropy -= probability * math.log2(probability)
+    return entropy
+
+
+def _rich_header_missing_status(region: bytes) -> tuple[str, str, float]:
+    entropy = _rich_region_entropy(region)
+    if region and all(byte == 0 for byte in region):
+        return ("destroyed", "rich region zeroed before inventory", entropy)
+    printable = sum(1 for byte in region if 32 <= byte <= 126 or byte in {9, 10, 13})
+    printable_ratio = printable / len(region) if region else 0.0
+    if region and entropy >= 7.0 and printable_ratio < 0.2:
+        return ("destroyed", "rich region overwritten with high-entropy data", entropy)
+    return ("absent", "no Rich marker in PE stub", entropy)
+
+
+def rich_header_compiler_hint(rich_header: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not rich_header or rich_header.get("status") != "present":
+        return None
+    totals: dict[int, int] = {}
+    for _prodid, build, count in rich_header.get("entries", []):
+        hint = msvc_version_for_build(int(build))
+        if hint is None:
+            continue
+        totals[int(build)] = totals.get(int(build), 0) + int(count)
+    if not totals:
+        return None
+    build = max(totals, key=lambda value: (totals[value], value))
+    hint = msvc_version_for_build(build)
+    if hint is None:
+        return None
+    return {
+        **hint,
+        "build": build,
+        "count": totals[build],
+        "source": "rich-header",
+    }
+
+
+def decode_pe_rich_header(view: BinaryView) -> dict[str, Any]:
+    """Decode the PE Rich header without raising for absent or damaged data."""
+
+    if len(view.data) < 0x40:
+        return {"status": "truncated", "entries": [], "reason": "file shorter than DOS header"}
+    try:
+        pe_offset = view.u32(0x3C)
+    except InventoryError:
+        return {"status": "truncated", "entries": [], "reason": "missing e_lfanew"}
+    if pe_offset <= 0x40:
+        return {"status": "absent", "entries": [], "reason": "no DOS stub region before PE header"}
+    scan_end = min(pe_offset, len(view.data))
+    if scan_end <= 0x40:
+        return {"status": "truncated", "entries": [], "reason": "PE header offset extends past file"}
+    region = view.data[0x40:scan_end]
+    rich_index = region.find(b"Rich")
+    if rich_index < 0:
+        status, reason, entropy = _rich_header_missing_status(region)
+        return {"status": status, "entries": [], "reason": reason, "entropy": entropy}
+    rich_offset = 0x40 + rich_index
+    if rich_offset + 8 > scan_end:
+        return {"status": "truncated", "entries": [], "reason": "Rich marker truncated before XOR key"}
+    xor_key = view.u32(rich_offset + 4)
+    dans_offset: int | None = None
+    cursor = rich_offset - 4
+    while cursor >= 0x40:
+        value = view.u32(cursor) ^ xor_key
+        if value == _RICH_DANS:
+            dans_offset = cursor
+            break
+        cursor -= 4
+    if dans_offset is None:
+        return {
+            "status": "destroyed",
+            "entries": [],
+            "richOffset": rich_offset,
+            "xorKey": xor_key,
+            "reason": "Rich marker present but DanS prelude missing",
+        }
+    try:
+        padding = [view.u32(dans_offset + 4 + index * 4) ^ xor_key for index in range(3)]
+    except InventoryError:
+        return {"status": "truncated", "entries": [], "richOffset": rich_offset, "xorKey": xor_key, "reason": "DanS prelude truncated"}
+    if any(value != 0 for value in padding):
+        return {
+            "status": "destroyed",
+            "entries": [],
+            "richOffset": rich_offset,
+            "xorKey": xor_key,
+            "reason": "DanS prelude padding invalid",
+        }
+    entries_start = dans_offset + 16
+    if (rich_offset - entries_start) % 8 != 0:
+        return {
+            "status": "truncated",
+            "entries": [],
+            "richOffset": rich_offset,
+            "xorKey": xor_key,
+            "reason": "Rich entry payload is not a whole number of dword pairs",
+        }
+    entries: list[tuple[int, int, int]] = []
+    entry_details: list[dict[str, Any]] = []
+    cursor = entries_start
+    while cursor < rich_offset:
+        comp_id = view.u32(cursor) ^ xor_key
+        count = view.u32(cursor + 4) ^ xor_key
+        prodid = comp_id >> 16
+        build = comp_id & 0xFFFF
+        entries.append((prodid, build, count))
+        detail: dict[str, Any] = {"prodid": prodid, "build": build, "count": count}
+        compiler = msvc_version_for_build(build)
+        if compiler is not None:
+            detail["compiler"] = compiler
+        entry_details.append(detail)
+        cursor += 8
+    rich_header = {
+        "status": "present",
+        "entries": entries,
+        "entryDetails": entry_details,
+        "richOffset": rich_offset,
+        "dansOffset": dans_offset,
+        "xorKey": xor_key,
+    }
+    compiler_hint = rich_header_compiler_hint(rich_header)
+    if compiler_hint is not None:
+        rich_header["bestCompiler"] = compiler_hint
+    return rich_header
+
+
+def detect_pe_compiler_hint(path: Path) -> dict[str, Any] | None:
+    return rich_header_compiler_hint(decode_pe_rich_header(BinaryView(path, path.read_bytes())))
+
+
 def build_binary_inventory(target: TargetIdentity) -> dict[str, Any]:
     view = BinaryView(target.binary_path, target.binary_path.read_bytes())
     if target.format == "pe":
@@ -75,6 +252,7 @@ def build_binary_inventory(target: TargetIdentity) -> dict[str, Any]:
 
 
 def pe_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
+    rich_header = decode_pe_rich_header(view)
     pe_offset = view.u32(0x3C)
     if view.bytes(pe_offset, 4) != b"PE\0\0":
         raise InventoryError("missing PE signature")
@@ -185,12 +363,14 @@ def pe_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
         "symbols": [],
         "codeRanges": code_ranges,
         "dataRanges": data_ranges,
+        "richHeader": rich_header,
         "summary": {
             "sections": len(sections),
             "codeRanges": len(code_ranges),
             "exports": len(exports),
             "imports": sum(len(item.get("symbols", [])) for item in imports),
             "importLibraries": len(imports),
+            "richHeaderStatus": rich_header["status"],
         },
     }
 
@@ -336,7 +516,7 @@ def elf64_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
     shstrndx = view.u16(62)
     sections = elf_sections(view, shoff, shentsize, shnum, shstrndx, is_64=True)
     symbols = elf_symbols(view, sections, is_64=True)
-    return elf_common_inventory(target, e_type, machine, entry, sections, symbols)
+    return elf_common_inventory(target, view, e_type, machine, entry, sections, symbols)
 
 
 def elf32_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
@@ -349,7 +529,7 @@ def elf32_inventory(target: TargetIdentity, view: BinaryView) -> dict[str, Any]:
     shstrndx = view.u16(50)
     sections = elf_sections(view, shoff, shentsize, shnum, shstrndx, is_64=False)
     symbols = elf_symbols(view, sections, is_64=False)
-    return elf_common_inventory(target, e_type, machine, entry, sections, symbols)
+    return elf_common_inventory(target, view, e_type, machine, entry, sections, symbols)
 
 
 def elf_sections(view: BinaryView, shoff: int, shentsize: int, shnum: int, shstrndx: int, *, is_64: bool) -> list[dict[str, Any]]:
@@ -457,7 +637,46 @@ def elf_symbols(view: BinaryView, sections: list[dict[str, Any]], *, is_64: bool
     return symbols
 
 
-def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entry: int, sections: list[dict[str, Any]], symbols: list[dict[str, Any]]) -> dict[str, Any]:
+def elf_comment_strings(view: BinaryView, sections: list[dict[str, Any]]) -> list[str]:
+    """Return the null-separated producer strings found in the .comment section."""
+    for section in sections:
+        if section["name"] == ".comment" and section["size"] > 0:
+            raw = view.bytes(section["offset"], section["size"])
+            parts = raw.split(b"\x00")
+            return [p.decode("utf-8", "replace") for p in parts if p]
+    return []
+
+
+def elf_toolchain_from_mangling(symbols: list[dict[str, Any]]) -> dict[str, Any]:
+    """Infer the C++ standard library from Itanium-mangled symbol names.
+
+    ``_ZNSt3__1`` is the libc++ inline namespace used by Clang.
+    ``_ZNSt`` without that inline namespace is the libstdc++ mangling used by GCC.
+    Returns a dict with ``stdlib`` (``"libc++"``, ``"libstdc++"``, or ``"unknown"``)
+    and the first ``evidence`` symbol that triggered the conclusion.
+    """
+    libcxx_evidence: str | None = None
+    libstdcxx_evidence: str | None = None
+    for sym in symbols:
+        name = sym.get("name", "")
+        if not name:
+            continue
+        if "_ZNSt3__1" in name and libcxx_evidence is None:
+            libcxx_evidence = name
+        elif "_ZNSt" in name and "_ZNSt3__1" not in name and libstdcxx_evidence is None:
+            libstdcxx_evidence = name
+        if libcxx_evidence and libstdcxx_evidence:
+            break
+    if libcxx_evidence and not libstdcxx_evidence:
+        return {"stdlib": "libc++", "evidence": libcxx_evidence}
+    if libstdcxx_evidence and not libcxx_evidence:
+        return {"stdlib": "libstdc++", "evidence": libstdcxx_evidence}
+    if libcxx_evidence and libstdcxx_evidence:
+        return {"stdlib": "unknown", "evidence": None, "note": "contradictory mangling (both libc++ and libstdc++ markers found)"}
+    return {"stdlib": "unknown", "evidence": None}
+
+
+def elf_common_inventory(target: TargetIdentity, view: BinaryView, e_type: int, machine: int, entry: int, sections: list[dict[str, Any]], symbols: list[dict[str, Any]]) -> dict[str, Any]:
     annotate_elf_function_sizes(symbols, sections)
     code_ranges = [
         {"name": section["name"], "address": section["address"], "offset": section["offset"], "size": section["size"]}
@@ -472,6 +691,10 @@ def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entr
     function_symbols = [sym for sym in symbols if sym["type"] == 2 and sym["sectionIndex"] != 0 and sym["value"] != 0]
     imported_symbols = [sym for sym in symbols if sym["table"] == ".dynsym" and sym["sectionIndex"] == 0 and sym["name"]]
     imports = [{"library": "dynamic-symbol-table", "symbols": [{"kind": "name", "name": sym["name"]} for sym in imported_symbols]}]
+    has_symtab = any(s["name"] == ".symtab" for s in sections)
+    stripped = not has_symtab
+    comment_strings = elf_comment_strings(view, sections)
+    toolchain = elf_toolchain_from_mangling(symbols)
     return {
         "schema": "agentdecompile.binary-inventory.v1",
         "target": target.to_json(),
@@ -485,6 +708,11 @@ def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entr
         "symbols": symbols,
         "codeRanges": code_ranges,
         "dataRanges": data_ranges,
+        "toolchain": {
+            "commentStrings": comment_strings,
+            "mangling": toolchain,
+            "stripped": stripped,
+        },
         "summary": {
             "sections": len(sections),
             "codeRanges": len(code_ranges),
@@ -493,6 +721,7 @@ def elf_common_inventory(target: TargetIdentity, e_type: int, machine: int, entr
             "symbols": len(symbols),
             "functionSymbols": len(function_symbols),
             "dynamicSymbols": sum(1 for sym in symbols if sym["table"] == ".dynsym"),
+            "stripped": stripped,
         },
     }
 

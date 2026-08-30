@@ -557,3 +557,114 @@ def test_k1_is_a_distinct_program_from_odyssey_tsl(k1: GhidraProgram) -> None:
         ODYSSEY_MEMORY_FUNCTIONS,
         ODYSSEY_CURATED_NAMES,
     )
+
+
+# ---------------------------------------------------------------------------
+# AUTOGEN_RE / has_non_autogen_name tests
+# ---------------------------------------------------------------------------
+
+
+def test_has_non_autogen_name_rejects_autogen_shaped_stored_name() -> None:
+    """A database where FUN_-shaped names were written in should be excluded
+    from the strict count even though ``has_curated_name`` would accept them."""
+
+    from agentdecompile_recovery.ghidra_db.address_map import decode_address
+    from agentdecompile_recovery.ghidra_db.program import AUTOGEN_RE
+
+    autogen_names = [
+        "FUN_00401000",
+        "SUB_00401234",
+        "DAT_00601000",
+        "LAB_00401008",
+        "UNK_00600000",
+        "EXT_00000004",
+        "switchD_00401abc",
+        "caseD_00401abc_0",
+        "thunk_FUN_00401000",
+    ]
+    for name in autogen_names:
+        sym = Symbol(
+            symbol_id=1,
+            name=name,
+            symbol_type=SymbolType.FUNCTION,
+            namespace_id=0,
+            flags=2,
+            address=decode_address(_encode(TYPE_RELOCATABLE, 0x1000)),
+            entry=0x401000,
+            datatype_id=None,
+            variable_offset=None,
+        )
+        assert sym.has_curated_name, f"{name!r} should pass has_curated_name"
+        assert not sym.has_non_autogen_name, f"{name!r} should fail has_non_autogen_name"
+        assert AUTOGEN_RE.match(name), f"{name!r} should match AUTOGEN_RE"
+
+
+def test_has_non_autogen_name_accepts_real_names() -> None:
+    """Genuine human-curated names pass both checks."""
+
+    from agentdecompile_recovery.ghidra_db.address_map import decode_address
+
+    real_names = ["CreateServer", "glDepthMask", "WinMain", "CAppManager"]
+    for name in real_names:
+        sym = Symbol(
+            symbol_id=1,
+            name=name,
+            symbol_type=SymbolType.FUNCTION,
+            namespace_id=0,
+            flags=2,
+            address=decode_address(_encode(TYPE_RELOCATABLE, 0x1000)),
+            entry=0x401000,
+            datatype_id=None,
+            variable_offset=None,
+        )
+        assert sym.has_curated_name, f"{name!r} should pass has_curated_name"
+        assert sym.has_non_autogen_name, f"{name!r} should pass has_non_autogen_name"
+
+
+def test_census_names_counts_autogen_shaped_stored_names_correctly() -> None:
+    """census_names() reports the right totals when FUN_-shaped names are stored.
+
+    This exercises the acceptance criterion: a database with stored autogen-looking
+    names is counted correctly under both ``hasStoredName`` and ``nonAutogen``.
+    """
+
+    import unittest.mock as mock
+
+    from agentdecompile_recovery.ghidra_db.program import Function, census_names
+
+    def _fn(name: str) -> Function:
+        return Function(
+            symbol_id=1,
+            name=name,
+            entry=0x401000,
+            namespace_id=0,
+            return_datatype_id=None,
+            stack_purge=None,
+            stack_return_offset=None,
+            stack_local_size=None,
+            flags=None,
+            calling_convention_id=None,
+            address=None,
+        )
+
+    functions = [
+        _fn("CreateServer"),       # genuine curated
+        _fn("FUN_00401234"),       # autogen-shaped stored name
+        _fn(""),                   # unnamed (Ghidra default)
+        _fn("thunk_FUN_00401000"), # thunk autogen
+    ]
+    # 4 functions: 3 have stored names, 1 is genuinely curated (non-autogen)
+
+    prog = mock.MagicMock()
+    prog.name = "test.exe"
+    prog.language_id = "x86:LE:32:default"
+    prog.functions.return_value = iter(functions)
+    prog.symbols.return_value = iter([])
+
+    result = census_names(prog)
+
+    assert result["schema"] == "agentdecompile.name-census.v1"
+    assert result["functions"]["total"] == 4
+    assert result["functions"]["hasStoredName"] == 3   # CreateServer + FUN_... + thunk_FUN_...
+    assert result["functions"]["nonAutogen"] == 1      # only CreateServer
+    assert result["symbols"]["total"] == 0

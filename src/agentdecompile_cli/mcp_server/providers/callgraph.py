@@ -128,8 +128,11 @@ class CallGraphToolProvider(ToolProvider):
         max_nodes = self._get_int(args, "maxnodes", default=250)
         second = self._get_str(args, "secondfunction")
 
-        # Prefer full CallGraphTool (graph/tree, timeouts, condense); fall back to Ghidra API if unavailable
-        cg = self._get_callgraph_tool()
+        # CallGraphTool renders visual graph/tree output and does not implement
+        # the structured callers/callees modes. Sending every mode through it
+        # silently returned an empty visual graph before the structured
+        # handlers had a chance to run.
+        cg = self._get_callgraph_tool() if n(mode) in ("graph", "tree") else None
         if cg is not None:
             try:
                 result = cg.generate_for_mcp(
