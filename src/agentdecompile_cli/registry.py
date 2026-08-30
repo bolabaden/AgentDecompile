@@ -25,11 +25,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from mcp import types
-    from mcp.client.session import ClientSession
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -81,19 +77,6 @@ def _compile_nl_phrase_pattern(phrase: str) -> re.Pattern[str]:
         flags=re.IGNORECASE,
     )
 
-
-# NL phrase preprocessing patterns (used in _preprocess_nl_phrases)
-_NL_PHRASE_PATTERNS = [
-    (r"\b(in|from|on)\s+program\s+", r"with program path ", re.IGNORECASE),
-    (r"\bat\s+address\s+", r"with address ", re.IGNORECASE),
-    (r"\bto\s+address\s+", r"with address ", re.IGNORECASE),
-    (r"\bfor\s+function\s+", r"with function ", re.IGNORECASE),
-    (r"\bof\s+function\s+", r"with function ", re.IGNORECASE),
-    (r"\bat\s+offset\s+", r"with offset ", re.IGNORECASE),
-    (r"\b(in|from)\s+binary\s+", r"with program path ", re.IGNORECASE),
-    (r"\bto\s+project\s+", r"with project name ", re.IGNORECASE),
-    (r"\bin\s+project\s+", r"with project name ", re.IGNORECASE),
-]
 
 # ---------------------------------------------------------------------------
 # MCP tool names (canonical wire names) – enum is single source of truth
@@ -1550,34 +1533,6 @@ _TOOL_PREFIXES = (
 )
 
 _TOOLS_BY_NORMALIZED: dict[str, str] = {normalize_identifier(tool): tool for tool in TOOLS}
-
-
-def _build_tool_match_candidates() -> list[tuple[str, str, str]]:
-    """Build sorted tool-name variants used by natural language parsing.
-
-    Returns tuples of ``(canonical_tool_name, raw_variant, normalized_variant)``
-    ordered by descending variant length so more specific names win first.
-    """
-    logger.debug("diag.enter %s", "registry.py:_build_tool_match_candidates")
-    candidates: list[tuple[str, str, str]] = []
-    for tool_name in TOOLS:
-        seen: set[str] = set()
-        variations = (
-            tool_name,
-            tool_name.replace("-", " "),
-            tool_name.replace("-", "_"),
-            tool_name.replace("-", ""),
-        )
-        for variation in variations:
-            if variation in seen:
-                continue
-            seen.add(variation)
-            candidates.append((tool_name, variation, normalize_identifier(variation)))
-    candidates.sort(key=lambda item: len(item[1]), reverse=True)
-    return candidates
-
-
-_TOOL_MATCH_CANDIDATES = _build_tool_match_candidates()
 _TOOL_SUFFIXES = (
     "action",
     "command",
@@ -2318,179 +2273,6 @@ class ToolRegistry:
             "name": self.resolve_tool_name(tool_name) or tool_name,
             "arguments": parsed_args,
         }
-
-    def parse_natural_language_tool_call(
-        self,
-        text: str,
-    ) -> tuple[str | None, dict[str, Any]]:
-        """Parse a complete free-form tool call sentence into tool name and arguments.
-
-        Accepts full natural language sentences like:
-        - "list all functions in program /path/to/binary"
-        - "manage symbols with program path '/tmp/a.bin' and mode list"
-        - "search strings in program /tmp/test with pattern http and max results 10"
-
-        The tool name is extracted from the beginning of the text (using fuzzy
-        matching via normalization), and the remaining text is parsed as
-        natural language arguments.
-
-        Args:
-        ----
-            text: Free-form natural language tool call sentence
-
-        Returns:
-        -------
-            Tuple of (resolved_tool_name, arguments_dict), or (None, {}) if no tool matched
-        """
-        logger.debug("diag.enter %s", "registry.py:ToolRegistry.parse_natural_language_tool_call")
-        if not text or not text.strip():
-            return None, {}
-
-        # Normalize the input text for comparison
-        text = text.strip()
-
-        matched_tool: str | None = None
-        remaining_text: str = text
-
-        for tool_name, variation, variation_norm in _TOOL_MATCH_CANDIDATES:
-            if text.lower().startswith(variation.lower()):
-                matched_tool = tool_name
-                remaining_text = text[len(variation) :].strip()
-                break
-
-            text_prefix_norm = normalize_identifier(text[: len(variation)])
-            if text_prefix_norm == variation_norm:
-                matched_tool = tool_name
-                remaining_text = text[len(variation) :].strip()
-                break
-
-        if not matched_tool:
-            return None, {}
-
-        # Preprocess common English phrases before parsing
-        # Convert natural language patterns to explicit key-value forms
-        remaining_text = self._preprocess_nl_phrases(remaining_text)
-
-        # Parse the remaining text as natural language arguments
-        # Use our existing NL extraction logic
-        expected_params = self.get_tool_params(matched_tool)
-        if not expected_params:
-            return matched_tool, {}
-
-        alias_map = self._build_natural_language_alias_map(matched_tool, expected_params)
-        arguments = self._extract_natural_language_pairs(remaining_text, alias_map)
-
-        return matched_tool, arguments
-
-    def _preprocess_nl_phrases(self, text: str) -> str:
-        """Preprocess common English phrases into explicit key-value forms.
-
-        Converts patterns like:
-        - "in program /path" → "with program path /path"
-        - "from program /path" → "with program path /path"
-        - "at address 0x1000" → "with address 0x1000"
-        - "for function main" → "with function main"
-        """
-        logger.debug("diag.enter %s", "registry.py:ToolRegistry._preprocess_nl_phrases")
-        if not text or not text.strip():
-            return text
-
-        # Apply precompiled patterns to avoid repeated compilation
-        processed_text = text
-        for pattern, replacement, flags in _NL_PHRASE_PATTERNS:
-            processed_text = re.sub(pattern, replacement, processed_text, flags=flags)
-
-        return processed_text
-
-    def execute_tool_cli(
-        self,
-        tool_name: str,
-        arguments: dict[str, Any],
-        client: ClientSession | None = None,
-    ) -> Any:
-        """Execute a tool via CLI client.
-
-        Creates a standardized tool call payload and executes it using the provided
-        MCP client session. Handles argument parsing, validation, and tool resolution
-        before dispatching to the backend.
-
-        Args:
-            tool_name: Name of the tool to execute
-            arguments: Raw tool arguments (will be parsed and validated)
-            client: MCP client session for tool execution
-
-        Returns:
-            Tool execution result from the MCP server
-
-        Raises:
-            ValueError: If client is not provided or tool execution fails
-        """
-        logger.debug("diag.enter %s", "registry.py:ToolRegistry.execute_tool_cli")
-        if client is None:
-            raise ValueError("MCP client is required")
-
-        tool_call: dict[str, Any] = self.create_tool_call(tool_name, arguments)
-
-        # Use the client's tool execution method
-        result: Any = client.call_tool(tool_call["name"], tool_call["arguments"])
-        return result
-
-    def format_tool_response(
-        self,
-        response: list[types.TextContent] | None = None,
-        output_format: str = "text",
-    ) -> str:
-        """Format tool response for CLI output.
-
-        Converts MCP tool response content into various human-readable formats
-        for CLI display. Supports JSON, plain text, and table formats depending
-        on the data structure and user preference.
-
-        Args:
-            response: MCP tool response containing text content with JSON data
-            output_format: Desired output format - "json", "text", or "table"
-
-        Returns:
-            Formatted response string suitable for CLI display
-        """
-        logger.debug("diag.enter %s", "registry.py:ToolRegistry.format_tool_response")
-        if not response:
-            return ""
-
-        # Extract JSON content from response
-        json_content: str = ""
-        for content in response:
-            if content.type == "text":
-                json_content = content.text
-                break
-
-        if not json_content or not json_content.strip():
-            return "No response content"
-
-        try:
-            data: Any = _json.loads(json_content)
-
-            if output_format.lower().strip() == "json":
-                return _json.dumps(data, indent=2)
-            if output_format.lower().strip() == "text":
-                if isinstance(data, dict):
-                    return "\n".join(f"{k}: {v}" for k, v in data.items())
-                if isinstance(data, list):
-                    return "\n".join(f"- {item}" for item in data)
-                return str(data)
-            if output_format.lower().strip() == "table":
-                if isinstance(data, list) and data and isinstance(data[0], dict):
-                    headers = list(data[0].keys())
-                    lines = [" | ".join(headers), "-" * (len(headers) * 10)]
-                    for item in data:
-                        row = [str(item.get(h, "")) for h in headers]
-                        lines.append(" | ".join(row))
-                    return "\n".join(lines)
-                return str(data)
-            return str(data)
-
-        except _json.JSONDecodeError:
-            return json_content
 
 
 # Global tool registry instance

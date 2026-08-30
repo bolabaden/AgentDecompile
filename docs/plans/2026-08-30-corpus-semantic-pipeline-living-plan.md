@@ -2,7 +2,7 @@
 
 **Status:** active  
 **Created:** 2026-08-30  
-**Last updated:** 2026-08-30 (corpus layout cleanup)  
+**Last updated:** 2026-08-30 (dead-code reduction)  
 **Code:** `src/agentdecompile_recovery/corpus/`  
 **CLI:** `agentdecompile-corpus`
 
@@ -42,6 +42,6 @@ flowchart TD
 
 ### Delta Update
 
-- Landed: archive inventory lives in `corpus/archive.py` (compat shim at `corpus_archive`); `list-archive` / `check-extraction` on `agentdecompile-corpus`; identity `source_binary` follows the binding; feature-match `threshold` is the PAIR_POLICY auto cutoff; workspace path strip is generic (`/Users/`, `/home/` only); compile no longer wipes `build/` unless compile is planned.
+- Landed: removed unused recovery modules (`ghidra_advisory`, `prompt_context`, `capped_output`, `corpus/features`, `corpus_archive` shim) and leftover CLI duplicates (`stdio_bridge`, unused launcher server tail, unused ToolRegistry CLI helpers). Archive inventory is `corpus/archive.py`.
 - Partial: no kotorxid SQLite/`cl.exe` driver in-tree; Wine/MSVC compile remains the operator toolchain. Dashboard 8791 is still the kotorxid process. Byte-accuracy still a receipt.
 - Next: extract a real STABS donor with `extract-stabs`, register it `--donor`, `--stop-after compile`.

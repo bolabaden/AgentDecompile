@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from agentdecompile_recovery.corpus_archive import (
+from agentdecompile_recovery.corpus.archive import (
     archive_summary,
     check_extraction,
     find_sibling_archive,

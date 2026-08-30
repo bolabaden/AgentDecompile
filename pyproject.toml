@@ -50,7 +50,7 @@ dependencies = [
     "httpx-sse>=0.4.3",
     "httpx>=0.28.1,<1.0",
     # MCP 2.0 removed low-level Server.list_tools/call_tool decorators (on_* ctor kwargs).
-    # Keep 1.x until server.py / bridge.py / stdio_bridge.py are migrated.
+    # Keep 1.x until server.py / bridge.py are migrated.
     "mcp>=1.26.0,<2",
     "packaging>=26.1",
     "pip>=26.1.2",
