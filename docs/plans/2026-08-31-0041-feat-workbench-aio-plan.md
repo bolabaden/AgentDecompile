@@ -4,7 +4,7 @@ date: 2026-08-31
 type: feat
 topic: workbench-aio
 artifact_contract: ce-unified-plan/v1
-artifact_readiness: requirements-only
+artifact_readiness: implementation-ready
 product_contract_source: ce-brainstorm
 execution: code
 ---
@@ -131,4 +131,90 @@ An operator can add binaries, run any public tool, and watch decomp/validate and
 
 ### Outstanding Questions
 
-None. Deferred to Planning: exact upload directory name, virtual-list window size, and whether reconstruct legacy aliases need duplicate operationIds.
+None blocking. Deferred: reconstruct legacy aliases do not need duplicate operationIds if `recover.*` already covers them.
+
+## Planning Contract
+
+### Approach
+
+Extend the existing 8080 workbench and generated action catalog. Do not rebuild the prototype and do not restyle leftover Atlas.
+
+Catalog stays generated from live parsers plus advertised MCP plus public Click commands that are not already MCP names. Jobs stay the only execution path. Binary manage is a first-class workbench API that writes the identity store and optional import copies, then the same list/dock refresh as other jobs.
+
+Execution direction: test-first for new binary manage and catalog completeness; browser dogfood after the page is launchable on 8080.
+
+### Key Technical Decisions
+
+- KTD1. Uploads land under the live work dir `imports/` using the original basename (collision suffix). Path-register does not copy. Governs R8.
+- KTD2. Click public commands become `cli.<name>` with backend `mcp-cli` or the click entry; skip names already in `ADVERTISED_TOOLS`. Governs R6.
+- KTD3. Binary add/remove/edit are HTTP APIs on the dashboard router and also catalog actions (`corpus.add-binary`, `corpus.remove-binary`) so Swagger and the dropzone share behavior. Governs R7, R9.
+- KTD4. Windowed function list stays keyset/limit (80 default), not a 24k DOM dump. Governs R4.
+- KTD5. `/OPT:NOREF` plus `.link-stamp` remains the skip-link honesty rule. Governs R10.
+
+### Assumptions
+
+- `AGENT_DECOMPILE_CORPUS_DB` and `AGENT_DECOMPILE_CORPUS_WORK_DIR` are the only path sources.
+- Advertised MCP count follows `ADVERTISED_TOOLS` (68 today); GUI-only stay hidden.
+- Classic `/dashboard/overview` and `/dashboard/functions` remain as no-JS/test fallbacks.
+
+### Sequencing
+
+U1 catalog click surface → U2 binary manage APIs (TDD) → U3 dropzone/manage chrome → U4 live reactions + MCP groups → U5 launch/dogfood gates. U5 is verification, not a product feature.
+
+## Implementation Units
+
+### U1. Complete public catalog in Swagger
+
+Covers R6, AE3.
+
+Files: `src/agentdecompile_recovery/corpus/dashboard/actions/introspect.py`, `src/agentdecompile_recovery/corpus/dashboard/actions/catalog.py`, `src/agentdecompile_recovery/corpus/dashboard/actions/openapi.py`, `tests/test_dashboard_openapi_catalog.py`, `tests/test_workbench_binaries.py`.
+
+Tests: every public corpus/recover/reconstruct/cli/MCP id is present; OpenAPI bodies have named properties; `cli.tool` or `cli.alias` or `cli.ghidrecomp` exists; no GUI-only tools.
+
+### U2. Binary register, copy-in, remove, edit
+
+Covers R7, R8, R9, F1, F5, AE2.
+
+Files: `src/agentdecompile_recovery/corpus/dashboard/workbench.py`, `src/agentdecompile_recovery/corpus/dashboard/router.py`, `src/agentdecompile_recovery/corpus/store.py` (reuse `remove_binary`), `tests/test_workbench_binaries.py`.
+
+Tests (already red-shaped): path add lists the slug; upload copies bytes and lists; delete without confirm is 400; delete with confirm removes the row; work dir has no product-path defaults.
+
+### U3. Dropzone and manage chrome
+
+Covers R1, R2, R3, R4, AE1.
+
+Files: `src/agentdecompile_recovery/corpus/dashboard/workbench.py`, `src/agentdecompile_recovery/corpus/dashboard/static/workbench.js`, `src/agentdecompile_recovery/corpus/dashboard/static/workbench.css`, `tests/test_workbench_binaries.py`.
+
+Tests: HTML contains `wb-drop`, path field, remove control; no `role=tablist`; no Mizuchi string.
+
+### U4. Live jobs and MCP integration
+
+Covers R5, F2, F3, F4, AE4.
+
+Files: `src/agentdecompile_recovery/corpus/dashboard/static/workbench.js`, `src/agentdecompile_recovery/corpus/dashboard/actions/jobs.py`, `tests/test_dashboard_openapi_catalog.py`.
+
+Tests: two jobs start without waiting; workbench poll refreshes binaries/functions after a finishing job (unit on the runner is enough if JS stays thin).
+
+### U5. Honesty and launch
+
+Covers R10, R11, AE5.
+
+Files: `src/agentdecompile_recovery/corpus/compile_link.py`, `tests/test_corpus_workspace_skeleton.py`, living plan mermaid in `docs/plans/2026-08-30-corpus-semantic-pipeline-living-plan.md`.
+
+Tests: missing `.link-stamp` forces relink; empty env HTML has no kotorxid defaults.
+
+## Verification Contract
+
+- `uv run pytest tests/test_workbench_binaries.py tests/test_dashboard_openapi_catalog.py tests/test_dashboard_actions.py tests/test_unified_pages.py tests/test_corpus_workspace_skeleton.py`
+- After launch: `GET /dashboard`, `GET /docs`, `GET /openapi.json` on 8080.
+- Browser dogfood (`agent-browser`) on the workbench: drop/path, strip tools, Swagger Try-it dry-run, empty and populated docks.
+- Do not restart `kotorxid-recovery.service`. Do not start k2 compile.
+
+## Definition of Done
+
+- Product Contract R1–R11 have a unit or browser check.
+- Catalog completeness test green.
+- Binary add (path and upload) and confirm-remove green.
+- Workbench on 8080 has dropzone, tool strip, Swagger link, live job pulse.
+- Link stamp honesty tests green.
+- No product-path defaults. No 5173 restyle.
