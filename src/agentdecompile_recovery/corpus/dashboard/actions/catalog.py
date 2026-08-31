@@ -12,6 +12,7 @@ import os
 import shlex
 import sys
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from agentdecompile_recovery.corpus.dashboard.common import KNOWLEDGE_DB, live_db, live_root
@@ -52,7 +53,13 @@ class FieldSpec:
     positional: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        default = payload.get("default")
+        if isinstance(default, Path):
+            payload["default"] = str(default)
+        elif default is not None and not isinstance(default, (str, int, float, bool, list, tuple, dict)):
+            payload["default"] = str(default)
+        return payload
 
 
 @dataclass(frozen=True)

@@ -90,6 +90,15 @@ def test_swagger_dry_run_and_two_jobs_do_not_block(monkeypatch: pytest.MonkeyPat
     release.set()
 
 
+def test_legacy_actions_api_serializes_click_defaults() -> None:
+    catalog._ACTIONS = None
+    page = _client().get("/dashboard/api/actions?page=home")
+    assert page.status_code == 200
+    body = page.json()
+    assert body["ok"] is True
+    assert any(item["id"].startswith("cli.") for item in body["actions"])
+
+
 def test_workbench_binaries_empty_without_db(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_DECOMPILE_CORPUS_DB", raising=False)
     monkeypatch.delenv("AGENT_DECOMPILE_CORPUS_ROOT", raising=False)
