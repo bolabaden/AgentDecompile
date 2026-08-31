@@ -1,0 +1,275 @@
+.workbench-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.wb-brand {
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+}
+
+.wb-claim {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.wb-search input {
+  width: min(28rem, 70vw);
+  padding: .45rem .7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.wb-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.wb-btn,
+.wb-strip button {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: .35rem .65rem;
+  cursor: pointer;
+}
+
+.wb-strip button.on,
+.wb-btn:hover {
+  border-color: var(--info);
+  color: var(--info);
+}
+
+.wb-shell {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(14rem, 18rem) minmax(20rem, 1fr) minmax(16rem, 22rem);
+  min-height: 48vh;
+}
+
+.wb-strip {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  padding: .4rem;
+  border-right: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.wb-strip button {
+  writing-mode: horizontal-tb;
+  font-size: 11px;
+  padding: .35rem .2rem;
+}
+
+.wb-binaries,
+.wb-inspect {
+  overflow: auto;
+  padding: var(--space-3);
+  border-right: 1px solid var(--border);
+}
+
+.wb-inspect {
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
+.wb-binaries h2,
+.wb-inspect h2,
+.wb-funcs-head h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.wb-drop {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: .7rem;
+  margin-bottom: var(--space-3);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.wb-drop.on {
+  border-color: var(--info);
+  color: var(--info);
+}
+
+.wb-bin-form label {
+  display: block;
+  margin: .35rem 0;
+  font-size: 12px;
+}
+
+.wb-bin-form input {
+  width: 100%;
+  background: var(--surface-soft);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: .3rem .45rem;
+}
+
+.wb-bin-actions {
+  display: flex;
+  gap: .4rem;
+  margin: .5rem 0 var(--space-3);
+}
+
+.wb-binaries ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wb-binaries li {
+  margin: 0 0 .55rem;
+}
+
+.dual-bar {
+  position: relative;
+  height: .7rem;
+  border-radius: 99px;
+  background: #1a2230;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.dual-bar .track-decomp,
+.dual-bar .track-validate {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.dual-bar .track-validate {
+  height: 42%;
+  top: auto;
+  opacity: .92;
+}
+
+.dual-bar .seg-none { background: #2a3344; }
+.dual-bar .seg-asm { background: #8b6b2e; }
+.dual-bar .seg-c { background: var(--success); }
+.dual-bar .seg-obj { background: var(--info); }
+.dual-bar .seg-linked { background: #c9f; }
+
+.wb-stage {
+  padding: var(--space-4);
+  overflow: auto;
+}
+
+.wb-hint { color: var(--text-muted); }
+
+.wb-funcs {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.wb-funcs-head {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-4);
+}
+
+.wb-func-window {
+  height: 16rem;
+  overflow: auto;
+  position: relative;
+}
+
+.wb-func-row {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr 7rem;
+  gap: var(--space-2);
+  align-items: center;
+  padding: .2rem var(--space-4);
+  cursor: pointer;
+}
+
+.wb-func-row:hover,
+.wb-func-row.on {
+  background: var(--surface-raised);
+}
+
+.wb-func-row code { color: var(--info); }
+
+.wb-preview {
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--surface-soft);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.wb-tool-form label {
+  display: block;
+  margin: .4rem 0;
+  font-size: 13px;
+}
+
+.wb-tool-form input,
+.wb-tool-form select,
+.wb-tool-form textarea {
+  width: 100%;
+  background: var(--surface-soft);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: .3rem .45rem;
+}
+
+.wb-reaction {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin-top: var(--space-3);
+  background: var(--surface-soft);
+}
+
+.wb-mcp-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  margin-bottom: var(--space-3);
+}
+
+.wb-mcp-groups button.on {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+@media (max-width: 1100px) {
+  .wb-shell {
+    grid-template-columns: 1fr;
+  }
+  .wb-strip {
+    flex-direction: row;
+    flex-wrap: wrap;
+    writing-mode: horizontal-tb;
+  }
+}

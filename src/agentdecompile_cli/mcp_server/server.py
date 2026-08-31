@@ -569,6 +569,13 @@ class PythonMcpServer:
                     "protocol": "Model Context Protocol (MCP) — JSON-RPC 2.0 over HTTP",
                 },
                 "health": "/health",
+                "pages": {
+                    "app": "/app",
+                    "dashboard": "/dashboard",
+                    "atlas": "/atlas",
+                    "report": "/report",
+                    "note": "Dashboard, Atlas, and Report share this HTTP server. They are not separate ports.",
+                },
             }
 
         @self.app.get("/api/reference", tags=["reference"])
@@ -653,6 +660,10 @@ class PythonMcpServer:
         async def legacy_api_info() -> dict[str, Any]:
             """Backward-compatible alias for the API index."""
             return await api_info()
+
+        from agentdecompile_recovery.unified_pages import mount_unified_pages
+
+        mount_unified_pages(self.app)
 
         logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._setup_routes")
         for method in ("GET", "POST", "DELETE"):
