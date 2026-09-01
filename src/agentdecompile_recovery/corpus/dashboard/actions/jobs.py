@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import threading
 import time
@@ -59,7 +60,38 @@ class JobRecord:
         }
         if include_log:
             payload["log"] = self.log
+        payload["progress"] = infer_job_progress(self.status, self.log)
         return payload
+
+
+_PERCENT_RE = re.compile(r"(?<!\d)(\d{1,3})\s*%")
+
+
+def infer_job_progress(status: str, log: str = "") -> int:
+    """Map job status + log tail to a 0–100 percent for the program-row meter."""
+    if status == "ok":
+        return 100
+    if status in {"failed", "cancelled"}:
+        found = _last_percent(log)
+        return found if found is not None else 0
+    if status == "queued":
+        return 4
+    found = _last_percent(log)
+    if found is not None:
+        return min(99, max(5, found))
+    if status in {"running", "cancelling"}:
+        return 22
+    return 0
+
+
+def _last_percent(log: str) -> int | None:
+    matches = _PERCENT_RE.findall(log or "")
+    if not matches:
+        return None
+    value = int(matches[-1])
+    if 0 <= value <= 100:
+        return value
+    return None
 
 
 class JobStore:

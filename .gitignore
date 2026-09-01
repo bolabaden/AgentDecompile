@@ -370,6 +370,9 @@ test_shared_project/
 coverage.xml
 htmlcov/
 
+# Local UI Skills catalog (https://www.ui-skills.com/) — never commit
+.ui-skills/
+
 # Local scratch and session dumps (never commit)
 clutter/
 codex-session-*.md
