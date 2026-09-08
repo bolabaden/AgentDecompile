@@ -504,6 +504,8 @@ def execute(params: dict[str, Any], cancel: threading.Event) -> tuple[int, str]:
                 update(key, 'running', f'{name}: {target}' if target else name, jobId=job_id,
                        currentProgram=target, currentAction=name, jobStatus=response['job'].get('status', 'queued'), startedAt=time.time(), attempts=attempt + 1)
                 previous_status = None
+                wait_limit = float(fields.get('workflowWaitSeconds') or (900 if probe else 0))
+                wait_deadline = time.monotonic() + wait_limit if wait_limit else None
                 while True:
                     job = jobs.get_job(job_id)
                     progress_path = row.get('functionProgressFile')
@@ -525,6 +527,10 @@ def execute(params: dict[str, Any], cancel: threading.Event) -> tuple[int, str]:
                         raise InterruptedError('Workflow stopped after its accepted operation drained.')
                     if job is None:
                         outcome = {'ok': False, 'error': 'The accepted stage job is unavailable; output reconciliation is required.', 'jobId': job_id}
+                        break
+                    if wait_deadline is not None and time.monotonic() >= wait_deadline:
+                        jobs.cancel_job(job_id)
+                        outcome = {'ok': False, 'error': f'{key}-timeout: the read-only probe exceeded {int(wait_limit)} seconds; it was cancelled before the next program was admitted.', 'jobId': job_id}
                         break
                     if job.status != previous_status:
                         previous_status = job.status
@@ -580,8 +586,20 @@ def execute(params: dict[str, Any], cancel: threading.Event) -> tuple[int, str]:
                 checkpoint = row['checkpoints'].setdefault(program, {})
                 checkpoint['analysisConfirmed'] = False
                 update('protection', 'running', f'Checking protection for {program}.', completed=prepared, total=len(programs))
+                # A resumed wave must not spend another Ghidra round-trip on a
+                # program whose executable identity and protection observation
+                # were already recorded.  The original bytes and the derived
+                # image receipt remain in the checkpoint; only an unknown or
+                # changed executable needs another read-only probe.
+                recorded_protection = checkpoint.get('protection')
+                if isinstance(recorded_protection, dict) and checkpoint.get('executablePath'):
+                    if recorded_protection.get('handling') == 'blocked':
+                        protection_blocked.add(program)
+                    prepared += 1
+                    update('protection', 'running', f'Reusing recorded protection inspection for {program}.', completed=prepared, total=len(programs))
+                    continue
                 state = action('protection', 'mcp.execute-script', {
-                    'programPath': program, '_preparationProbe': True, 'code': "import json\nfrom agentdecompile_cli.mcp_utils.program_analysis import program_needs_analysis\nfrom ghidra.framework import Application\n__result__ = json.dumps({'needsAnalysis': program_needs_analysis(currentProgram), 'executablePath': str(currentProgram.getExecutablePath()), 'architecture': str(currentProgram.getLanguageID()), 'ghidraVersion': str(Application.getApplicationVersion()), 'workSize': int(currentProgram.getFunctionManager().getFunctionCount())})"
+                    'programPath': program, '_preparationProbe': True, 'workflowWaitSeconds': 900, 'code': "import json\nfrom agentdecompile_cli.mcp_utils.program_analysis import program_needs_analysis\nfrom ghidra.framework import Application\n__result__ = json.dumps({'needsAnalysis': program_needs_analysis(currentProgram), 'executablePath': str(currentProgram.getExecutablePath()), 'architecture': str(currentProgram.getLanguageID()), 'ghidraVersion': str(Application.getApplicationVersion()), 'workSize': int(currentProgram.getFunctionManager().getFunctionCount())})"
                 }, context)
                 payload = state.get('data') or {}
                 if not state['ok'] or not isinstance(payload, dict) or 'executablePath' not in payload:
@@ -634,7 +652,7 @@ def execute(params: dict[str, Any], cancel: threading.Event) -> tuple[int, str]:
                     continue
                 if 'needsAnalysis' not in checkpoint:
                     state = action('analysis', 'mcp.execute-script', {
-                        'programPath': program, '_preparationProbe': True, 'code': "import json\nfrom agentdecompile_cli.mcp_utils.program_analysis import program_needs_analysis\nfrom ghidra.framework import Application\n__result__ = json.dumps({'needsAnalysis': program_needs_analysis(currentProgram), 'executablePath': str(currentProgram.getExecutablePath()), 'architecture': str(currentProgram.getLanguageID()), 'ghidraVersion': str(Application.getApplicationVersion()), 'workSize': int(currentProgram.getFunctionManager().getFunctionCount())})"
+                    'programPath': program, '_preparationProbe': True, 'workflowWaitSeconds': 900, 'code': "import json\nfrom agentdecompile_cli.mcp_utils.program_analysis import program_needs_analysis\nfrom ghidra.framework import Application\n__result__ = json.dumps({'needsAnalysis': program_needs_analysis(currentProgram), 'executablePath': str(currentProgram.getExecutablePath()), 'architecture': str(currentProgram.getLanguageID()), 'ghidraVersion': str(Application.getApplicationVersion()), 'workSize': int(currentProgram.getFunctionManager().getFunctionCount())})"
                     }, context)
                     payload = state.get('data') or {}
                     if not state['ok'] or not isinstance(payload, dict) or 'needsAnalysis' not in payload:

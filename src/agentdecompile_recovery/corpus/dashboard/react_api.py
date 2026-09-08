@@ -295,6 +295,19 @@ def create_react_router() -> APIRouter:
     from .source_archive import create_source_archive_router
     router.include_router(create_source_archive_router())
 
+    @router.get("/dashboard/static/react")
+    @router.get("/dashboard/static/react/")
+    def react_index():
+        """Serve the built app at its documented directory URL.
+
+        Asset delivery also exposes ``index.html`` directly, but a browser
+        opening the Vite-compatible base path must not receive a 404.
+        """
+        entry = ASSETS / "index.html"
+        if not entry.is_file():
+            return JSONResponse({"error": "React workbench assets are not built"}, status_code=503)
+        return FileResponse(entry, headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache"})
+
     @router.post("/dashboard/api/workbench/prepare")
     async def prepare(request: Request):
         from .preparation import submit

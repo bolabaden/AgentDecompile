@@ -6,7 +6,7 @@ import './atlas-analysis.css';
 
 type AnalysisTab = 'embeddings' | 'scoring' | 'prompt';
 const tabs: Array<[AnalysisTab,string]> = [['embeddings','Embeddings map'],['scoring','Function scoring'],['prompt','Prompt builder']];
-const numeric=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?value.toLocaleString(undefined,{maximumFractionDigits:3}):'Not measured';
+const numeric=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?value.toLocaleString(undefined,{maximumFractionDigits:3}):'Awaiting recorded count';
 const sourceLabel=(value:unknown)=>value==='advisory-source'?'C witness':value==='assembly-substrate'?'Assembly substrate':value==='assembly-only'?'Assembly listing':'Not recorded';
 const featureLabel=(value:string)=>({n_instructions:'Instructions',n_edges:'Control-flow edges',n_blocks:'Basic blocks',n_calls:'Calls',n_callees:'Callees',n_callers:'Callers',n_constants:'Constants',n_strings:'Strings',size:'Byte size',instructions:'Instructions',edges:'Control-flow edges',blocks:'Basic blocks',cyclomatic:'Cyclomatic complexity'} as Record<string,string>)[value]||value.replaceAll('_',' ');
 const methodText=(value:unknown)=>Array.isArray(value)?value.map(v=>featureLabel(String(v))).join(', '):typeof value==='string'?value:'';

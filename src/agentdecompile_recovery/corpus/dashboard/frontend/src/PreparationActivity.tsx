@@ -63,7 +63,7 @@ export function PreparationProgress({ run, selection, notify, error = "", loadin
           return <li key={stage.key} data-state={stage.status} aria-current={stage === current ? "step" : undefined}>
             <div><strong>{stage.title}</strong><span>{stage.status}</span></div>
             {measured ? <progress max={stepProgress.total} value={stepProgress.completed} aria-label={`${stage.title}: ${stepProgress.completed} of ${stepProgress.total}`} /> : active(stage.status) && stage.status !== "queued" ? <progress aria-label={`${stage.title}: progress not yet measured`} /> : <div className="preparation-track" />}
-            <small>{measured ? `${stepProgress.completed} / ${stepProgress.total} ${stepProgress.unit||'completed'}` : stage.total === 0 ? "No applicable items" : stage.status === "queued" ? "Waiting for preceding work" : "Progress not measured"}</small>
+            <small>{measured ? `${stepProgress.completed} / ${stepProgress.total} ${stepProgress.unit||'completed'}` : stage.total === 0 ? "No applicable items" : stage.status === "queued" ? "Waiting for preceding work" : "Awaiting a measured counter from the active operation"}</small>
             {stage.nextFallback&&<small>{stage.nextFallback}{stage.retryAt?` · next attempt ${new Date(stage.retryAt*1000).toLocaleTimeString()}`:''}{stage.attempts?` · attempt ${stage.attempts}`:''}</small>}
             {stage.reason && <div className="preparation-reason"><ProgressMessage message={stage.reason} /></div>}
           </li>;
