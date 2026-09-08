@@ -28,7 +28,7 @@ from agentdecompile_recovery.curated_project import (
 pytestmark = pytest.mark.unit
 
 ODYSSEY_REP = Path("/home/brunner56/Odyssey.rep")
-GHIDRA_REP = Path("/home/brunner56/Downloads/biodecompwarehouse/projects/agentdecompile.rep")
+GHIDRA_REP = Path.home() / "biodecompwarehouse/projects/agentdecompile.rep"
 
 
 def _first_available_project() -> Path | None:

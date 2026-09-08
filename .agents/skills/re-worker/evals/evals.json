@@ -1,0 +1,30 @@
+{
+  "skill_name": "re-worker",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "analyze function at 0x401000",
+      "expected_output": "Agent loads re-worker and follows skills/re-worker/SKILL.md (or .agents/skills).",
+      "assertions": [
+        "The run consults the re-worker skill body, not only the description",
+        "No leftover target/ or invented BSim corpus is treated as fresh proof"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "decompile WinMain and emit the artifact",
+      "expected_output": "Same skill, different phrasing still activates and produces the skill's required artifact or next command.",
+      "assertions": [
+        "Activation is based on user intent, not an exact keyword match"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "plan the whole binary first",
+      "expected_output": "Agent does not treat this as a re-worker task.",
+      "assertions": [
+        "re-worker is not the primary skill used"
+      ]
+    }
+  ]
+}

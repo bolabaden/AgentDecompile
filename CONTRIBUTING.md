@@ -14,7 +14,6 @@ Thanks for helping improve AgentDecompile.
   - [Architecture](#architecture)
     - [Entrypoints](#entrypoints)
     - [Runtime flow](#runtime-flow)
-    - [Static call graph artifacts](#static-call-graph-artifacts)
   - [Adding a Tool](#adding-a-tool)
   - [Primary vs Legacy tool names](#primary-vs-legacy-tool-names)
   - [Testing](#testing)
@@ -47,10 +46,12 @@ Thanks for helping improve AgentDecompile.
 ### Install
 
 ```bash
-git clone https://github.com/bolabaden/AgentDecompile.git
+git clone https://github.com/bodencrouch/AgentDecompile.git
 cd AgentDecompile
 uv sync
 ```
+
+Install and start-path text for operators lives in [README.md](README.md). New CLI command recipes land in [USAGE.md](USAGE.md) first.
 
 Set your Ghidra location:
 
@@ -67,7 +68,6 @@ export GHIDRA_INSTALL_DIR=/path/to/ghidra
 
 **Git note:** `.gitignore` matches `agentdecompile*/`, so new files under `src/agentdecompile_cli/` are ignored by default. After editing **already-tracked** Python there, stage with `git add -f path/to/file.py` (or `git add -f src/agentdecompile_cli/...`) before commit.
 - `docs/` — user, workflow, and architecture documentation
-- `docs/generated/` — machine-generated static call graph and entrypoint reachability artifacts
 - `vendor/` — upstream reference implementations used for parity checks
 
 ---
@@ -116,27 +116,6 @@ flowchart TD
 3. `agentdecompile_cli.cli:cli_entry_point` prefers HTTP transport, but when no explicit backend target was requested it can auto-start a local MCP server or fall back to in-process local execution.
 4. `agentdecompile_cli.server:proxy_main` forwards tools, resources, and prompts to an existing MCP backend without starting local PyGhidra.
 5. Tool providers execute the actual operations and return structured responses through the MCP server layer.
-
-### Static call graph artifacts
-
-The repository includes machine-generated source graph artifacts so contributors can reason about the runtime without manually tracing every entrypoint.
-
-- `docs/SRC_ENTRYPOINTS_CALL_GRAPH.md` is the readable overview and links to the generated files.
-- `docs/generated/src_static_call_graph.json` contains the raw static inventory of modules, definitions, imports, decorators, and call sites.
-- `docs/generated/src_static_call_graph_full.mmd` is the exhaustive Mermaid graph.
-- `docs/generated/src_static_call_graph_summary.json` records the top-level hotspot counts.
-- `docs/generated/src_entrypoint_reachability.json` shows reachability slices from each packaged entry function.
-
-Current generated summary:
-
-- `76` Python modules under `src/agentdecompile_cli`
-- `1444` discovered classes, functions, and methods
-- `12016` call sites total
-- `4873` package-internal call sites before deduplication
-- `3150` deduplicated internal caller-to-callee edges in the full Mermaid graph
-- `84` Click command or group functions in `agentdecompile_cli.cli`
-
----
 
 ## Adding a Tool
 
@@ -230,12 +209,11 @@ When changing CLI routing, transport logic, project opening, or shared-server ha
 - Local version-control probes can produce semantic errors in content (`checkout-program`, `checkin-program`) while transport and outer tool call status remain successful.
 - Local import flows should not unexpectedly require shared-server connectivity in follow-up local inspection paths unless shared mode is explicitly requested.
 
-When touching any of the above, update all of:
+When touching any of the above, update:
 
-1. `README.md` runtime/usage sections.
-2. `USAGE.md` command and failure-state sections.
-3. `examples/usage_validation.ipynb` validation logic and summary output.
-4. Focused tests in `tests/` that lock expected behavior.
+1. `USAGE.md` first for new CLI command recipes and failure-state notes.
+2. `README.md` only when install or start-path text changes.
+3. Focused tests in `tests/` that lock expected behavior.
 
 ---
 
@@ -272,15 +250,14 @@ podman manifest push --all bolabaden/agentdecompile-aio:1.0.0 docker://docker.io
 podman manifest push --all bolabaden/agentdecompile-mcp:1.0.0 docker://docker.io/bolabaden/agentdecompile-mcp:1.0.0
 ```
 
-4. Create the GitHub release using `gh`:
+4. Create the GitHub release using `gh` (generate notes from the tag, or pass a notes file you write for this tag):
 
 ```bash
-gh release create 1.0.0 --title "AgentDecompile 1.0.0" --notes-file RELEASE_NOTES_1.0.0.md
+gh release create 1.0.0 --title "AgentDecompile 1.0.0" --generate-notes
 ```
 
-Recommended release notes structure in `RELEASE_NOTES_1.0.0.md`:
+Release notes should mention:
 
-- Heading: `# AgentDecompile 1.0.0`
 - Highlights: major capabilities, compatibility guarantees, and notable fixes.
 - Containers:
   - `docker.io/bolabaden/agentdecompile-aio:1.0.0`
@@ -295,3 +272,7 @@ Recommended release notes structure in `RELEASE_NOTES_1.0.0.md`:
 - [ ] Tests pass locally
 - [ ] Docs reflect behavioral changes
 - [ ] Tool schema and normalization behavior stay consistent
+
+### Workbench frontend
+
+The React/TypeScript source lives in `src/agentdecompile_recovery/corpus/dashboard/frontend`. Run `npm ci`, `npm test`, and `npm run build` there. Include rebuilt `dashboard/static/react` assets when shipping frontend changes. The Python package must serve these files without Node. See the [frontend guide](src/agentdecompile_recovery/corpus/dashboard/frontend/README.md) for Vite and browser verification.

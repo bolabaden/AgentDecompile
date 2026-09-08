@@ -73,10 +73,11 @@ class DataTypeToolProvider(ToolProvider):
                         "mode": {
                             "type": "string",
                             "description": "Action to perform on the data type catalog or listing.",
-                            "enum": ["archives", "list", "by_string", "info", "create", "update", "delete", "apply"],
+                            "enum": ["archives", "list", "by_string", "info", "find_uses", "create", "update", "delete", "apply"],
                             "default": "list",
                         },
-                        "name": {"type": "string", "description": "Catalog type name for info/delete/update, or typedef alias for create."},
+                        "discoverTypes": {"type": "boolean", "default": False, "description": "find_uses: also discover inferred uses through decompilation; potentially expensive."},
+                        "name": {"type": "string", "description": "Catalog type name for info/find_uses/delete/update, or typedef alias for create."},
                         "newName": {"type": "string", "description": "For mode 'update', rename the catalog type."},
                         "categoryPath": {"type": "string", "description": "Ghidra category folder (e.g. '/MyTypes'). Defaults to '/' for create."},
                         "dataTypeString": {"type": "string", "description": "The C-style text definition of the type you want to apply or parse (e.g., 'unsigned int', 'char *')."},
@@ -100,6 +101,7 @@ class DataTypeToolProvider(ToolProvider):
             "list": self._list,
             "bystring": self._by_string,
             "info": self._info,
+            "finduses": self._find_uses,
             "create": self._create,
             "update": self._update,
             "delete": self._delete,
@@ -107,6 +109,34 @@ class DataTypeToolProvider(ToolProvider):
         }
         handler = self._dispatch_handler(dispatch, action, "action")
         return await handler(args)
+
+    async def _find_uses(self, args):
+        from ghidra.app.plugin.core.navigation.locationreferences import ReferenceUtils
+        from ghidra.util.datastruct import ListAccumulator
+        from ghidra.util.task import TimeoutTaskMonitor
+        from java.util.concurrent import TimeUnit
+        assert self.program_info is not None
+        program = self.program_info.program
+        name = self._require_str(args, "name")
+        data_type = find_catalog_data_type(program.getDataTypeManager(), name, self._get_str(args, "categorypath") or None)
+        if data_type is None and not self._get_str(args, "categorypath"):
+            from ghidra.util.data import DataTypeParser
+            manager = program.getDataTypeManager()
+            parser = DataTypeParser(manager, manager, None, DataTypeParser.AllowedDataTypes.ALL)
+            data_type = parser.parse(name)
+        if data_type is None:
+            raise ValueError("Data type not found: " + name)
+        accumulator = ListAccumulator()
+        ReferenceUtils.findDataTypeReferences(accumulator, data_type, program, self._get_bool(args, "discovertypes", default=False), TimeoutTaskMonitor.timeoutIn(90, TimeUnit.SECONDS))
+        rows = []
+        offset = max(0, self._get_int(args, "offset", default=0))
+        limit = min(500, max(1, self._get_int(args, "limit", default=100)))
+        references = list(accumulator.get())
+        for reference in references[offset:offset + limit]:
+            address = reference.getLocationOfUse()
+            function = program.getFunctionManager().getFunctionContaining(address)
+            rows.append({"address": str(address), "context": str(reference.getContext()), "referenceType": str(reference.getRefTypeString()), "function": str(function.getName()) if function else None})
+        return create_success_response({"action": "find_uses", "name": name, "results": rows, "total": len(references), "offset": offset, "hasMore": offset + len(rows) < len(references)})
 
     async def _archives(self, args: dict[str, Any]) -> list[types.TextContent]:
         logger.debug("diag.enter %s", "mcp_server/providers/datatypes.py:DataTypeToolProvider._archives")

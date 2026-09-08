@@ -1,0 +1,37 @@
+[
+  {
+    "query": "plan analysis of this binary",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "triage nwmain.exe and split work",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "orchestrate planner worker critic",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "where do we start on this exe",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "just decompile 0x401000 and give me the C",
+    "should_trigger": false,
+    "split": "validation"
+  },
+  {
+    "query": "merge these three worker JSONs",
+    "should_trigger": false,
+    "split": "train"
+  },
+  {
+    "query": "challenge the worker's types",
+    "should_trigger": false,
+    "split": "train"
+  }
+]

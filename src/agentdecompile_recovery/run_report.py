@@ -145,11 +145,14 @@ for (const result of report.results || []) {
 """
 
 
+def html_report_text(report: dict[str, Any]) -> str:
+    encoded = base64.b64encode(json.dumps(report).encode("utf-8")).decode("ascii")
+    return _HTML_TEMPLATE.replace("__REPORT_BASE64__", encoded)
+
+
 def generate_html_report(report: dict[str, Any], output_path: Path | str) -> None:
     """Render a self-contained, offline HTML view of a run report (no build step)."""
-    encoded = base64.b64encode(json.dumps(report).encode("utf-8")).decode("ascii")
-    html = _HTML_TEMPLATE.replace("__REPORT_BASE64__", encoded)
-    Path(output_path).write_text(html, encoding="utf-8")
+    Path(output_path).write_text(html_report_text(report), encoding="utf-8")
 
 
 def generate_html_report_atomic(report: dict[str, Any], output_path: Path | str) -> None:

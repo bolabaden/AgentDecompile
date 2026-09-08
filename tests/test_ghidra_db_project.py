@@ -22,6 +22,7 @@ from agentdecompile_recovery.ghidra_db.packed import (
     is_packed_file,
     open_packed_database,
     read_packed_header,
+    write_packed_file,
 )
 from agentdecompile_recovery.ghidra_db.project import (
     INDEX_FILE,
@@ -41,9 +42,9 @@ pytestmark = pytest.mark.unit
 
 ODYSSEY_GPR = Path("/home/brunner56/Odyssey.gpr")
 ODYSSEY_REP = Path("/home/brunner56/Odyssey.rep")
-GHIDRA_REP = Path("/home/brunner56/Downloads/biodecompwarehouse/projects/agentdecompile.rep")
+GHIDRA_REP = Path.home() / "biodecompwarehouse/projects/agentdecompile.rep"
 REAL_GZF = Path("/home/brunner56/Desktop/k1_win_gog_swkotor.exe.gzf")
-SERVER_REPO = Path("/run/media/brunner56/MyBook/Downloads/biodecompwarehouse/repos/_odyssey")
+SERVER_REPO = Path.home() / "biodecompwarehouse/repos/_odyssey"
 
 _needs_odyssey = pytest.mark.skipif(not ODYSSEY_REP.is_dir(), reason="Odyssey project fixture unavailable")
 _needs_ghidra_project = pytest.mark.skipif(not GHIDRA_REP.is_dir(), reason="Ghidra project fixture unavailable")
@@ -210,6 +211,34 @@ def test_project_with_zero_programs_yields_an_empty_list(tmp_path: Path) -> None
     (repository / "idata").mkdir(parents=True)
 
     assert list_programs(repository) == []
+
+
+def test_flat_idata_item_is_listed(tmp_path: Path) -> None:
+    """Ghidra's LocalFileSystem import writes idata/<name>.prp, not 00/<hex>.prp."""
+
+    repository = tmp_path / "Import.rep"
+    idata = repository / "idata"
+    idata.mkdir(parents=True)
+    (idata / "nwn.exe.prp").write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<FILE_INFO>
+    <BASIC_INFO>
+        <STATE NAME="CONTENT_TYPE" TYPE="string" VALUE="Program" />
+        <STATE NAME="FILE_ID" TYPE="string" VALUE="abc" />
+        <STATE NAME="FILE_TYPE" TYPE="int" VALUE="0" />
+    </BASIC_INFO>
+</FILE_INFO>
+"""
+    )
+    db = idata / "~nwn.exe.db"
+    db.mkdir()
+    (db / "db.1.gbf").write_bytes(b"imported")
+
+    entries = list_programs(repository)
+
+    assert [entry.name for entry in entries] == ["nwn.exe"]
+    assert entries[0].database_path.read_bytes() == b"imported"
+    assert find_program(repository, "nwn.exe") is not None
 
 
 def test_legacy_data_root_is_searched(tmp_path: Path) -> None:
@@ -739,6 +768,20 @@ def test_unsupported_format_version_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(PackedFileError, match="unsupported packed format version"):
         read_packed_header(packed)
+
+
+def test_write_packed_file_roundtrips_through_extract(tmp_path: Path) -> None:
+    payload = bytes(range(256)) * 50
+    source = tmp_path / "in.gbf"
+    source.write_bytes(payload)
+    packed = write_packed_file(source, tmp_path / "out.gzf", item_name="roundtrip.exe")
+
+    header = read_packed_header(packed)
+    assert is_packed_file(packed)
+    assert header.item_name == "roundtrip.exe"
+    assert header.content_type == "Program"
+    assert header.content_length == len(payload)
+    assert extract_database(packed, tmp_path / "back.gbf").read_bytes() == payload
 
 
 def test_extraction_reproduces_the_payload_byte_for_byte(tmp_path: Path) -> None:

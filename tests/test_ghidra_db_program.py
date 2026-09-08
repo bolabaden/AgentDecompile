@@ -58,8 +58,8 @@ from agentdecompile_recovery.ghidra_db.program import (
 pytestmark = pytest.mark.unit
 
 ODYSSEY_GBF = Path("/home/brunner56/Odyssey.rep/idata/00/~00000000.db/db.1.gbf")
-GHIDRA_GBF = Path(
-    "/home/brunner56/Downloads/biodecompwarehouse/projects/agentdecompile.rep"
+GHIDRA_GBF = Path.home() / (
+    "biodecompwarehouse/projects/agentdecompile.rep"
     "/versioned/00/~00000000.db/db.1.gbf"
 )
 K1_GZF = Path("/home/brunner56/Desktop/k1_win_gog_swkotor.exe.gzf")

@@ -1,0 +1,37 @@
+[
+  {
+    "query": "https://agentskills.io/specification update our skills",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "look at the other pages on that domain",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "our skills don't trigger",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "add a new skill for BSim",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "decompile FUN_401000",
+    "should_trigger": false,
+    "split": "validation"
+  },
+  {
+    "query": "open the shared-fs repos project",
+    "should_trigger": false,
+    "split": "train"
+  },
+  {
+    "query": "run pytest on bsim_ops",
+    "should_trigger": false,
+    "split": "train"
+  }
+]

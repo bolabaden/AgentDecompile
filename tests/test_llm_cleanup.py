@@ -83,7 +83,7 @@ def test_prompt_is_edit_not_rewrite() -> None:
 
 
 def test_cleanup_refuses_without_get_function() -> None:
-    out = cleanup_ghidra_c(body=BROKEN_C, errors="C2065")
+    out = cleanup_ghidra_c(body="", errors="C2065")
     assert out["ok"] is False
     assert "get-function" in (out["reason"] or "")
 
@@ -144,17 +144,17 @@ def test_pipeline_llm_retries_after_preparse_fail(tmp_path: Path) -> None:
         corpus,
         work_dir=work,
         snapshot_dir=snap,
-        stop_after="llm-cleanup",
+        stop_after="leftover-recover",
         llm=True,
         llm_runner=runner,
     )
-    compile_receipt = json.loads((work / "compile.json").read_text(encoding="utf-8"))
-    assert compile_receipt["llmAttempted"] >= 1
-    assert compile_receipt["llmKept"] >= 1
-    assert compile_receipt["compiledCount"] >= 1
-    llm_receipt = json.loads((work / "llm-cleanup.json").read_text(encoding="utf-8"))
-    assert llm_receipt["ran"] is True
-    assert llm_receipt["kept"] >= 1
+    compile_receipt = json.loads((work / "recover-source.json").read_text(encoding="utf-8"))
+    compile = compile_receipt.get("compile") or compile_receipt
+    assert compile.get("llmAttempted") >= 1
+    assert compile.get("llmKept") >= 1
+    leftover = json.loads((work / "leftover-recover.json").read_text(encoding="utf-8"))
+    assert leftover["ran"] is True
+    assert leftover.get("kept", leftover.get("count", 0)) >= 1
     state = json.loads((work / "functions-state.json").read_text(encoding="utf-8"))
     assert "undeclared_ghidra_name" not in state["donor"][0]["source"]
     assert summary["completeExecutable"] is False

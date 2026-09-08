@@ -110,12 +110,34 @@ def _passes(tier: tuple, score: float, margin: float, content: int) -> bool:
     return score >= smin and margin >= mmin and (content or 0) >= cmin
 
 
-def status_for(pair_class: str, score: float, margin: float, content: int) -> str | None:
-    policy = PAIR_POLICY[pair_class]
-    for name in ("auto", "verify", "review"):
-        if _passes(policy[name], score, margin, content):
-            return name
-    return None
+def status_for(
+    score: float | str,
+    margin: float | None = None,
+    pair_class: str | float | None = None,
+    content: int = 99,
+    compunit: float | None = None,
+    canonical_name_conflict: bool = False,
+) -> str:
+    """Classify a scored pair. Compunit 0.0 and independent name conflicts veto auto.
+
+    Accepts both the store-style call ``status_for(score, margin, pair_class, …)``
+    and the older list-style ``status_for(pair_class, score, margin, content)``.
+    """
+    if isinstance(score, str):
+        pair_class, score, margin = score, margin, pair_class
+    if pair_class is None:
+        pair_class = "same_platform"
+    if margin is None:
+        margin = 0.0
+    policy = PAIR_POLICY[str(pair_class)]
+    veto = compunit == 0.0
+    if not veto and not canonical_name_conflict and _passes(policy["auto"], score, margin, content):
+        return "auto"
+    if not veto and _passes(policy["verify"], score, margin, content):
+        return "verify"
+    if _passes(policy["review"], score, margin, content):
+        return "review"
+    return "unresolved"
 
 
 DECOMP_SCALARS = ("n_tokens", "n_lines", "max_nest", "n_calls", "n_locals", "n_deref", "n_index", "n_field")
@@ -193,12 +215,29 @@ def score_features(
     return (num / den if den else 0.0), ev
 
 
+def _fid(fn: dict[str, Any]) -> str:
+    return str(fn.get("id") or fn.get("addr"))
+
+
+def _callees_of(fn: dict[str, Any]) -> set[str]:
+    return {str(x) for x in (fn.get("callee_addrs") or fn.get("callees") or [])}
+
+
+def _callers_of(fn: dict[str, Any]) -> set[str]:
+    return {str(x) for x in (fn.get("caller_addrs") or fn.get("callers") or [])}
+
+
 class FeatureIndex:
     def __init__(self, functions: Iterable[dict[str, Any]]):
-        self.funcs = {str(fn.get("id") or fn.get("addr")): fn for fn in functions}
+        self.funcs = {_fid(fn): fn for fn in functions}
         self.by_string: dict[str, list[str]] = defaultdict(list)
         self.by_const: dict[Any, list[str]] = defaultdict(list)
         self.by_ext: dict[str, list[str]] = defaultdict(list)
+        self.by_shape: dict[tuple, list[str]] = defaultdict(list)
+        self.by_unit: dict[str, list[str]] = defaultdict(list)
+        self.by_skeleton: dict[str, list[str]] = defaultdict(list)
+        self.callees: dict[str, set[str]] = defaultdict(set)
+        self.callers: dict[str, set[str]] = defaultdict(set)
         for fid, fn in self.funcs.items():
             for s in fn.get("strings") or []:
                 self.by_string[s].append(fid)
@@ -206,8 +245,21 @@ class FeatureIndex:
                 self.by_const[c].append(fid)
             for e in fn.get("ext_calls") or []:
                 self.by_ext[e].append(fid)
+            self.by_shape[shape_key(fn)].append(fid)
+            unit = _basename(fn.get("source_file") or fn.get("sourceFile"))
+            if unit:
+                self.by_unit[unit].append(fid)
+            skel = (fn.get("decomp") or {}).get("skeleton_hash")
+            if skel:
+                self.by_skeleton[skel].append(fid)
+            for callee in _callees_of(fn):
+                self.callees[fid].add(callee)
+                self.callers[callee].add(fid)
+            for caller in _callers_of(fn):
+                self.callers[fid].add(caller)
+                self.callees[caller].add(fid)
 
-    def candidates(self, src: dict[str, Any]) -> set[str]:
+    def candidates(self, src: dict[str, Any], mapping: dict[str, str] | None = None) -> set[str]:
         votes: Counter[str] = Counter()
         for s in src.get("strings") or []:
             hits = self.by_string.get(s) or []
@@ -221,9 +273,32 @@ class FeatureIndex:
             hits = self.by_ext.get(e) or []
             if len(hits) <= MAX_CONST_DF:
                 votes.update({h: 1 for h in hits})
+        if mapping:
+            src_id = _fid(src)
+            for callee in self.callees.get(src_id, ()):
+                mapped = mapping.get(callee)
+                if mapped is not None:
+                    for hit in self.callers.get(mapped, ()):
+                        votes[hit] += 2
+            for caller in self.callers.get(src_id, ()):
+                mapped = mapping.get(caller)
+                if mapped is not None:
+                    for hit in self.callees.get(mapped, ()):
+                        votes[hit] += 2
+        unit = _basename(src.get("source_file") or src.get("sourceFile"))
+        if unit:
+            for hit in self.by_unit.get(unit, ())[:400]:
+                votes[hit] += 2
+        skel = (src.get("decomp") or {}).get("skeleton_hash")
+        if skel:
+            for hit in self.by_skeleton.get(skel, ())[:200]:
+                votes[hit] += 2
+        if not votes:
+            for hit in self.by_shape.get(shape_key(src), ())[:200]:
+                votes[hit] += 1
         if not votes:
             return set(self.funcs)
-        return set(votes)
+        return {hit for hit in votes if hit in self.funcs}
 
 
 def match_binaries(
@@ -233,37 +308,85 @@ def match_binaries(
     left_meta: dict[str, Any] | None = None,
     right_meta: dict[str, Any] | None = None,
     tier: str = "auto",
+    rounds: int = 3,
 ) -> list[dict[str, Any]]:
-    """Score blocked pairs and keep those that clear PAIR_POLICY[class][tier]."""
+    """Score blocked pairs across greedy rounds and keep those that clear policy."""
     pair_class = classify_pair(left_meta or {}, right_meta or {})
     same_arch = pair_class in ("same_platform", "cross_format") or (
         (left_meta or {}).get("arch") == (right_meta or {}).get("arch")
     )
     index = FeatureIndex(right)
-    accepted: list[dict[str, Any]] = []
-    for fa in left:
-        cands = index.candidates(fa)
-        scored: list[tuple[float, dict[str, float], dict[str, Any]]] = []
-        for fid in cands:
-            fb = index.funcs[fid]
-            score, ev = score_features(fa, fb, same_arch=same_arch)
-            scored.append((score, ev, fb))
-        if not scored:
-            continue
-        scored.sort(key=lambda row: row[0], reverse=True)
-        best, ev, fb = scored[0]
-        runner = scored[1][0] if len(scored) > 1 else 0.0
-        margin = best - runner
-        content = int(ev.get("_content") or 0)
-        status = status_for(pair_class, best, margin, content)
-        if status is None:
-            continue
-        if tier == "auto" and status != "auto":
-            continue
-        accepted.append(
-            {
-                "left_id": fa.get("id"),
-                "right_id": fb.get("id"),
+    left_index = FeatureIndex(left)
+    mapping: dict[str, str] = {}
+    taken: set[str] = set()
+    results: dict[str, dict[str, Any]] = {}
+    src_ids = [
+        fid
+        for fid, fn in left_index.funcs.items()
+        if not fn.get("is_thunk") and (fn.get("n_instr") or 4) >= 4
+    ]
+
+    for rnd in range(rounds):
+        scored: list[tuple[float, float, str, str, dict[str, float]]] = []
+        for sid in src_ids:
+            if sid in mapping:
+                continue
+            fa = left_index.funcs[sid]
+            cands = index.candidates(fa, mapping) - taken
+            if not cands:
+                continue
+            best = second = 0.0
+            best_b: str | None = None
+            best_ev: dict[str, float] = {}
+            for bid in cands:
+                score, ev = score_features(fa, index.funcs[bid], same_arch=same_arch, mapping=mapping)
+                if score > best:
+                    second, best, best_b, best_ev = best, score, bid, ev
+                elif score > second:
+                    second = score
+            if best_b is not None:
+                margin = (best - second) if len(cands) > 1 else best
+                scored.append((best, margin, sid, best_b, best_ev))
+
+        scored.sort(key=lambda row: (-row[0], -row[1]))
+        new = 0
+        for best, margin, sid, bid, ev in scored:
+            if sid in mapping or bid in taken:
+                continue
+            content = int(ev.get("_content") or 0)
+            left_key = left_index.funcs[sid].get("canon_key")
+            right_key = index.funcs[bid].get("canon_key")
+            conflict = bool(left_key and right_key and left_key != right_key)
+            status = status_for(
+                best,
+                margin,
+                pair_class,
+                content,
+                compunit=ev.get("compunit"),
+                canonical_name_conflict=conflict,
+            )
+            if status == "unresolved":
+                prev = results.get(sid)
+                if prev is None or best > prev["score"]:
+                    results[sid] = {
+                        "left_id": left_index.funcs[sid].get("id"),
+                        "right_id": index.funcs[bid].get("id"),
+                        "score": round(best, 4),
+                        "margin": round(margin, 4),
+                        "content": content,
+                        "pair_class": pair_class,
+                        "status": status,
+                        "signals": {k: v for k, v in ev.items() if not k.startswith("_")},
+                        "kind": "identity",
+                    }
+                continue
+            if ev.get("compunit") != 0.0 and _passes(PAIR_POLICY[pair_class]["verify"], best, margin, content):
+                mapping[sid] = bid
+                taken.add(bid)
+                new += 1
+            results[sid] = {
+                "left_id": left_index.funcs[sid].get("id"),
+                "right_id": index.funcs[bid].get("id"),
                 "score": round(best, 4),
                 "margin": round(margin, 4),
                 "content": content,
@@ -272,5 +395,10 @@ def match_binaries(
                 "signals": {k: v for k, v in ev.items() if not k.startswith("_")},
                 "kind": "identity",
             }
-        )
+        if new == 0:
+            break
+
+    accepted = [row for row in results.values() if row["status"] != "unresolved"]
+    if tier == "auto":
+        accepted = [row for row in accepted if row["status"] == "auto"]
     return accepted

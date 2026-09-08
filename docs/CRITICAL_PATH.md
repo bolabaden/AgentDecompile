@@ -1,10 +1,13 @@
 # Recovery critical path
 
 The **main multi-binary recovery path** is the corpus pipeline
-([CORPUS_PIPELINE.md](CORPUS_PIPELINE.md)): extract → identify → merge
-knowledge → generate projects → recover source → preparse → compile → apply
-cross-build → optional llm-cleanup → verify. CLI: `agentdecompile-corpus` (also `agentdecompile-reconstruct corpus`).
-Default stop is a complete linked executable from the debug donor.
+([CORPUS_PIPELINE.md](CORPUS_PIPELINE.md)): extract → identify →
+calibrate-global → assembly-floor → recover-source → apply-cross-build →
+leftover-recover → verify. CLI: `agentdecompile-corpus` (also
+`agentdecompile-reconstruct corpus`). `--stop-after compile` still means
+stop after donor C compiles (`recover-source`). Open an already-analyzed
+Ghidra project and reuse that analysis. Do not re-run `analyze-program`
+unless the program has none.
 
 Packed Windows PE targets still use a **bounded checkpoint loop** inside
 `agentdecompile-reconstruct` for a single binary. There is no separate
@@ -131,13 +134,13 @@ target/source-dump/
 - Never promote inline asm, `_emit`, `.incbin`, or byte-copy sources into `verified/`.
 - Names, types, and module paths are advisory unless objdiff reports `differences==0`.
 
-## Proof-scale smoke (swkotor)
+## Proof-scale smoke
 
-Bounded live validation for the **1% proof ladder rung** on `swkotor.exe`. Requires a work dir that has completed through `report` (proof-target queue and proof-ladder receipts present). PE MSVC verification needs `--vc-root` and `--source-synthesis-wineprefix` when using Wine.
+Bounded live validation for the **1% proof ladder rung**. The public worked path is `tests/fixtures/test_x86_64`. Requires a work dir that has completed through `report` (proof-target queue and proof-ladder receipts present). PE MSVC verification needs `--vc-root` and `--source-synthesis-wineprefix` when using Wine.
 
 ```bash
-TARGET=/path/to/swkotor.exe
-WORK=target/agentdecompile-reconstruct/swkotor
+TARGET=tests/fixtures/test_x86_64
+WORK=target/agentdecompile-reconstruct/example
 
 # Once per work dir (if not already at report)
 uv run agentdecompile-reconstruct "$TARGET" \

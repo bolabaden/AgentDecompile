@@ -1,0 +1,681 @@
+/* Workbench chrome: brand, toolbar, menubar, session tabs, status bar.
+   Visual owner for these widgets. Layout grid/flex stays in workbench.css.
+   Consume tokens only — no new hex. */
+
+/* -------------------------------------------------------------------------
+   Shell
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-chrome {
+  position: relative;
+  z-index: var(--z-chrome);
+  flex: 0 0 auto;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-body);
+  font-size: var(--wb-type-ui);
+  line-height: 1.25;
+}
+
+.workbench-page .wb-chrome :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* -------------------------------------------------------------------------
+   Toolbar — brand | sunken search | compact ⌘K + pulse
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-toolbar {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) minmax(10rem, 1fr) auto;
+  gap: var(--wb-space-2) var(--wb-space-4);
+  align-items: center;
+  min-height: 32px;
+  padding: var(--wb-space-1) var(--wb-space-3);
+  background: var(--bg-panel);
+}
+
+.workbench-page .wb-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--wb-space-2);
+  min-width: 0;
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--fg-max);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -.04em;
+  line-height: 1;
+}
+
+.workbench-page .wb-brand strong {
+  display: block;
+  overflow: hidden;
+  color: var(--fg-max);
+  font-size: var(--wb-type-body);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-page .wb-search {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.workbench-page .wb-search #wb-q,
+.workbench-page .wb-chrome #wb-q {
+  display: block;
+  width: 100%;
+  min-height: var(--wb-ctrl-h-lg);
+  padding: 0 var(--wb-space-3);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg-sunken);
+  color: var(--fg-max);
+  font: 400 var(--wb-type-ui)/1.25 var(--font-ui);
+  box-shadow: var(--wb-inset);
+}
+
+.workbench-page .wb-search #wb-q::placeholder,
+.workbench-page .wb-chrome #wb-q::placeholder {
+  color: var(--text-dim);
+}
+
+.workbench-page .wb-search #wb-q:hover,
+.workbench-page .wb-chrome #wb-q:hover {
+  border-color: var(--border-strong);
+}
+
+.workbench-page .wb-search #wb-q:focus,
+.workbench-page .wb-chrome #wb-q:focus {
+  border-color: var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-search #wb-q::-webkit-search-cancel-button {
+  filter: invert(.7);
+  cursor: pointer;
+}
+
+.workbench-page .wb-status-line {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--wb-space-2);
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--wb-type-kicker);
+  white-space: nowrap;
+}
+
+.workbench-page .wb-status-line #job-pulse {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ⌘K — compact icon control, not a second search field */
+.workbench-page .wb-chrome .wb-server-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  min-width: var(--wb-ctrl-h);
+  min-height: var(--wb-ctrl-h);
+  padding: 0 var(--wb-space-2);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg-raised);
+  color: var(--fg-body);
+  font: 600 var(--wb-type-kicker)/1 var(--font-ui);
+  letter-spacing: .02em;
+  cursor: pointer;
+  box-shadow: var(--wb-inset);
+}
+
+.workbench-page .wb-chrome .wb-server-btn:hover {
+  background: var(--wb-hover);
+  border-color: var(--border-strong);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-chrome .wb-server-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-chrome .wb-server-btn:active {
+  background: var(--wb-press);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-chrome .wb-server-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.workbench-page .wb-chrome .wb-server-btn:disabled:hover,
+.workbench-page .wb-chrome .wb-server-btn:disabled:active {
+  background: var(--bg-raised);
+  border-color: var(--border);
+  color: var(--fg-body);
+}
+
+.workbench-page .wb-chrome .wb-server-btn.danger {
+  color: var(--danger);
+  border-color: var(--border-strong);
+  background: var(--bg-raised);
+}
+
+.workbench-page .wb-chrome .wb-server-btn.danger:hover {
+  background: var(--wb-hover);
+  color: var(--fg-max);
+}
+
+/* -------------------------------------------------------------------------
+   Menubar — Ghidra: 22px; hover highlight; open uses --sel
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-menubar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  height: 22px;
+  min-height: 22px;
+  max-height: 22px;
+  padding: 0 var(--wb-space-1);
+  border-top: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.workbench-page .wb-menu {
+  position: relative;
+}
+
+.workbench-page .wb-menu-btn {
+  height: 22px;
+  min-height: 22px;
+  max-height: 22px;
+  padding: 0 var(--wb-space-3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-body);
+  font: 400 var(--wb-type-ui)/22px var(--font-ui);
+  cursor: pointer;
+}
+
+.workbench-page .wb-menu-btn:hover {
+  background: var(--wb-hover);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-menu.on .wb-menu-btn,
+.workbench-page .wb-menu-btn[aria-expanded="true"] {
+  background: var(--sel);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-menu-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-menu-btn:disabled,
+.workbench-page .wb-menu-btn:disabled:hover,
+.workbench-page .wb-menu-btn:disabled:focus-visible {
+  opacity: .45;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--text-dim);
+  outline: none;
+}
+
+.workbench-page .wb-menu-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: var(--z-menu);
+  min-width: 14rem;
+  margin: 0;
+  padding: var(--wb-space-1) 0;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg-raised);
+  list-style: none;
+  box-shadow: var(--wb-raise);
+}
+
+.workbench-page .wb-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wb-space-5);
+  width: 100%;
+  min-height: var(--wb-ctrl-h);
+  padding: 0 var(--wb-space-5);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-max);
+  font: 400 var(--wb-type-ui)/var(--wb-ctrl-h) var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workbench-page .wb-accel {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: var(--wb-type-kicker);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.workbench-page .wb-menu-item:hover .wb-accel,
+.workbench-page .wb-menu-item:focus-visible .wb-accel,
+.workbench-page .wb-menu-item:active .wb-accel,
+.workbench-page .wb-menu-item.on .wb-accel,
+.workbench-page .wb-menu-item[aria-selected="true"] .wb-accel {
+  color: var(--text-muted);
+}
+
+.workbench-page .wb-menu-item:hover {
+  background: var(--wb-hover);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-menu-item:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-menu-item:active,
+.workbench-page .wb-menu-item.on,
+.workbench-page .wb-menu-item[aria-selected="true"] {
+  background: var(--sel);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-menu-item:disabled,
+.workbench-page .wb-menu-item:disabled:hover,
+.workbench-page .wb-menu-item:disabled:active,
+.workbench-page .wb-menu-item:disabled:focus-visible {
+  opacity: .45;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--text-dim);
+  outline: none;
+}
+
+.workbench-page .wb-menu-item:disabled .wb-accel {
+  color: var(--text-dim);
+}
+
+.workbench-page .wb-menu-sep,
+.workbench-page .wb-menu-list > .wb-menu-sep {
+  display: block;
+  height: 1px;
+  min-height: 1px;
+  margin: var(--wb-space-1) var(--wb-space-3);
+  padding: 0;
+  border: 0;
+  background: var(--border);
+  list-style: none;
+}
+
+/* -------------------------------------------------------------------------
+   Session tabs — inactive on panel; active = --bg + accent underline
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-sessions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  min-height: 26px;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.workbench-page .wb-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--wb-space-1);
+  min-width: 0;
+  min-height: 26px;
+  padding: 0 var(--wb-space-1) 0 var(--wb-space-3);
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-body);
+  box-shadow: none;
+}
+
+.workbench-page .wb-tab.kind-gpr,
+.workbench-page .wb-tab.kind-shared-fs,
+.workbench-page .wb-tab.kind-shared-http,
+.workbench-page .wb-tab.kind-draft,
+.workbench-page .wb-tab.kind-bin {
+  box-shadow: none;
+}
+
+.workbench-page .wb-tab:hover {
+  background: var(--wb-hover);
+}
+
+.workbench-page .wb-tab.on,
+.workbench-page .wb-tab[aria-selected="true"] {
+  background: var(--bg);
+  color: var(--fg-max);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.workbench-page .wb-tab.on:hover,
+.workbench-page .wb-tab[aria-selected="true"]:hover {
+  background: var(--bg);
+}
+
+.workbench-page .wb-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-tab-chip {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.workbench-page .wb-tab-chip.kind-gpr { color: var(--kind-gpr); }
+.workbench-page .wb-tab-chip.kind-shared-fs { color: var(--kind-shared-fs); }
+.workbench-page .wb-tab-chip.kind-shared-http { color: var(--kind-shared-http); }
+.workbench-page .wb-tab-chip.kind-draft { color: var(--kind-draft); }
+.workbench-page .wb-tab-chip.kind-bin { color: var(--kind-bin); }
+
+.workbench-page .wb-tab-name {
+  min-width: 0;
+  max-width: 14rem;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 400 var(--wb-type-ui)/1.2 var(--font-ui);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.workbench-page .wb-tab-name:hover {
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-tab-name:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-tab-name:disabled,
+.workbench-page .wb-tab-name:disabled:hover,
+.workbench-page .wb-tab-name:disabled:focus-visible {
+  opacity: .45;
+  cursor: not-allowed;
+  outline: none;
+}
+
+.workbench-page .wb-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: 400 12px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.workbench-page .wb-tab-close:hover {
+  background: var(--wb-hover);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-tab-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-tab-close:active,
+.workbench-page .wb-tab-close[aria-pressed="true"] {
+  background: var(--sel);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-tab-close:disabled,
+.workbench-page .wb-tab-close:disabled:hover,
+.workbench-page .wb-tab-close:disabled:active,
+.workbench-page .wb-tab-close:disabled:focus-visible {
+  opacity: .45;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--text-dim);
+  outline: none;
+}
+
+.workbench-page .wb-tab-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--wb-ctrl-h);
+  min-height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: 400 var(--wb-type-title)/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.workbench-page .wb-tab-new:hover {
+  background: var(--wb-hover);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-tab-new:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-tab-new:active,
+.workbench-page .wb-tab-new[aria-pressed="true"] {
+  background: var(--sel);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-tab-new:disabled,
+.workbench-page .wb-tab-new:disabled:hover,
+.workbench-page .wb-tab-new:disabled:active,
+.workbench-page .wb-tab-new:disabled:focus-visible {
+  opacity: .45;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--text-muted);
+  outline: none;
+}
+
+.workbench-page .wb-tab-rename {
+  min-width: 6rem;
+  max-width: 14rem;
+  min-height: var(--wb-ctrl-h);
+  padding: 0 var(--wb-space-2);
+  border: 1px solid var(--focus);
+  border-radius: 0;
+  background: var(--bg-sunken);
+  color: var(--fg-max);
+  font: 400 var(--wb-type-ui)/1.2 var(--font-ui);
+  box-shadow: var(--wb-inset);
+}
+
+.workbench-page .wb-tab-rename:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* -------------------------------------------------------------------------
+   Status bar — 22px, dim, never celebratory
+   ------------------------------------------------------------------------- */
+
+.workbench-page footer.wb-status,
+.workbench-page .wb-status#wb-status {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--wb-space-4);
+  height: 22px;
+  min-height: 22px;
+  max-height: 22px;
+  margin: 0;
+  padding: 0 var(--wb-space-3);
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: var(--wb-type-kicker);
+  line-height: 22px;
+}
+
+.workbench-page footer.wb-status #wb-status-source,
+.workbench-page #wb-status-source {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-page footer.wb-status #wb-status-kind,
+.workbench-page #wb-status-kind {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: var(--wb-type-kicker);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.workbench-page footer.wb-status .wb-hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--wb-type-kicker);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-page footer.wb-status #wb-last-action,
+.workbench-page #wb-status #wb-last-action {
+  color: var(--addr);
+}
+
+.workbench-page footer.wb-status #wb-status-program,
+.workbench-page footer.wb-status #wb-status-selection {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--wb-type-kicker);
+  white-space: nowrap;
+}
+
+/* A failure is loud but dismissible, and never mistaken for durable state */
+.workbench-page footer.wb-status .wb-status-error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wb-space-1);
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 var(--wb-space-2);
+  border-left: 2px solid var(--danger);
+  color: var(--danger);
+  font-size: var(--wb-type-kicker);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-page footer.wb-status .wb-status-dismiss {
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--wb-type-ui);
+  line-height: 1;
+}
+
+.workbench-page footer.wb-status .wb-status-dismiss:hover {
+  color: var(--fg-max);
+}
+
+.workbench-page footer.wb-status .wb-link {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--wb-type-kicker);
+  text-decoration: none;
+}
+
+.workbench-page footer.wb-status .wb-link:hover {
+  color: var(--fg-body);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* -------------------------------------------------------------------------
+   Narrow toolbar: keep one row of brand + search when possible
+   ------------------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .workbench-page .wb-toolbar {
+    grid-template-columns: auto 1fr auto;
+    gap: var(--wb-space-2);
+  }
+
+  .workbench-page .wb-brand strong {
+    max-width: 7rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .workbench-page .wb-toolbar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .workbench-page .wb-brand {
+    grid-column: 1 / -1;
+  }
+}

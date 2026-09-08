@@ -2,23 +2,21 @@
 
 AgentDecompile treats extra inputs as **puzzle pieces** for a target binary: sniff type, extract address-keyed facts when possible, register the bundle by target fingerprint, and keep everything advisory until objdiff.
 
-## One mental model
-
-```bash
-agentdecompile-reconstruct game.exe ./ugly-decomp/ notes.md symbols.jsonl archive.gzf
+```mermaid
+flowchart LR
+  pieces[Notes dumps gzf jsonl] --> sniff[Sniff type]
+  sniff --> place[Place by address]
+  place --> advisory[Advisory bundle]
+  advisory --> objdiff[Verified only after objdiff 0]
 ```
 
-Equivalent forms:
+## One mental model
 
-| Surface | How to pass pieces |
-|---------|-------------------|
-| CLI positional | paths after the binary |
-| CLI flags | repeatable `--context PATH` |
-| MCP | `reconstruct` with `contextPaths: [...]` |
+Pass extra files after the binary, or as repeatable `--context` paths, or as MCP `contextPaths`. Pieces are merged and deduped. A later run on the same target can reuse the registered acquisition bundle without re-passing paths.
 
-Pieces are merged and deduped. Later `reconstruct` on the same target can reuse the registered acquisition bundle without re-passing paths.
+CLI how-to: [USAGE.md](../USAGE.md). Single-binary reconstruct: [CRITICAL_PATH.md](./CRITICAL_PATH.md).
 
-## What gets integrated (procedural)
+## What gets integrated
 
 | Kind | Sniff | Placement rule |
 |------|-------|----------------|
@@ -52,13 +50,11 @@ Propose ≠ apply. Nothing silently renames Ghidra.
 
 ## Mid-run add another piece
 
-```bash
-agentdecompile-reconstruct game.exe --work-dir <same> --resume ./more-notes.md
-```
-
-Creates a new acquisition snapshot and merges into the target fingerprint without deleting `verified/`.
+Re-run reconstruct on the same `--work-dir` with `--resume` and the new file. That creates a new acquisition snapshot and merges into the target fingerprint without deleting `verified/`.
 
 ## Not in v1
 
 - Silent bulk rename into an open Ghidra program (use `manage-function` + conflict resolution)
 - Inventing VAs for unplaced notes via embeddings
+
+Return: [USAGE.md](../USAGE.md) · [INDEX.md](./INDEX.md)

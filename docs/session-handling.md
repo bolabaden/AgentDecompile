@@ -1,6 +1,6 @@
 # Session handling (MCP Streamable HTTP)
 
-Single source of truth for how MCP session ids are assigned, persisted, and forwarded so CLI and proxy stay aligned. User-facing summary: [AGENTS.md](../AGENTS.md) § Session and proxy behavior.
+Single source of truth for how MCP session ids are assigned, persisted, and forwarded so CLI and proxy stay aligned. User-facing summary: [USAGE.md](../USAGE.md) § Sessions.
 
 ## Rules
 

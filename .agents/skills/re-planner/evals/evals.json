@@ -1,0 +1,30 @@
+{
+  "skill_name": "re-planner",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "plan analysis of this binary",
+      "expected_output": "Agent loads re-planner and follows skills/re-planner/SKILL.md (or .agents/skills).",
+      "assertions": [
+        "The run consults the re-planner skill body, not only the description",
+        "No leftover target/ or invented BSim corpus is treated as fresh proof"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "triage nwmain.exe and split work",
+      "expected_output": "Same skill, different phrasing still activates and produces the skill's required artifact or next command.",
+      "assertions": [
+        "Activation is based on user intent, not an exact keyword match"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "just decompile 0x401000 and give me the C",
+      "expected_output": "Agent does not treat this as a re-planner task.",
+      "assertions": [
+        "re-planner is not the primary skill used"
+      ]
+    }
+  ]
+}

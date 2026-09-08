@@ -1,0 +1,576 @@
+/* Workbench dialogs: Open, Save As, Confirm, Access.
+   Visual owner for these widgets. Consume tokens only — no new hex.
+   Ghidra file chooser, not a card. Radius 0. */
+
+/* -------------------------------------------------------------------------
+   Modal shell
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-modal-backdrop,
+.workbench-page .wb-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--wb-space-5);
+  background: color-mix(in srgb, var(--bg-sunken) 50%, transparent);
+}
+
+.workbench-page .wb-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 96vw);
+  min-width: min(560px, 96vw);
+  max-height: min(85vh, 720px);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--fg-body);
+  box-shadow: var(--wb-raise);
+}
+
+.workbench-page .wb-confirm-dialog {
+  width: min(480px, 96vw);
+  min-width: min(360px, 96vw);
+}
+
+.workbench-page .wb-modal-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wb-space-3);
+  min-height: var(--wb-ctrl-h-lg);
+  padding: 0 var(--wb-space-2) 0 var(--wb-space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.workbench-page .wb-modal-head h2,
+.workbench-page .wb-modal-head #wb-modal-title,
+.workbench-page .wb-confirm-dialog #wb-confirm-title {
+  margin: 0;
+  color: var(--fg-max);
+  font-size: var(--wb-type-body);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.workbench-page .wb-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--wb-ctrl-h);
+  height: var(--wb-ctrl-h);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--fg-max);
+  font-size: var(--wb-type-title);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workbench-page .wb-modal-close:hover {
+  background: var(--wb-hover);
+  border-color: var(--border-strong);
+}
+
+.workbench-page .wb-modal-close:active {
+  background: var(--bg-sunken);
+}
+
+.workbench-page .wb-modal-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--wb-space-4);
+  background: var(--bg-panel);
+}
+
+.workbench-page .wb-modal-foot,
+.workbench-page .wb-modal-foot.wb-confirm,
+.workbench-page .wb-confirm-dialog .wb-confirm {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--wb-space-2);
+  padding: var(--wb-space-3) var(--wb-space-4);
+  border-top: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.workbench-page .wb-modal-body > p {
+  margin: 0;
+  color: var(--fg-body);
+  font-size: var(--wb-type-body);
+  line-height: 1.4;
+}
+
+/* -------------------------------------------------------------------------
+   Path field (hero)
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-open-paste,
+.workbench-page .wb-modal .wb-open-paste {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wb-space-1);
+  margin: 0 0 var(--wb-space-4);
+  color: var(--fg-head);
+  font-size: var(--wb-type-kicker);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.workbench-page #wb-open-paste,
+.workbench-page .wb-open-paste #wb-open-paste {
+  width: 100%;
+  min-height: var(--wb-ctrl-h-lg);
+  padding: 0 var(--wb-space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  color: var(--fg-max);
+  font-family: var(--font-mono);
+  font-size: var(--wb-type-body);
+  box-shadow: var(--wb-inset);
+}
+
+.workbench-page #wb-open-paste::placeholder {
+  color: var(--fg-dim);
+}
+
+.workbench-page #wb-open-paste:focus,
+.workbench-page #wb-open-paste:focus-visible {
+  border-color: var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* -------------------------------------------------------------------------
+   Tabs + drop + in-body actions
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-dialog-tabs {
+  display: flex;
+  gap: 0;
+  margin: 0 0 var(--wb-space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.workbench-page .wb-dialog-tabs button {
+  min-height: var(--wb-ctrl-h);
+  padding: 0 var(--wb-space-4);
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius);
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--fg-head);
+  font-size: var(--wb-type-ui);
+  cursor: pointer;
+}
+
+.workbench-page .wb-dialog-tabs button:hover {
+  background: var(--wb-hover);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-dialog-tabs button.on {
+  border-bottom-color: var(--accent);
+  background: var(--bg);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-dialog-tabs button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-modal .wb-drop,
+.workbench-page .wb-modal .wb-drop-compact,
+.workbench-page #wb-drop.wb-drop {
+  display: grid;
+  place-items: center;
+  min-height: var(--wb-ctrl-h-lg);
+  margin: 0 0 var(--wb-space-3);
+  padding: var(--wb-space-3) var(--wb-space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  color: var(--fg-head);
+  font-size: var(--wb-type-ui);
+  text-align: center;
+  box-shadow: var(--wb-inset);
+  cursor: pointer;
+}
+
+.workbench-page .wb-modal .wb-drop.on,
+.workbench-page .wb-modal .wb-drop:focus,
+.workbench-page .wb-modal .wb-drop:focus-visible,
+.workbench-page #wb-drop.wb-drop.on,
+.workbench-page #wb-drop.wb-drop:focus,
+.workbench-page #wb-drop.wb-drop:focus-visible {
+  border-color: var(--focus);
+  border-style: solid;
+  background: var(--bg);
+  color: var(--fg-max);
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-modal .wb-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wb-space-2);
+  margin: 0 0 var(--wb-space-4);
+}
+
+/* -------------------------------------------------------------------------
+   Browse list — kind rail, hover / select
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-browse,
+.workbench-page #wb-browse.wb-browse,
+.workbench-page .wb-modal .wb-browse {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  box-shadow: var(--wb-inset);
+}
+
+.workbench-page .wb-browse-path,
+.workbench-page .wb-modal .wb-browse-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wb-space-2);
+  margin: 0;
+  padding: var(--wb-space-2) var(--wb-space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.workbench-page .wb-browse-path code {
+  color: var(--fg-max);
+  font-family: var(--font-mono);
+  font-size: var(--wb-type-ui);
+}
+
+.workbench-page .wb-browse-path .wb-text-action {
+  min-height: var(--wb-ctrl-h);
+  padding: 0 var(--wb-space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--fg-max);
+  font-size: var(--wb-type-ui);
+}
+
+.workbench-page .wb-browse-path .wb-text-action:hover {
+  background: var(--wb-hover);
+  border-color: var(--border-strong);
+}
+
+.workbench-page .wb-browse-list,
+.workbench-page .wb-modal .wb-browse-list {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-height: calc(var(--wb-ctrl-h) * 6);
+  max-height: 16rem;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.workbench-page .wb-browse-list > li {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  box-shadow: none;
+}
+
+.workbench-page .wb-browse-item,
+.workbench-page .wb-modal .wb-browse-item,
+.workbench-page .wb-browse-list > li .wb-browse-item {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: var(--wb-space-2) var(--wb-space-4);
+  width: 100%;
+  min-height: var(--wb-ctrl-h);
+  padding: var(--wb-space-1) var(--wb-space-3) var(--wb-space-1) var(--wb-space-4);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-max);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workbench-page .wb-browse-list > li:last-child .wb-browse-item {
+  border-bottom: 0;
+}
+
+.workbench-page .wb-browse-item::before,
+.workbench-page .wb-modal .wb-browse-item::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--border);
+}
+
+.workbench-page .wb-browse-item:hover {
+  background: var(--wb-hover);
+}
+
+.workbench-page .wb-browse-item:active,
+.workbench-page .wb-browse-item:focus,
+.workbench-page .wb-browse-item:focus-visible,
+.workbench-page .wb-browse-item.on,
+.workbench-page .wb-browse-item[aria-selected="true"],
+.workbench-page .wb-browse-item[aria-current="true"],
+.workbench-page .wb-browse-list > li.on .wb-browse-item {
+  background: var(--sel);
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-browse-item:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workbench-page .wb-browse-item strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--wb-type-ui);
+  font-weight: 600;
+}
+
+.workbench-page .wb-browse-item span,
+.workbench-page .wb-browse-list > li .wb-browse-item span {
+  flex: 0 0 auto;
+  color: var(--fg-head);
+  font-size: var(--wb-type-kicker);
+  white-space: nowrap;
+}
+
+.workbench-page .wb-browse-list > li.kind-gpr .wb-browse-item::before,
+.workbench-page .wb-browse-item[data-kind="gpr"]::before,
+.workbench-page .wb-browse-item[data-kind="ghidra-project"]::before,
+.workbench-page .wb-browse-item[data-kind="project-dir"]::before {
+  background: var(--kind-gpr);
+}
+
+.workbench-page .wb-browse-list > li.kind-shared-fs .wb-browse-item::before,
+.workbench-page .wb-browse-item[data-kind="shared-fs"]::before {
+  background: var(--kind-shared-fs);
+}
+
+.workbench-page .wb-browse-list > li.kind-bin .wb-browse-item::before,
+.workbench-page .wb-browse-item[data-kind="binary"]::before,
+.workbench-page .wb-browse-item[data-kind="bin"]::before {
+  background: var(--kind-bin);
+}
+
+.workbench-page .wb-browse-list > li.kind-shared-http .wb-browse-item::before,
+.workbench-page .wb-browse-item[data-kind="shared-http"]::before,
+.workbench-page .wb-browse-item[data-kind="shared-project"]::before {
+  background: var(--kind-shared-http);
+}
+
+.workbench-page .wb-browse-list > li.kind-draft .wb-browse-item::before,
+.workbench-page .wb-browse-item[data-kind="draft"]::before {
+  background: var(--kind-draft);
+}
+
+/* -------------------------------------------------------------------------
+   Save As + remote / bin forms
+   ------------------------------------------------------------------------- */
+
+.workbench-page #wb-save-as-form,
+.workbench-page #wb-shared-form,
+.workbench-page .wb-modal .wb-bin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.workbench-page #wb-save-as-form label,
+.workbench-page #wb-shared-form label,
+.workbench-page .wb-modal .wb-bin-form label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wb-space-1);
+  margin: 0 0 var(--wb-space-4);
+  color: var(--fg-head);
+  font-size: var(--wb-type-ui);
+}
+
+.workbench-page #wb-save-as-form input,
+.workbench-page #wb-save-as-form select,
+.workbench-page #wb-save-as-url,
+.workbench-page #wb-shared-form input,
+.workbench-page .wb-modal .wb-bin-form input,
+.workbench-page .wb-modal .wb-bin-form select {
+  width: 100%;
+  min-height: var(--wb-ctrl-h-lg);
+  padding: 0 var(--wb-space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  color: var(--fg-max);
+  box-shadow: var(--wb-inset);
+}
+
+.workbench-page #wb-save-as-form input:focus,
+.workbench-page #wb-save-as-form select:focus,
+.workbench-page #wb-save-as-url:focus,
+.workbench-page #wb-shared-form input:focus,
+.workbench-page .wb-modal .wb-bin-form input:focus,
+.workbench-page .wb-modal .wb-bin-form select:focus {
+  border-color: var(--focus);
+}
+
+.workbench-page .wb-modal .wb-hint {
+  margin: 0 0 var(--wb-space-3);
+  color: var(--fg-head);
+  font-size: var(--wb-type-kicker);
+}
+
+.workbench-page .wb-modal .wb-hint code {
+  font-family: var(--font-mono);
+  color: var(--fg-body);
+}
+
+.workbench-page .wb-modal #wb-shared-add {
+  align-self: flex-start;
+}
+
+/* -------------------------------------------------------------------------
+   Confirm danger — tokens only
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-confirm-dialog .wb-btn.danger,
+.workbench-page .wb-modal-foot.wb-confirm .wb-btn.danger {
+  color: var(--fg-max);
+  background: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 82%, var(--bg));
+}
+
+.workbench-page .wb-confirm-dialog .wb-btn.danger:hover,
+.workbench-page .wb-modal-foot.wb-confirm .wb-btn.danger:hover {
+  background: color-mix(in srgb, var(--danger) 72%, var(--fg-max));
+  border-color: color-mix(in srgb, var(--danger) 72%, var(--fg-max));
+}
+
+.workbench-page .wb-confirm-dialog .wb-btn.danger:active,
+.workbench-page .wb-modal-foot.wb-confirm .wb-btn.danger:active {
+  background: color-mix(in srgb, var(--danger) 82%, var(--bg-sunken));
+}
+
+.workbench-page .wb-confirm-dialog .wb-btn.danger:focus-visible,
+.workbench-page .wb-modal-foot.wb-confirm .wb-btn.danger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* -------------------------------------------------------------------------
+   Access table (Keyboard & five ways) — readable in the modal
+   ------------------------------------------------------------------------- */
+
+.workbench-page .wb-modal .wb-access-table,
+.workbench-page .wb-access-table {
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
+  color: var(--fg-body);
+  font-size: var(--wb-type-ui);
+  box-shadow: var(--wb-inset);
+}
+
+.workbench-page .wb-modal .wb-access-table th,
+.workbench-page .wb-modal .wb-access-table td,
+.workbench-page .wb-access-table th,
+.workbench-page .wb-access-table td {
+  padding: var(--wb-space-2) var(--wb-space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.workbench-page .wb-modal .wb-access-table th,
+.workbench-page .wb-access-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-raised);
+  color: var(--fg-head);
+  font-size: var(--wb-type-kicker);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.workbench-page .wb-modal .wb-access-table td,
+.workbench-page .wb-access-table td {
+  color: var(--fg-max);
+}
+
+.workbench-page .wb-modal .wb-access-table tbody tr:hover,
+.workbench-page .wb-access-table tbody tr:hover {
+  background: var(--wb-hover);
+}
+
+.workbench-page .wb-modal .wb-access-table code,
+.workbench-page .wb-access-table code {
+  color: var(--addr);
+  font-family: var(--font-mono);
+  font-size: var(--wb-type-kicker);
+}
+
+.workbench-page .wb-modal .wb-access-table tbody tr:last-child td,
+.workbench-page .wb-access-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Validation and failure reported in place, next to the fields that caused it */
+.workbench-page .wb-modal .wb-dialog-error {
+  margin: 0 0 var(--wb-space-3);
+  padding: var(--wb-space-2) var(--wb-space-3);
+  border: 1px solid var(--danger);
+  border-left-width: 3px;
+  background: var(--bg-sunken);
+  color: var(--danger);
+  font-size: var(--wb-type-ui);
+}

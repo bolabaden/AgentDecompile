@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Phase B — corpus nav, density, jobs rail</title>
+  <style>
+    :root { --bg: #1a1815; --panel: #252a30; --border: #3a424c; --fg: #e8eaed; --accent: #d07a3a; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); min-height: 100vh; display: grid; grid-template-columns: 14rem 1fr 18rem; grid-template-rows: auto auto 1fr auto; }
+    header { grid-column: 1 / -1; padding: .6rem 1rem; border-bottom: 1px solid var(--border); display: flex; gap: 1rem; align-items: center; }
+    nav.corpus { grid-column: 1 / 3; display: flex; gap: .35rem; overflow-x: auto; padding: .5rem 1rem; border-bottom: 1px solid var(--border); }
+    nav.corpus button { border: 1px solid var(--border); border-radius: 999px; background: #1f1c18; color: var(--fg); padding: .25rem .6rem; font-size: .82rem; cursor: pointer; white-space: nowrap; }
+    nav.corpus button.on { border-color: var(--accent); }
+    aside.sidebar { border-right: 1px solid var(--border); padding: .75rem; }
+    main { padding: .75rem 1rem; }
+    .strip { margin-bottom: .75rem; padding: .65rem; border: 1px solid var(--border); border-radius: 8px; background: #1f1c18; }
+    .rail { border-left: 1px solid var(--border); padding: .75rem; background: #141210; }
+    .rail .hint { opacity: .7; font-size: .85rem; }
+    footer { grid-column: 1 / 3; padding: .5rem 1rem; border-top: 1px solid var(--border); font-size: .85rem; opacity: .8; }
+    .toggle { margin-left: auto; display: flex; gap: .5rem; }
+    .toggle button { font-size: .8rem; }
+    .compact main, .compact aside { font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>AgentDecompile</strong>
+    <span>Phase B mock — corpus nav strip · compact density · jobs side rail (≥1280px)</span>
+    <div class="toggle">
+      <button type="button" onclick="document.body.classList.toggle('compact')">Toggle compact</button>
+    </div>
+  </header>
+  <nav class="corpus" aria-label="Corpus panels">
+    <button class="on">Overview</button>
+    <button>Atlas</button>
+    <button>Report</button>
+    <button>Pipeline</button>
+    <button>Cross-match</button>
+    <button>STABS</button>
+    <button>Knowledge</button>
+    <button>Recovery</button>
+    <button>Tools</button>
+  </nav>
+  <aside class="sidebar">
+    <strong>Explorer</strong>
+    <p class="hint">Functions · j/k · Enter</p>
+  </aside>
+  <main>
+    <div class="strip"><strong>Decompile</strong> — context prefilled · Run · Fields…</div>
+    <p>Inspector + graph shell. Scroll targets flash on corpus nav click.</p>
+  </main>
+  <aside class="rail">
+    <strong>Jobs</strong>
+    <p class="hint">Side rail on wide screens; bottom dock on narrow.</p>
+    <ul><li><code>a1b2</code> running</li></ul>
+  </aside>
+  <footer>A finished job is not a match.</footer>
+</body>
+</html>

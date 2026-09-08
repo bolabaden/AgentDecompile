@@ -14,7 +14,7 @@ Security fixes land on the default branch (`master`) and are included in the nex
 
 **Please do not open a public GitHub issue for security problems.**
 
-Email the maintainers with:
+Use [GitHub private vulnerability reporting](https://github.com/bodencrouch/AgentDecompile/security/advisories/new) on this repository (Security → Report a vulnerability). Include:
 
 - A description of the issue and impact
 - Steps to reproduce (proof-of-concept if you have one)
@@ -27,8 +27,8 @@ We aim to acknowledge within a few business days and will work with you on discl
 
 AgentDecompile runs Ghidra analysis locally or against a Ghidra Server you configure. Typical risks:
 
-- **MCP HTTP server** bound to `0.0.0.0` exposes Ghidra project operations to the network — use auth, firewall rules, or bind to localhost.
-- **Ghidra Server credentials** in env vars or headers grant access to shared repositories — treat them like production secrets.
+- **MCP HTTP bind** — default is `127.0.0.1`. Do not bind `0.0.0.0` without `AGENT_DECOMPILE_AUTH_ENABLED` plus firewall/TLS. See [docs/MCP_CONFIGURATION_SECURITY.md](docs/MCP_CONFIGURATION_SECURITY.md).
+- **Ghidra Server credentials** in env vars or headers grant access to shared repositories — treat them like production secrets. They are not MCP HTTP auth.
 - **Arbitrary binary analysis** — importing untrusted binaries into Ghidra can trigger parser bugs in Ghidra itself; run in an isolated VM when analyzing malware.
 
 We treat issues in this repo's Python MCP layer as in scope. Upstream Ghidra/JVM vulnerabilities should be reported to the [Ghidra project](https://github.com/NationalSecurityAgency/ghidra/security).

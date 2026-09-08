@@ -289,7 +289,19 @@ def cleanup_ghidra_c(
         get_function_runner=get_function_runner,
     )
     if not context.get("ok"):
-        return {"ok": False, "source": None, "reason": context.get("reason") or "get-function failed"}
+        if (body or "").strip():
+            reason = context.get("reason") or "get-function failed"
+            context = {
+                "ok": True,
+                "text": (
+                    "# get-function unavailable\n"
+                    f"reason: {reason}\n"
+                    "Using the Ghidra C already in `body` from the knowledge store.\n"
+                ),
+                "reason": reason,
+            }
+        else:
+            return {"ok": False, "source": None, "reason": context.get("reason") or "get-function failed"}
     if not shutil.which(cli) and runner is None:
         return {"ok": False, "source": None, "reason": f"{cli} is not on PATH"}
     prompt = render_cleanup_prompt(

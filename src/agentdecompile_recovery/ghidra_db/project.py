@@ -417,6 +417,21 @@ def _latest_database_file(database_dir: Path) -> tuple[Path, int] | None:
     return best
 
 
+def _demangle_storage_name(name: str) -> str:
+    """Decode Ghidra NamingUtilities' case-preserving filesystem encoding."""
+    result: list[str] = []
+    escaped = False
+    for character in name:
+        if escaped:
+            result.append(character.upper())
+            escaped = False
+        elif character == "_":
+            escaped = True
+        else:
+            result.append(character)
+    return "".join(result)
+
+
 def iter_program_entries(
     path: Path | str, *, content_type: str | None = PROGRAM_CONTENT_TYPE
 ) -> Iterator[ProgramEntry]:
@@ -430,8 +445,16 @@ def iter_program_entries(
     root = resolve_project_root(path)
 
     for base in item_storage_roots(root):
-        for property_file in sorted(base.glob(f"*/*{PROPERTY_SUFFIX}")):
+        # IndexedV1 files as 00/00000000.prp. LocalFileSystem import writes
+        # idata/nwn.exe.prp next to ~nwn.exe.db — one glob misses the other.
+        property_files = [
+            *base.glob(f"*/*{PROPERTY_SUFFIX}"),
+            *base.glob(f"*{PROPERTY_SUFFIX}"),
+        ]
+        for property_file in sorted(set(property_files)):
             if property_file.name.startswith(HIDDEN_DIR_PREFIX):
+                continue
+            if property_file.name == "project.prp":
                 continue
             states = _read_property_file(property_file)
             item_type = states.get("CONTENT_TYPE", "")
@@ -445,8 +468,8 @@ def iter_program_entries(
                 continue
 
             yield ProgramEntry(
-                name=states.get("NAME", storage_name),
-                folder_path=states.get("PARENT", "/"),
+                name=states.get("NAME", _demangle_storage_name(storage_name)),
+                folder_path=states.get("PARENT", "/" + "/".join(_demangle_storage_name(part) for part in property_file.parent.relative_to(base).parts)),
                 file_id=states.get("FILE_ID") or None,
                 content_type=item_type,
                 storage_name=storage_name,

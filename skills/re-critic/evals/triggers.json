@@ -1,0 +1,32 @@
+[
+  {
+    "query": "review this worker artifact against the binary",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "challenge the type inference on FUN_401000",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "verify the xref claims",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "write a new hypothesis from scratch",
+    "should_trigger": false,
+    "split": "validation"
+  },
+  {
+    "query": "ingest BSim signatures",
+    "should_trigger": false,
+    "split": "train"
+  },
+  {
+    "query": "fix the workbench CSS",
+    "should_trigger": false,
+    "split": "train"
+  }
+]

@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from mcp import types
+
+from agentdecompile_cli.mcp_utils.async_native import native_call as _native_call
 
 from agentdecompile_cli.app_logger import basename_hint, redact_session_id
 from agentdecompile_cli.context import ProgramInfo
@@ -1393,7 +1396,26 @@ class ImportExportToolProvider(ToolProvider):
         if not source.exists():
             raise ValueError(f"File not found: {source}")
 
+        if enable_version_control and source.is_file():
+            from agentdecompile_recovery.corpus.dashboard.protection import prepare_protected_binary
+            from agentdecompile_recovery.corpus.dashboard.common import live_root
+            protection = await _native_call(prepare_protected_binary, source, live_root() or Path(tempfile.gettempdir()) / 'agentdecompile')
+            if protection.get('handling') == 'blocked':
+                return create_error_response(f"protection-unavailable: {protection.get('reason')}")
+            original_source = source
+            source = Path(protection['analysisPath'])
+            result = await _native_call(self._handle_shared_import, source, recursive, analyze_after_import, program_file_name=repo_program_name or original_source.name)
+            result['protection'] = protection
+            result['originalSourcePath'] = str(original_source)
+            return create_success_response(result)
+
         if enable_version_control:
+            # Shared folder imports must not bypass the per-image protection gate.
+            from agentdecompile_recovery.corpus.dashboard.protection import inspect_protection
+            for candidate in self._iter_files_to_import(source, recursive, max_depth):
+                protection = await _native_call(inspect_protection, candidate)
+                if protection.get('status') == 'detected':
+                    return create_error_response(f"protection-unavailable: import {candidate.name} individually so a derived image can be prepared before shared import.")
             return create_success_response(
                 self._handle_shared_import(
                     source,
@@ -1457,21 +1479,54 @@ class ImportExportToolProvider(ToolProvider):
                 discovered_count += 1
                 name = (prog_name or item.name or "").strip() or item.name
                 try:
-                    program = ghidra_project.importProgram(File(str(item)))
-                    if program is None:
-                        raise RuntimeError("importProgram returned None")
-                    # Always saveAs into the project domain. Previously saveAs ran only when the
-                    # display name differed from the source filename, so imports like foo.exe
-                    # never persisted and list-project-files saw an empty tree (matches PyGhidraContext.import_binary).
-                    try:
-                        if hasattr(program, "setName"):
-                            program.setName(name)
-                        elif hasattr(program, "name"):
-                            setattr(program, "name", name)
-                    except Exception:
-                        pass
-                    ghidra_project.saveAs(program, dest_folder, name, True)
-                    final_name = name
+                    from agentdecompile_recovery.corpus.dashboard.protection import prepare_protected_binary
+                    from agentdecompile_recovery.corpus.dashboard.common import live_root
+                    protection = await _native_call(prepare_protected_binary, item, live_root() or Path(tempfile.gettempdir()) / 'agentdecompile')
+                    if protection.get('handling') == 'blocked':
+                        raise ValueError(f"protection-unavailable: {protection.get('reason')}")
+                    analysis_item = Path(protection['analysisPath'])
+                    from agentdecompile_recovery.corpus.dashboard.library_identity import binary_sha256
+                    digest = await _native_call(binary_sha256, str(analysis_item))
+                    def existing_content():
+                        root = ghidra_project.getProject().getProjectData().getRootFolder()
+                        pending = [root]
+                        collision = False
+                        while pending:
+                            folder = pending.pop()
+                            pending.extend(list(folder.getFolders()))
+                            for domain_file in folder.getFiles():
+                                metadata = domain_file.getMetadata()
+                                prior = str(metadata.get("Executable SHA256") or metadata.get("SHA256") or "").lower()
+                                if digest and prior == digest:
+                                    return str(domain_file.getPathname()), str(domain_file.getName())
+                                if str(domain_file.getName()) == name and str(folder.getPathname()).rstrip("/") == dest_folder.rstrip("/"):
+                                    collision = True
+                        if collision:
+                            raise ValueError("A program with this name already exists. Its bytes have not been confirmed identical; choose a distinct name after checking its hash.")
+                        return None
+                    reused = await _native_call(existing_content)
+                    if reused:
+                        # Reusing bytes must still honor an explicit analysis request.
+                        # Opening through the owning project also keeps save semantics
+                        # identical to a newly imported program.
+                        parent_path, _, existing_name = reused[0].rpartition("/")
+                        program = await _native_call(ghidra_project.openProgram, parent_path or "/", existing_name, False)
+                        if program is None:
+                            raise RuntimeError("Existing program could not be opened")
+                        final_name = reused[1]
+                    else:
+                        program = await _native_call(ghidra_project.importProgram, File(str(analysis_item)))
+                        if program is None:
+                            raise RuntimeError("importProgram returned None")
+                        try:
+                            if hasattr(program, "setName"):
+                                program.setName(name)
+                            elif hasattr(program, "name"):
+                                setattr(program, "name", name)
+                        except Exception:
+                            pass
+                        await _native_call(ghidra_project.saveAs, program, dest_folder, name, True)
+                        final_name = name
                     path_in_project = ""
                     try:
                         df = program.getDomainFile()
@@ -1484,6 +1539,10 @@ class ImportExportToolProvider(ToolProvider):
                     imported_programs.append(
                         {
                             "sourcePath": str(item),
+                            "analysisPath": str(analysis_item),
+                            "reused": bool(reused),
+                            "sha256": digest,
+                            "protection": protection,
                             "programName": final_name,
                             "programPath": path_in_project,
                         },
@@ -1513,7 +1572,11 @@ class ImportExportToolProvider(ToolProvider):
                         load_time=time.time(),
                     )
                     SESSION_CONTEXTS.set_active_program_info(session_id, path_in_project, _pi)
-                    blocking_ensure_analyzed(program, _pi, program_path=path_in_project, force=False)
+                    if analyze_after_import:
+                        await _native_call(blocking_ensure_analyzed, program, _pi, program_path=path_in_project, force=False)
+                    # Persist the analysis performed after the initial import;
+                    # reconnecting must not reopen an unanalyzed on-disk copy.
+                    await _native_call(ghidra_project.save, program)
                     # Leave program in project; do not release (we are not the consumer)
                 except Exception as exc:
                     errors.append({"path": str(item), "error": str(exc)})
@@ -1624,25 +1687,26 @@ class ImportExportToolProvider(ToolProvider):
                     out = out.with_suffix(ext)
                 create_header = self._get_bool(args, "createheader", default=True)
                 include_types = self._get_bool(args, "includetypes", default=True)
-                _include_globals = self._get_bool(args, "includeglobals", default=True)  # reserved for CppExporter API
+                include_globals = self._get_bool(args, "includeglobals", default=True)
                 tags = self._get_str(args, "tags")
 
                 def _run_cpp_export() -> None:
-                    from ghidrecomp.decompile import decompile_to_single_file
+                    from ghidra.app.util.exporter import CppExporter
+                    from ghidra.util.task import TaskMonitor
+                    from java.io import File as JavaFile
 
-                    decompile_to_single_file(
-                        out,
-                        program,
-                        create_header=create_header,
-                        create_file=True,
-                        emit_types=include_types,
-                        exclude_tags=False,
-                        tags=tags,
-                        verbose=False,
+                    exporter = CppExporter(
+                        None, create_header, True, include_types,
+                        include_globals, False, tags or None,
                     )
+                    if not exporter.export(JavaFile(str(out)), program, None, TaskMonitor.DUMMY):
+                        raise RuntimeError("Ghidra C/C++ export did not complete: " + str(exporter.getMessageLog()))
 
                 try:
-                    self._run_program_transaction(program, "export-cpp", _run_cpp_export)
+                    # CppExporter reads the program and parallelizes decompilation.
+                    # Keep HTTP/event delivery responsive and avoid a write
+                    # transaction around this read-only operation.
+                    await _native_call(_run_cpp_export)
                     return create_success_response(
                         {
                             "action": "export",
@@ -2001,16 +2065,9 @@ class ImportExportToolProvider(ToolProvider):
         program: GhidraProgram | None = self.program_info.program
 
         try:
-            from ghidra.program.util import GhidraProgramUtilities  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
+            from agentdecompile_cli.mcp_utils.program_analysis import program_needs_analysis
 
-            session_marked_complete: bool = bool(getattr(self.program_info, "analysis_complete", False))
-            ghidra_requires_analysis: bool = True
-            try:
-                ghidra_requires_analysis = bool(GhidraProgramUtilities.shouldAskToAnalyze(program)) if program is not None else True
-            except Exception:
-                ghidra_requires_analysis = True if session_marked_complete else False
-
-            already_analyzed: bool = session_marked_complete or not ghidra_requires_analysis
+            already_analyzed = not program_needs_analysis(program)
             if already_analyzed and not force:
                 return create_success_response(
                     {
@@ -2043,7 +2100,10 @@ class ImportExportToolProvider(ToolProvider):
                     force=force,
                 )
 
-            self._run_program_transaction(program, "auto-analysis", _run_auto_analysis)
+            await _native_call(self._run_program_transaction, program, "auto-analysis", _run_auto_analysis)
+            project = getattr(self._manager, "ghidra_project", None) if self._manager else None
+            if project is not None:
+                await _native_call(project.save, program)
 
             return create_success_response(
                 {

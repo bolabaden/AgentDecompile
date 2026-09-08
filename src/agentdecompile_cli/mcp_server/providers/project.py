@@ -1906,7 +1906,8 @@ class ProjectToolProvider(ToolProvider):
             if domain_file is not None:
                 try:
                     program = self._open_program_from_domain_file(domain_file)
-                    self._set_active_program_info(program, normalized_project_path)
+                    from agentdecompile_cli.mcp_utils.async_native import native_call
+                    await native_call(self._set_active_program_info, program, normalized_project_path, analyze=self._get_bool(args, "analyzeafterimport", default=True))
                     return create_success_response(
                         {
                             "action": "open",
@@ -1949,6 +1950,19 @@ class ProjectToolProvider(ToolProvider):
             return await self._import_file(str(resolved), args)
 
         if resolved.is_dir():
+            from agentdecompile_recovery.corpus.ghidra_project import classify_locator
+            if classify_locator(str(resolved)).get('kind') == 'shared-fs':
+                import asyncio
+                from agentdecompile_recovery.ghidra_db.store import native_local_checkout, ProjectLayoutError
+                work_dir = Path(os.environ.get('AGENT_DECOMPILE_CORPUS_WORK_DIR') or os.environ.get('AGENT_DECOMPILE_CORPUS_ROOT') or (Path.home() / '.cache' / 'agentdecompile'))
+                try:
+                    local_gpr, origin = await asyncio.to_thread(native_local_checkout, resolved, work_dir)
+                except (OSError, ValueError, ProjectLayoutError) as exc:
+                    raise ActionableError(str(exc), context={'action': 'open', 'path': str(resolved), 'state': 'native-checkout-blocked'}, next_steps=['Resolve the source snapshot conflict without replacing local annotations.']) from exc
+                response = await self._open_gpr_project(local_gpr, {**args, 'analyzeafterimport': False, '_sourceLocator': str(resolved), '_nativeCheckout': origin})
+                payload = json.loads(response[0].text)
+                payload.update(sourceLocator=str(resolved), localProjectPath=str(local_gpr), nativeCheckout=origin)
+                return create_success_response(payload)
             # Opening a directory must attach a concrete .gpr under that path. Otherwise the
             # GhidraProject on the manager stays on the server's default --project-path, and
             # list-project-files / import-binary mutate the wrong project (stale binaries,
@@ -1980,6 +1994,7 @@ class ProjectToolProvider(ToolProvider):
     async def _create_and_open_gpr_project(self, gpr_path: Path, args: dict[str, Any]) -> list[types.TextContent]:
         """Create parent dirs and a new Ghidra project at the given .gpr path, then open it."""
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._create_and_open_gpr_project")
+        gpr_path = gpr_path.expanduser().resolve()
         project_dir: Path = gpr_path.parent
         project_name: str = gpr_path.stem
         try:
@@ -1993,7 +2008,10 @@ class ProjectToolProvider(ToolProvider):
         try:
             from ghidra.base.project import GhidraProject  # pyright: ignore[reportMissingModuleSource, reportMissingImports]
 
-            ghidra_project: GhidraProject = GhidraProject.createProject(str(project_dir), project_name, False)
+            from agentdecompile_cli.mcp_utils.async_native import native_call
+            def create_owned():
+                return GhidraProject.createProject(str(project_dir), project_name, False)
+            ghidra_project: GhidraProject = await native_call(self._manager.owned_gpr_project, gpr_path, create_owned) if self._manager else await native_call(create_owned)
         except Exception as exc:
             raise ActionableError(
                 f"Failed to create .gpr project '{gpr_path}': {exc}",
@@ -2009,6 +2027,7 @@ class ProjectToolProvider(ToolProvider):
         sets it as the active project on the manager, and lists available programs.
         """
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._open_gpr_project")
+        gpr_path = gpr_path.expanduser().resolve()
         project_dir: Path = gpr_path.parent
         project_name: str = gpr_path.stem  # e.g. "my_project" from "my_project.gpr"
 
@@ -2017,8 +2036,11 @@ class ProjectToolProvider(ToolProvider):
 
             from agentdecompile_cli.launcher import _patch_project_owner
 
-            _patch_project_owner(str(project_dir), project_name)
-            ghidra_project: GhidraProject = GhidraProject.openProject(str(project_dir), project_name, False)
+            from agentdecompile_cli.mcp_utils.async_native import native_call
+            def open_owned():
+                _patch_project_owner(str(project_dir), project_name)
+                return GhidraProject.openProject(str(project_dir), project_name, False)
+            ghidra_project: GhidraProject = await native_call(self._manager.owned_gpr_project, gpr_path, open_owned) if self._manager else await native_call(open_owned)
         except Exception as exc:
             raise ActionableError(
                 f"Failed to open .gpr project '{gpr_path}': {exc}",
@@ -2071,11 +2093,15 @@ class ProjectToolProvider(ToolProvider):
                 "path": str(gpr_path),
                 "project_name": project_name,
                 "project_dir": str(project_dir),
+                **({'sourceLocator': args['_sourceLocator'], 'nativeCheckout': args.get('_nativeCheckout')} if args.get('_sourceLocator') else {}),
             },
         )
 
         # Auto-open first program if available, or a specific requested program
         open_all: bool = self._get_bool(args, "openallprograms", default=False)
+        analyze_requested = self._get_bool(args, "analyzeafterimport", default=True)
+        from agentdecompile_cli.mcp_utils.async_native import native_call
+        from agentdecompile_cli.mcp_utils.program_analysis import program_needs_analysis
         opened_program: str | None = None
         requested_program: str | None = self._get_str(args, "programpath", "binary", "binaryname")
 
@@ -2090,7 +2116,8 @@ class ProjectToolProvider(ToolProvider):
         if programs_list:
             try:
                 project_data = ghidra_project.getProject().getProjectData()
-                for item in programs_list[:MAX_AUTO_OPEN_PROGRAMS]:
+                requested_items = programs_list if open_all else [item for item in programs_list if (item.get("path") or item.get("name")) == target_path]
+                for item in requested_items[:MAX_AUTO_OPEN_PROGRAMS]:
                     item_path = item.get("path") or item.get("name") or ""
                     if not item_path:
                         continue
@@ -2106,7 +2133,7 @@ class ProjectToolProvider(ToolProvider):
 
                         if is_primary:
                             # Primary program: set as active (with decompiler)
-                            self._set_active_program_info(program, item_path)
+                            await native_call(self._set_active_program_info, program, item_path, analyze=analyze_requested)
                             opened_program = item_path
                         else:
                             # Secondary programs: store in session with decompiler=None (lazy init)
@@ -2123,7 +2150,10 @@ class ProjectToolProvider(ToolProvider):
                                 load_time=time.time(),
                             )
                             SESSION_CONTEXTS.set_active_program_info(session_id, item_path, secondary_info)
-                            self._blocking_ensure_program_analyzed(program, item_path, secondary_info)
+                            if analyze_requested:
+                                await native_call(self._blocking_ensure_program_analyzed, program, item_path, secondary_info)
+                            else:
+                                secondary_info.ghidra_analysis_complete = not program_needs_analysis(program)
                             # Restore active key to the primary program (set_active_program_info changes it)
                             if opened_program:
                                 session = SESSION_CONTEXTS.get_or_create(session_id)
@@ -2148,7 +2178,7 @@ class ProjectToolProvider(ToolProvider):
                 if domain_file is not None:
                     program = self._open_program_from_domain_file(domain_file)
                     if program is not None:
-                        self._set_active_program_info(program, target_path)
+                        await native_call(self._set_active_program_info, program, target_path, analyze=analyze_requested)
                         opened_program = target_path
             except Exception as exc:
                 logger.warning("Failed to auto-open program from .gpr project: %s", exc)
@@ -3681,7 +3711,7 @@ class ProjectToolProvider(ToolProvider):
             raise last_error
         raise RuntimeError("Unable to open domain object")
 
-    def _set_active_program_info(self, program: GhidraProgram, program_path: str) -> None:
+    def _set_active_program_info(self, program: GhidraProgram, program_path: str, *, analyze: bool = True) -> None:
         logger.debug("diag.enter %s", "mcp_server/providers/project.py:ProjectToolProvider._set_active_program_info")
         from agentdecompile_cli.mcp_utils.decompiler_util import open_decompiler_for_program
         from agentdecompile_cli.launcher import ProgramInfo
@@ -3716,7 +3746,11 @@ class ProjectToolProvider(ToolProvider):
         else:
             self.set_program_info(program_info)
 
-        self._blocking_ensure_program_analyzed(program, program_path, program_info)
+        if analyze:
+            self._blocking_ensure_program_analyzed(program, program_path, program_info)
+        else:
+            from agentdecompile_cli.mcp_utils.program_analysis import program_needs_analysis
+            program_info.ghidra_analysis_complete = not program_needs_analysis(program)
 
     def _blocking_ensure_program_analyzed(
         self,

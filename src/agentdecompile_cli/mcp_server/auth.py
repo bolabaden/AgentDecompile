@@ -249,6 +249,11 @@ class AuthMiddleware:
             await self._inner_app(scope, receive, send)
             return
 
+        path = (scope.get("path") or "").rstrip("/") or "/"
+        if path == "/health":
+            await self._inner_app(scope, receive, send)
+            return
+
         # Decode relevant request headers
         auth_header = ""
         target_host = ""

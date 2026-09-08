@@ -1,10 +1,16 @@
-# Exhaustive AgentDecompile Tools Reference (Python MCP Implementation)
+# AgentDecompile tools reference
 
-This document provides an exhaustive, consolidated reference for all canonical tools implemented in the Python MCP (from `src/agentdecompile_cli/registry.py`), including all aliases and synonyms. Each tool is documented once under its canonical name, with aliases/synonyms forwarding to the primary entry (no logic duplication). Parameter normalization handles casing and separators (e.g., `programPath` = `program_path` = `programPath`). Overloads are documented explicitly per canonical tool. Descriptions are detailed, expert-crafted paragraphs explaining the tool's purpose, behavior, and use cases. All parameters are fully documented, including types where specified. Synonyms for parameters are listed exhaustively. Each tool includes an examples section with practical usage scenarios.
+Canonical tools from `src/agentdecompile_cli/registry.py`: **77** tools, **73** advertised by default, **4** GUI-only.
 
-**Legacy naming policy**: only the default curated advertised tool names are considered primary. Any other tool name in this document (including non-default canonical names and synonyms) is a legacy compatibility name. Legacy names remain callable, and can be re-advertised by setting `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
+Install and start: [README.md](README.md). Day-to-day CLI: [USAGE.md](USAGE.md). Hub: [docs/INDEX.md](docs/INDEX.md).
 
-**GUI vs Headless**: `programPath` (and synonyms) is optional in GUI mode (uses active program) but required in headless for program-scoped tools.
+Each tool is documented once under its kebab-case name. Aliases forward to that entry. Parameter names accept `programPath`, `program_path`, and `program-path`.
+
+**Legacy names** stay callable. Re-advertise them with `AGENTDECOMPILE_SHOW_LEGACY_TOOLS=1` or `AGENTDECOMPILE_ENABLE_LEGACY_TOOLS=1`.
+
+**GUI vs headless:** `programPath` is optional in GUI (active program) and required in headless for program-scoped tools.
+
+Do not hand-edit **Canonical Tool Docs** below. Refresh overloads with `helper_scripts/generate_tools_list.py`. Reorder headings with `helper_scripts/reorder_tools_list_canonical.py`.
 
 ## Server Configuration
 
@@ -37,6 +43,9 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
   - [Server Configuration](#server-configuration)
     - [Local project](#local-project)
   - [Table of Contents](#table-of-contents)
+  - [Control workspace recovery](#control-workspace-recovery)
+    - [`read-workspace-activity`](#read-workspace-activity)
+    - [`manage-workflow`](#manage-workflow)
   - [Canonical Tool Docs](#canonical-tool-docs)
     - [`analyze-data-flow`](#analyze-data-flow)
     - [`analyze-program`](#analyze-program)
@@ -91,6 +100,9 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
     - [`read-bytes`](#read-bytes)
     - [`resolve-modification-conflict`](#resolve-modification-conflict)
     - [`run-decomp-match`](#run-decomp-match)
+    - [`bsim-createdatabase`](#bsim-createdatabase)
+    - [`bsim-ingest`](#bsim-ingest)
+    - [`bsim-report`](#bsim-report)
     - [`search-code`](#search-code)
     - [`search-constants`](#search-constants)
     - [`search-everything`](#search-everything)
@@ -164,6 +176,39 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
       - [GOT/PLT Overwrite](#gotplt-overwrite)
       - [Shellcode Injection](#shellcode-injection)
     - [Practical Workflow](#practical-workflow)
+
+## Control workspace recovery
+
+These tools share scheduling and evidence state with the static and Vite workbenches. They use the server's configured corpus workspace. Neither requires an open Ghidra program.
+
+### `read-workspace-activity`
+
+Read activity, measured progress, ETA basis, proof references, and durable preparation IDs. Optional `locator` and `slug` scope function detail; workspace project and binary rollups remain visible. The response contains `entities`, `revision`, and `preparations`. This Tier 0 tool does not admit work.
+
+```bash
+agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool read-workspace-activity '{}'
+```
+
+### `manage-workflow`
+
+Source archives use this same shared workflow surface. `operation=export-source` accepts a registered `slug` and optional exact `locator`/`program`, returning the source export job. `operation=export-status` accepts its `jobId` and returns status, output, and the completed ZIP receipt. These operations require the workflow mutation tier because export admission can invoke the native toolchain and write artifacts. Source archive completion does not establish compilation or byte verification.
+
+Control the same automatic workflow used after dashboard imports. This Tier 3 tool can schedule analysis and mutations; a lower analysis ceiling rejects it before admission. Preparation reuses valid analysis and receipts. A new workflow has a 24-hour execution budget. Routine transitions and supported fallbacks happen in the backend.
+
+| Operation | Additional parameters | Result |
+|---|---|---|
+| `snapshot` | Optional `locator`, `slug` | Same state as `read-workspace-activity` |
+| `prepare` | `locator` or registered binary `slug` | Admit missing work or return the existing admission |
+| `pause` | `preparationId` | Pause between stages; accepted native work drains |
+| `resume` | `preparationId` | Continue the recorded workflow within its budget |
+| `stop` | `preparationId` | Stop scheduling further stages |
+| `budget` | `preparationId`, `seconds: null` or `unlimited: true`; optional finite integer `seconds` from 1 to 604800 | Default is no wall-time limit. A finite allowance starts from now and does not predict completion. Per-function attempt limits remain in effect. |
+
+```bash
+agentdecompile-cli --mcp-server-url http://127.0.0.1:8080/mcp tool manage-workflow '{"operation":"prepare","locator":"/path/to/Analysis.gpr"}'
+```
+
+Use the returned preparation `id` for controls. Names also accept snake_case; `preparation_id` and `preparationId` address the same parameter. A completed operation is not byte verification. Inspect the recorded proof receipt separately.
 
 ## Canonical Tool Docs
 
@@ -1685,6 +1730,65 @@ AGENT_DECOMPILE_PROJECT_PATH=/my/projects/analysis mcp-agentdecompile
 **Examples**:
 - Suggest name: `suggest programPath="/bin.exe" suggestionType="name" address="0x401000"`.
 
+### `bsim-createdatabase`
+
+**Description**: Create a Ghidra BSim database in a PostgreSQL datadir or `file:` store by wrapping `support/bsim createdatabase`. Starting `BSimControlLaunchable` only runs PostgreSQL — this command is what actually creates the BSim schema. Distinguishing “server is up” from “database exists” is the point of issue 169.
+
+**Parameters**:
+- `bsimUrl` (string, optional): `postgresql://host[:port]/dbname` or `file:/dir/dbname`.
+- `datadir` (string, optional): BSimControl PostgreSQL data directory; used to derive a URL when `bsimUrl` is omitted.
+- `name` (string, optional): Database name when deriving the URL (default `bsim`).
+- `template` (string, optional): `large_32` | `medium_32` | `medium_64` | `medium_cpool` | `medium_nosize`.
+- `owner` (string, optional): BSim database owner metadata.
+- `description` (string, optional): BSim database description.
+
+**Overloads**:
+- `bsim-createdatabase(bsimUrl, datadir, name, template, owner, description)` canonical signature.
+
+**Synonyms**: `bsim-createdatabase`, `bsim_createdatabase`, `create-bsim-database`
+
+**Examples**:
+- `bsim-createdatabase datadir="/data/bsim_datadir" name="odyssey" template="medium_nosize"`.
+
+### `bsim-ingest`
+
+**Description**: Ingest every program in a Ghidra project or shared repository: generate signatures and commit them to a BSim database (`bsim generatesigs … --bsim`). Per-program progress is returned. Already-committed programs are skipped unless `force` is set, so a 24-program run that fails partway can resume.
+
+**Parameters**:
+- `repository` (string, required): Shared-fs folder, `.gpr`, or `ghidra://` repository.
+- `bsimUrl` (string, optional): Target BSim URL.
+- `datadir` (string, optional): BSimControl data directory (URL + receipt default).
+- `name` (string, optional): Database name when deriving the URL.
+- `ghidraUrl` (string, optional): `ghidra://host/repo` prefix; program names are appended.
+- `programs` (array, optional): Limit ingest to these program names.
+- `receipt` (string, optional): JSON receipt path (default `<datadir or repo>/agentdecompile-bsim-ingest.json`).
+- `force` (boolean, optional): Re-ingest programs already in the database or receipt.
+
+**Overloads**:
+- `bsim-ingest(repository, bsimUrl, datadir, name, ghidraUrl, programs, receipt, force)` canonical signature.
+
+**Synonyms**: `bsim-ingest`, `bsim_ingest`, `ingest-bsim`, `bsim-commit-repo`
+
+**Examples**:
+- `bsim-ingest repository="/data/repos/_odyssey" datadir="/data/bsim_datadir" name="odyssey"`.
+
+### `bsim-report`
+
+**Description**: Report what a BSim datadir or database holds. Distinguishes **datadir has no BSim database** (initdb templates only, or `createdatabase` never ran), **database exists but is empty**, and **database holds N executables** (names and architectures). Does not infer corpus presence from PostgreSQL OID folder sizes.
+
+**Parameters**:
+- `datadir` (string, optional): BSimControl PostgreSQL data directory.
+- `bsimUrl` (string, optional): Database URL to query with `getmetadata` / `getexecount` / `listexes`.
+- `name` (string, optional): Database name when deriving the URL.
+
+**Overloads**:
+- `bsim-report(datadir, bsimUrl, name)` canonical signature.
+
+**Synonyms**: `bsim-report`, `bsim_report`, `list-bsim`, `bsim-status`
+
+**Examples**:
+- `bsim-report datadir="/data/bsim_datadir"`.
+
 ## Usage Tips
 
 ### Start with High-Level Analysis
@@ -2377,5 +2481,3 @@ Calculate jump address to shellcode
 
 **Examples**:
 - `checkout-status`
-
-

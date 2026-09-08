@@ -1,0 +1,128 @@
+.guide-workflows {
+  color: inherit;
+  margin: 18px 0;
+  border: 1px solid var(--atlas-line, var(--border, #38404d));
+  padding: 20px;
+}
+.guide-workflows > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  height: auto;
+  padding: 0;
+  background: transparent;
+}
+.guide-workflows h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.guide-workflows header p {
+  font-size: 12px;
+  opacity: 0.7;
+  margin: 8px 0 20px;
+}
+.guide-workflows header > span {
+  font:
+    11px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+  max-width: 40%;
+  opacity: 0.7;
+}
+.guide-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 24px;
+}
+.guide-layout > nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.guide-layout > nav button {
+  display: flex;
+  gap: 12px;
+  text-align: left;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 12px;
+}
+.guide-layout > nav button span {
+  font:
+    10px ui-monospace,
+    monospace;
+  opacity: 0.65;
+}
+.guide-layout > nav button[aria-current] {
+  background: var(--atlas-panel, var(--selection, #193043));
+  color: var(--atlas-cyan, var(--accent, #67d5d5));
+}
+.guide-layout article > small {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.65;
+}
+.guide-layout h3 {
+  font-size: 20px;
+  margin: 12px 0;
+}
+.guide-layout article > p {
+  font-size: 12px;
+  line-height: 1.7;
+  opacity: 0.8;
+}
+.guide-tasks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 17px;
+  margin-top: 22px;
+}
+.guide-tasks button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  font-size: 12px;
+}
+.guide-tasks small {
+  font-size: 10px;
+  line-height: 1.6;
+  opacity: 0.65;
+  display: block;
+  margin-top: 6px;
+}
+.guide-boundary {
+  border-left: 2px solid var(--atlas-pink, var(--border, #95708d));
+  padding: 10px 15px;
+  margin-top: 22px !important;
+}
+.guide-layout article > footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: transparent;
+  padding: 18px 0 0;
+  font-size: 11px;
+  margin-top: 15px;
+}
+@media (max-width: 750px) {
+  .guide-layout {
+    grid-template-columns: 1fr;
+  }
+  .guide-layout > nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .guide-tasks {
+    grid-template-columns: 1fr;
+  }
+  .guide-workflows > header {
+    flex-direction: column;
+  }
+}

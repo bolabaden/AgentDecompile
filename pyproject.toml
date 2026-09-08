@@ -121,12 +121,15 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["agentdecompile_cli*", "agentdecompile_recovery*"]
+exclude = ["*.frontend", "*.frontend.*"]
 
 [tool.setuptools.package-data]
 agentdecompile_cli = ["webui_assets/*"]
+"agentdecompile_recovery.corpus.dashboard" = ["static/*", "static/react/*", "static/react/assets/*"]
 
 [tool.setuptools.data-files]
 "share/agentdecompile-recovery/scripts" = [
+    "scripts/normalize-binary.py",
     "scripts/binary-source-roundtrip.py",
     "scripts/one-shot-source.py",
     "scripts/one-shot-source-archive-verify.py",
