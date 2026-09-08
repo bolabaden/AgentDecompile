@@ -7,11 +7,14 @@ The entire Ghidra API is available via pre-populated namespace variables:
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
+import sys
+import threading
 import traceback
 
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -46,6 +49,51 @@ if TYPE_CHECKING:
     from ghidra.util.task import TaskMonitor as GhidraTaskMonitor  # pyright: ignore[reportMissingImports, reportMissingModuleSource, reportMissingTypeStubs]  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+_STREAM_LOCK = threading.RLock()
+
+
+class _ThreadStream:
+    """Route script writes to their worker, leaving other server output alone."""
+
+    def __init__(self, fallback: Any):
+        self.fallback = fallback
+        self.targets: dict[int, Any] = {}
+
+    def write(self, value: str) -> Any:
+        return self.targets.get(threading.get_ident(), self.fallback).write(value)
+
+    def flush(self) -> Any:
+        return self.targets.get(threading.get_ident(), self.fallback).flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.fallback, name)
+
+
+@contextmanager
+def _capture_thread_streams(stdout: Any, stderr: Any):
+    current = threading.get_ident()
+    routed = []
+    with _STREAM_LOCK:
+        for name, target in [('stdout', stdout), ('stderr', stderr)]:
+            stream = getattr(sys, name)
+            if not isinstance(stream, _ThreadStream):
+                stream = _ThreadStream(stream)
+                setattr(sys, name, stream)
+            previous = stream.targets.get(current)
+            stream.targets[current] = target
+            routed.append((name, stream, previous))
+    try:
+        yield
+    finally:
+        with _STREAM_LOCK:
+            for name, stream, previous in routed:
+                if previous is None:
+                    stream.targets.pop(current, None)
+                else:
+                    stream.targets[current] = previous
+                if not stream.targets and getattr(sys, name) is stream:
+                    setattr(sys, name, stream.fallback)
 
 
 class ScriptToolProvider(ToolProvider):
@@ -342,8 +390,8 @@ class ScriptToolProvider(ToolProvider):
         stdout_capture: io.StringIO = io.StringIO()
         stderr_capture: io.StringIO = io.StringIO()
 
-        try:
-            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+        def execute_code() -> Any:
+            with _capture_thread_streams(stdout_capture, stderr_capture):
                 # Try eval first (single expression) for convenience.
                 # This handles: 1+1, getFunction("main"), currentProgram.getName()
                 try:
@@ -355,6 +403,27 @@ class ScriptToolProvider(ToolProvider):
                     # This handles: for loops, assignments, multiline scripts
                     exec(code, ns)  # noqa: S102
                     result = ns.get("__result__")
+                return result
+
+        try:
+            # Keep the invocation's program/conflict context alive until native
+            # work ends, while allowing health, jobs and cancellation requests.
+            worker = asyncio.create_task(asyncio.to_thread(execute_code))
+            try:
+                result = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                # Retrieve a worker failure, but preserve the caller's original
+                # cancellation rather than returning a normal script response.
+                if not worker.cancelled():
+                    worker.exception()
+                raise
         except Exception as script_exc:
             # Any exception (not just SyntaxError) → capture traceback to stderr
             tb: str = traceback.format_exc()

@@ -34,6 +34,7 @@ from .decomp_match import DecompMatchToolProvider
 from .prompts import PromptToolProvider
 from .static_analysis import StaticAnalysisToolProvider
 from .recovery import RecoveryToolProvider
+from .workflow import WorkflowToolProvider
 from .context_substrate import ContextSubstrateToolProvider
 
 __all__ = [
@@ -59,6 +60,7 @@ __all__ = [
     "ScriptToolProvider",
     "StaticAnalysisToolProvider",
     "RecoveryToolProvider",
+    "WorkflowToolProvider",
     "PromptToolProvider",
     "SearchEverythingToolProvider",
     "StringToolProvider",

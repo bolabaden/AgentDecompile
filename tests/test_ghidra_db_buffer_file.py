@@ -169,8 +169,8 @@ def test_free_index_list_is_cycle_safe(tmp_path: Path) -> None:
 
 # -- real-fixture checks ----------------------------------------------------
 
-FIXTURE = Path(
-    "/home/brunner56/Downloads/biodecompwarehouse/projects/agentdecompile.rep"
+FIXTURE = Path.home() / (
+    "biodecompwarehouse/projects/agentdecompile.rep"
     "/versioned/00/~00000000.db/db.1.gbf"
 )
 

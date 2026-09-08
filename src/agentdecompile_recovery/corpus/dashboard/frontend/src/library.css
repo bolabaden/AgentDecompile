@@ -1,0 +1,13 @@
+.library-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.library-controls input{min-width:160px}.library-hint{font-size:11px;opacity:.8}.library-group h3{font-size:12px;font-weight:500;margin:16px 0 4px}.library-row{display:flex;align-items:center;border-bottom:1px solid var(--border,#394453);gap:8px;padding:6px;cursor:grab}.library-row.selected{outline:1px solid var(--accent,#39a9d5);outline-offset:-1px}.library-open{flex:1;min-width:0;text-align:left;background:transparent!important;border:0!important}.library-open strong,.library-open small{display:block;overflow-wrap:anywhere}.library-open small{font-size:11px;opacity:.8}.static-library{padding:8px;border-bottom:1px solid var(--border,#394453)}.static-library .library-controls{display:grid}.static-library .library-row{flex-wrap:wrap}.static-library .library-open{width:75%}
+
+.library-destination { overflow-wrap: anywhere; }
+.library-import-targets { margin: 8px 0; padding-left: 24px; overflow-wrap: anywhere; }
+.library-import-targets li { padding: 3px 0; }
+.library-import-progress { border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 10px; }
+.library-import-progress h3 { font-size: 13px; margin: 4px 0; }
+.library-import-progress p { font-size: 11px; }
+.library-import-batch { padding: 6px 0; }
+.library-import-batch > ol { max-height: 280px; overflow: auto; padding-left: 22px; }
+.library-import-batch li { padding: 4px 0; overflow-wrap: anywhere; }
+.library-import-batch pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
+.library-import-batch summary { cursor: pointer; }

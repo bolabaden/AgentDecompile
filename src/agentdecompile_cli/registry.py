@@ -134,6 +134,8 @@ class Tool(str, Enum):
     MANAGE_STRINGS = "manage-strings"
     MANAGE_STRUCTURES = "manage-structures"
     MANAGE_SYMBOLS = "manage-symbols"
+    MANAGE_WORKFLOW = "manage-workflow"
+    READ_WORKSPACE_ACTIVITY = "read-workspace-activity"
     MATCH_FUNCTION = "match-function"
     MIGRATE_METADATA = "migrate-metadata"
     EXECUTE_SCRIPT = "execute-script"
@@ -147,6 +149,9 @@ class Tool(str, Enum):
     RUN_BATCH_DECOMPILE = "run-batch-decompile"
     RUN_BATCH_EXPORT_GZF = "run-batch-export-gzf"
     RUN_BATCH_BSIM_SIGNATURES = "run-batch-bsim-signatures"
+    BSIM_CREATEDATABASE = "bsim-createdatabase"
+    BSIM_INGEST = "bsim-ingest"
+    BSIM_REPORT = "bsim-report"
     RUN_BATCH_SAST_SCAN = "run-batch-sast-scan"
     RUN_DECOMP_MATCH = "run-decomp-match"
     RUN_FILE_TRIAGE = "run-file-triage"
@@ -577,6 +582,29 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
         "functionFilter",
         "forceAnalysis",
     ),
+    Tool.BSIM_CREATEDATABASE.value: _params(
+        "bsimUrl",
+        "datadir",
+        "name",
+        "template",
+        "owner",
+        "description",
+    ),
+    Tool.BSIM_INGEST.value: _params(
+        "repository",
+        "bsimUrl",
+        "datadir",
+        "name",
+        "ghidraUrl",
+        "programs",
+        "receipt",
+        "force",
+    ),
+    Tool.BSIM_REPORT.value: _params(
+        "datadir",
+        "bsimUrl",
+        "name",
+    ),
     Tool.RUN_BATCH_SAST_SCAN.value: _params(
         "binaryPath",
         "outputPath",
@@ -625,6 +653,8 @@ _TOOL_PARAMS_STR: dict[str, list[str]] = {
     Tool.SEARCH_STRINGS.value: _params("programPath", "pattern", "searchString", "maxResults"),
     Tool.SEARCH_SYMBOLS.value: _params("programPath", "query", "offset", "limit", "includeExternal", "filterDefaultNames"),
     Tool.STATUS.value: _params("workDir"),
+    Tool.MANAGE_WORKFLOW.value: _params("operation", "locator", "slug", "preparationId", "seconds"),
+    Tool.READ_WORKSPACE_ACTIVITY.value: _params("locator", "slug"),
     Tool.SVR_ADMIN.value: _params("args", "command", "timeoutSeconds"),
     Tool.SUGGEST.value: _params("programPath", "suggestionType", "address", "function", "dataType", "variableAddress"),
     Tool.SYNC_PROJECT.value: _params("mode", "path", "sourcePath", "newPath", "destinationPath", "destinationFolder", "recursive", "maxResults", "force", "dryRun"),
@@ -1131,6 +1161,7 @@ _MULTI_MODE_TOOLS: frozenset[Tool] = frozenset(
         Tool.MANAGE_STRINGS,
         Tool.MANAGE_STRUCTURES,
         Tool.MANAGE_SYMBOLS,
+        Tool.MANAGE_WORKFLOW,
         Tool.OPEN,
         Tool.SEARCH_CONSTANTS,
         Tool.SYNC_PROJECT,
@@ -1140,6 +1171,8 @@ _MULTI_MODE_TOOLS: frozenset[Tool] = frozenset(
 _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
     {
         Tool.APPLY_DATA_TYPE,
+        Tool.BSIM_CREATEDATABASE,
+        Tool.BSIM_INGEST,
         Tool.CHANGE_PROCESSOR,
         Tool.CHECKIN_PROGRAM,
         Tool.CHECKOUT_PROGRAM,
@@ -1157,6 +1190,7 @@ _STATE_WRITING_TOOLS: frozenset[Tool] = frozenset(
         Tool.MANAGE_STRINGS,
         Tool.MANAGE_STRUCTURES,
         Tool.MANAGE_SYMBOLS,
+        Tool.MANAGE_WORKFLOW,
         Tool.MATCH_FUNCTION,
         Tool.MIGRATE_METADATA,
         Tool.OPEN,
@@ -1177,6 +1211,7 @@ _TIER0_TOOLS: frozenset[Tool] = frozenset(
         Tool.RUN_FILE_TRIAGE,
         Tool.RUN_EXTERNAL_RE_SCAN,
         Tool.STATUS,
+        Tool.READ_WORKSPACE_ACTIVITY,
     }
 )
 
@@ -1186,6 +1221,9 @@ _TIER1_TOOLS: frozenset[Tool] = frozenset(
         Tool.RUN_BATCH_DECOMPILE,
         Tool.RUN_BATCH_EXPORT_GZF,
         Tool.RUN_BATCH_BSIM_SIGNATURES,
+        Tool.BSIM_CREATEDATABASE,
+        Tool.BSIM_INGEST,
+        Tool.BSIM_REPORT,
         Tool.RUN_BATCH_SAST_SCAN,
         Tool.RUN_DECOMP_MATCH,
     }

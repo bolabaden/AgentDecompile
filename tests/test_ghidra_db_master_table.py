@@ -76,8 +76,8 @@ def _write_buffer_file(tmp_path: Path, buffers: list[bytes], *, block: int = 64)
     path.write_bytes(bytes(out))
     return path
 
-GHIDRA_FIXTURE = Path(
-    "/home/brunner56/Downloads/biodecompwarehouse/projects/agentdecompile.rep"
+GHIDRA_FIXTURE = Path.home() / (
+    "biodecompwarehouse/projects/agentdecompile.rep"
     "/versioned/00/~00000000.db/db.1.gbf"
 )
 ODYSSEY_FIXTURE = Path("/home/brunner56/Odyssey.rep/idata/00/~00000000.db/db.1.gbf")

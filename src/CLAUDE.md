@@ -57,7 +57,10 @@ This file provides guidance for Claude Code when working with the AgentDecompile
 
 ## Related Documentation
 
-- [TOOLS_LIST.md](../TOOLS_LIST.md) - Canonical tool specifications
-- [vendor/](../vendor/) - Third-party tool source code references
-- [../tests/README.md](../tests/README.md) - Testing guide
-- [agentdecompile_cli/CLAUDE.md](agentdecompile_cli/CLAUDE.md) - MCP tool-routing/normalization contract, provider authoring rules, and Ghidra/MCP-specific gotchas
+- [README.md](../README.md) — install and start paths
+- [USAGE.md](../USAGE.md) — CLI, sessions, env vars
+- [TOOLS_LIST.md](../TOOLS_LIST.md) — tool parameters
+- [../tests/README.md](../tests/README.md) — testing guide
+- [agentdecompile_cli/CLAUDE.md](agentdecompile_cli/CLAUDE.md) — MCP routing contract
+- [../AGENTS.md](../AGENTS.md) — repo-wide agent rules
+- [vendor/](../vendor/) — third-party reference checkouts

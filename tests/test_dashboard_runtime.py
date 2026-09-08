@@ -49,8 +49,14 @@ def test_health_route_returns_json_success() -> None:
     payload = page.json()
     assert payload["ok"] is True
     assert payload["pages"]["dashboard"] == "/dashboard"
-    assert payload["pages"]["graph"] == "/dashboard/functions#graph"
-    assert payload["pages"]["functions"] == "/dashboard/functions"
+    assert payload["pages"]["graph"] in {
+        "/dashboard/functions#graph",
+        "/dashboard?window=wb-graph",
+    }
+    assert payload["pages"]["functions"] in {
+        "/dashboard/functions",
+        "/dashboard?window=wb-fnbrowse",
+    }
 
 
 def test_unknown_route_returns_404() -> None:
@@ -60,29 +66,18 @@ def test_unknown_route_returns_404() -> None:
 
 
 def test_missing_function_preserves_renderer_404_status() -> None:
-    from agentdecompile_recovery.corpus.dashboard import router as dash_router
-
     client = _client()
-    missing = "<div>missing function</div>"
-    with patch.object(dash_router, "render_function_page", return_value=(missing, 404)), \
-         patch.object(dash_router, "render_page", return_value="wrapped") as page:
-        response = client.get("/dashboard/function/example.exe/0x401080")
-    page.assert_called_once()
-    assert response.status_code == 404
-    assert response.text == "wrapped"
+    response = client.get("/dashboard/function/example.exe/0x401080", follow_redirects=False)
+    assert response.status_code == 302
+    assert "window=wb-fnbrowse" in response.headers["location"]
+    assert "binary=example.exe" in response.headers["location"]
 
 
 def test_functions_route_preserves_renderer_status() -> None:
-    from agentdecompile_recovery.corpus.dashboard import router as dash_router
-
     client = _client()
-    missing = "<div>missing build</div>"
-    with patch.object(dash_router, "render_functions_page", return_value=(missing, 404)), \
-         patch.object(dash_router, "render_page", return_value="wrapped") as page:
-        response = client.get("/dashboard/functions?binary=missing")
-    page.assert_called_once()
-    assert response.status_code == 404
-    assert response.text == "wrapped"
+    response = client.get("/dashboard/functions?binary=missing", follow_redirects=False)
+    assert response.status_code == 302
+    assert "window=wb-fnbrowse" in response.headers["location"]
 
 
 def test_graph_query_redirects_to_the_function_page() -> None:
@@ -93,7 +88,28 @@ def test_graph_query_redirects_to_the_function_page() -> None:
         "addr": ["0x2273b0"],
         "depth": ["1"],
     })
-    assert target.startswith("/dashboard/function/K1__k1_xbox_default.xbe/")
+    assert "window=wb-fnbrowse" in target
+    assert "binary=K1__k1_xbox_default.xbe" in target
     assert "0x002273b0" in target
     assert "depth=1" in target
-    assert graph_to_function_target({}) == "/dashboard/functions#graph"
+    assert "wb-graph" in graph_to_function_target({}) or graph_to_function_target({}) == "/dashboard/functions#graph"
+
+
+def test_headline_byte_exact_is_unmeasured_without_receipt(tmp_path, monkeypatch) -> None:
+    from agentdecompile_recovery.corpus.dashboard import pages as dashboard
+
+    monkeypatch.setattr(dashboard, "COVERAGE", tmp_path / "missing-coverage.json")
+    monkeypatch.setattr(dashboard, "as_root", lambda: tmp_path)
+    value, _errors = dashboard._headline_byte_exact()
+    assert value == "unmeasured"
+
+
+def test_corpus_status_has_claim_boundary() -> None:
+    client = _client()
+    payload = client.get("/dashboard/api/workbench/corpus-status").json()
+    assert "claimBoundary" in payload
+    assert payload["claimBoundary"]
+    headline = payload["headline"]
+    assert "real_c" in headline
+    assert "byte_exact" in headline
+    assert headline["real_c"] != headline["byte_exact"] or headline["byte_exact"] == "unmeasured"

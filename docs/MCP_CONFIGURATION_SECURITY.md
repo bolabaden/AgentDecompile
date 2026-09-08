@@ -1,5 +1,15 @@
 # MCP Configuration Security Guide
 
+## Bind and MCP HTTP auth
+
+The MCP HTTP listener defaults to `127.0.0.1`. That is localhost only.
+
+- Do not set `AGENT_DECOMPILE_HOST=0.0.0.0` unless `AGENT_DECOMPILE_AUTH_ENABLED` is on **and** you have a firewall (and TLS when the listener leaves the host).
+- `AGENT_DECOMPILE_GHIDRA_SERVER_*` and `X-Agent-Server-*` authenticate **Ghidra Server**, not the MCP listener.
+- Session IDs are not authentication. See [session-handling.md](./session-handling.md).
+
+Full env-var catalog: [USAGE.md](../USAGE.md). Vulnerability reports: [SECURITY.md](../SECURITY.md).
+
 ## Overview
 
 This guide explains how to configure the MCP (Model Context Protocol) client for AgentDecompile without hardcoding credentials or sensitive server details.
@@ -152,6 +162,7 @@ If you have an existing `mcp.json` with hardcoded credentials:
 
 ## Related Documentation
 
-- [MCP AgentDecompile Usage Guide](./MCP_AGENTDECOMPILE_USAGE.md)
-- [General Usage Documentation](../USAGE.md)
-- [Quick Start Import/Export Guide](./QUICKSTART_IMPORT_EXPORT.md)
+- [USAGE.md](../USAGE.md)
+- [SECURITY.md](../SECURITY.md)
+- [session-handling.md](./session-handling.md)
+- [QUICKSTART_IMPORT_EXPORT.md](./QUICKSTART_IMPORT_EXPORT.md)

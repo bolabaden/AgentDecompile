@@ -142,8 +142,9 @@ class VtableToolProvider(ToolProvider):
             entry_addr = addr.add(i * ptr_size)
             try:
                 buf: Any = cast(Any, jpype.JArray(jpype.JByte))(ptr_size)
-                memory.getBytes(entry_addr, buf)
-                ptr_val = int.from_bytes(bytes((int(b) & 0xFF) for b in buf), byteorder="little")
+                if memory.getBytes(entry_addr, buf) != ptr_size:
+                    break
+                ptr_val = int.from_bytes(bytes((int(b) & 0xFF) for b in buf), byteorder="big" if program.getLanguage().isBigEndian() else "little")
                 target_addr = program.getAddressFactory().getDefaultAddressSpace().getAddress(ptr_val)
                 func = fm.getFunctionAt(target_addr)
                 # First slot can be null (e.g. offset-to-top); after that, null usually means end of vtable

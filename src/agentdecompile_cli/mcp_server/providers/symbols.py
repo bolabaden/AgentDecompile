@@ -402,7 +402,7 @@ class SymbolToolProvider(ToolProvider):
         # as GhidraTools.search_symbols_by_name (documented: case-insensitive substring).
         # Queries containing '_' (e.g. LFG `sh_<runId>_`): GhidraTools.search_symbols_by_name can return a
         # **non-empty but incomplete** subset; early return then drops labels (strict /lfg step 5/7/11).
-        if self.ghidra_tools and "_" not in query:
+        if self.ghidra_tools and query and "_" not in query:
             try:
                 gt_rows = self.ghidra_tools.search_symbols_by_name(query)
                 gt_dicts = _rows_to_dicts(list(gt_rows))

@@ -260,6 +260,64 @@ def _inflate_entry(handle: BinaryIO, target: Path) -> int:
     return written
 
 
+def write_packed_file(
+    source: Path | str,
+    destination: Path | str,
+    *,
+    item_name: str,
+    content_type: str = "Program",
+    file_type: int = 0,
+) -> Path:
+    """Write a packed ``.gzf`` the way ``ItemSerializer.outputItem`` does.
+
+    ObjectOutputStream header + block-data of (magic, version, name, type,
+    fileType, length), then a ZIP local-file entry named ``FOLDER_ITEM``
+    (deflated, data descriptor, no central directory).
+    """
+
+    payload = Path(source).read_bytes()
+    compressed = zlib.compress(payload, 9)[2:-4]  # raw DEFLATE, no zlib wrapper
+    crc = zlib.crc32(payload) & 0xFFFFFFFF
+    name_bytes = ZIP_ENTRY_NAME.encode("utf-8")
+    utf_name = _java_utf(item_name)
+    utf_type = _java_utf(content_type or "")
+    # magic(8)+version(4)+name+type+fileType(4)+length(8)
+    block = (
+        struct.pack(">Q", MAGIC_NUMBER)
+        + struct.pack(">i", FORMAT_VERSION)
+        + utf_name
+        + utf_type
+        + struct.pack(">i", int(file_type))
+        + struct.pack(">q", len(payload))
+    )
+    if len(block) <= 255:
+        header = struct.pack(">HHBB", STREAM_MAGIC, STREAM_VERSION, TC_BLOCKDATA, len(block)) + block
+    else:
+        header = (
+            struct.pack(">HHB", STREAM_MAGIC, STREAM_VERSION, TC_BLOCKDATALONG)
+            + struct.pack(">i", len(block))
+            + block
+        )
+    local = (
+        _LOCAL_FILE_SIGNATURE
+        + struct.pack("<HHHHHIIIHH", 20, _FLAG_DATA_DESCRIPTOR, _METHOD_DEFLATED, 0, 0, 0, 0, 0, len(name_bytes), 0)
+        + name_bytes
+    )
+    # ZIP data descriptor with signature (common; extract_database ignores it)
+    descriptor = b"PK\x07\x08" + struct.pack("<III", crc, len(compressed), len(payload))
+    dest = Path(destination)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(header + local + compressed + descriptor)
+    return dest
+
+
+def _java_utf(text: str) -> bytes:
+    raw = (text or "").encode("utf-8")
+    if len(raw) > 0xFFFF:
+        raise PackedFileError("Java modified-UTF string exceeds 65535 bytes")
+    return struct.pack(">H", len(raw)) + raw
+
+
 @contextmanager
 def open_packed_database(source: Path | str, workdir: Path | str | None = None) -> Iterator[BufferFile]:
     """Open the database inside a `.gzf` as a `BufferFile`.

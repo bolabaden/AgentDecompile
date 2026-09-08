@@ -156,10 +156,11 @@ class TestServeAtlasHttp:
                 html = resp.read().decode("utf-8")
                 content_type = resp.headers.get("Content-Type")
             assert content_type is not None and "text/html" in content_type
-            assert "<html>" in html
-            assert "/api/loadProject" in html
-            assert "/api/buildPrompt" in html
-            assert "/api/savePrompt" in html
+            assert "<html" in html
+            assert "/api" in html
+            assert "/loadProject" in html
+            assert "/buildPrompt" in html
+            assert "/savePrompt" in html
         finally:
             server.shutdown()
             thread.join(timeout=5)

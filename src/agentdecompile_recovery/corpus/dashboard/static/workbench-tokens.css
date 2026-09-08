@@ -1,0 +1,29 @@
+/* Shared workbench tokens. Widget CSS must consume these — do not invent hex. */
+
+body.workbench-page {
+  --wb-space-1: 4px;
+  --wb-space-2: 6px;
+  --wb-space-3: 8px;
+  --wb-space-4: 12px;
+  --wb-space-5: 16px;
+  --wb-space-6: 24px;
+  --wb-ctrl-h: 24px;
+  --wb-ctrl-h-lg: 28px;
+  --wb-type-kicker: 11px;
+  --wb-type-ui: 12px;
+  --wb-type-body: 13px;
+  --wb-type-title: 15px;
+  --wb-focus-ring: 0 0 0 2px var(--focus);
+  --wb-inset: inset 0 1px 0 rgba(0, 0, 0, .35);
+  --wb-raise: 0 8px 24px rgba(0, 0, 0, .45);
+  --wb-hover: #4b4d50;
+  --wb-press: #214283;
+  --wb-toast-error: var(--danger);
+  --wb-toast-info: var(--info);
+  --wb-toast-ok: var(--fg-head);
+  --z-chrome: 20;
+  --z-menu: 40;
+  --z-modal: 60;
+  --z-palette: 70;
+  --z-toast: 80;
+}

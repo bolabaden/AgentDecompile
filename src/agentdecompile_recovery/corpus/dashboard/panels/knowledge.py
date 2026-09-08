@@ -288,7 +288,11 @@ def _scale_section(status_rows, status_err) -> str:
     total = sum(r[2] or 0 for r in status_rows)
     seconds = sum(r[3] or 0.0 for r in status_rows)
     complete = sum(1 for r in status_rows if r[4])
-    size = KNOWLEDGE_DB.stat().st_size if KNOWLEDGE_DB.exists() else 0
+    size = (
+        KNOWLEDGE_DB.stat().st_size
+        if KNOWLEDGE_DB is not None and KNOWLEDGE_DB.exists()
+        else 0
+    )
     head = ('<div class="ptitle"><b>Cached knowledge</b>'
             + tag(f"{complete}/{len(status_rows)} programs complete",
                   "ok" if complete == len(status_rows) else "warn") + "</div>")

@@ -25,6 +25,8 @@
 
 On Windows, many guides and scripts assume the Docker CLI and `docker compose`. If you use **Podman** instead of Docker Desktop—for licensing, resource use, or preference—you can still run the same workflows by pointing `docker` and `docker compose` at Podman. This guide walks through the **best-practice setup** on Windows 10 and 11: installing Podman, making `docker` and `docker compose` usable from PowerShell and Command Prompt, and fixing issues such as GitHub release URLs returning HTML instead of JSON in container builds.
 
+For AgentDecompile install and start paths, see [README.md](../README.md). This page is Windows/Podman only.
+
 ---
 
 ## Prerequisites

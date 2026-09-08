@@ -10,6 +10,11 @@ import re
 from typing import Any
 
 NAME_TIERS = ("human", "stabs", "symbol", "ghidra", "placeholder")
+HUMAN = "human"
+STABS = "stabs"
+SYMBOL = "symbol"
+GHIDRA = "ghidra"
+PLACEHOLDER = "placeholder"
 
 PLACEHOLDER_RE = re.compile(
     r"""^(?:
@@ -107,6 +112,9 @@ def resolve_members(rows: list[dict[str, Any]]) -> dict[str, Any]:
             _TIER_NUM[wt] < 5 and any(_TIER_NUM[tier_of(r)] == 5 for r in rows)
         ),
     }
+
+
+resolve = resolve_members
 
 
 def choose_name(

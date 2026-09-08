@@ -1,0 +1,30 @@
+{
+  "skill_name": "workbench-operator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "the dashboard is unusable / boilerplate",
+      "expected_output": "Agent loads workbench-operator and follows skills/workbench-operator/SKILL.md (or .agents/skills).",
+      "assertions": [
+        "The run consults the workbench-operator skill body, not only the description",
+        "No leftover target/ or invented BSim corpus is treated as fresh proof"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "dogfood /dashboard like IDA",
+      "expected_output": "Same skill, different phrasing still activates and produces the skill's required artifact or next command.",
+      "assertions": [
+        "Activation is based on user intent, not an exact keyword match"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "change a CLI flag in kx_cli only",
+      "expected_output": "Agent does not treat this as a workbench-operator task.",
+      "assertions": [
+        "workbench-operator is not the primary skill used"
+      ]
+    }
+  ]
+}

@@ -25,6 +25,7 @@ import time
 
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agentdecompile_cli.app_logger import basename_hint, redact_session_id
@@ -106,6 +107,18 @@ def get_current_request_max_analysis_tier() -> str | None:
 def get_current_mcp_session_id() -> str:
     """Return the current MCP session ID for this request (used by tools to find SessionContext)."""
     logger.debug("diag.enter %s", "mcp_server/session_context.py:get_current_mcp_session_id")
+    # Streamable HTTP dispatches on a long-lived SDK task created during
+    # initialization. Its inherited ContextVar can remain "default" even when
+    # the current request carries a different persisted client session ID.
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+        request = getattr(request_ctx.get(), 'request', None)
+        headers = getattr(request, 'headers', None)
+        header_id = str(headers.get('mcp-session-id') or '').strip() if headers is not None else ''
+        if header_id and len(header_id) <= 128 and all(char.isascii() and (char.isalnum() or char in '_-') for char in header_id):
+            return header_id
+    except LookupError:
+        pass
     session_id: str | None = CURRENT_MCP_SESSION_ID.get()
     # Middleware sets "default" when the client omits mcp-session-id (AGENTS.md stable session).
     # Do not replace with sdk-session:object-id — that key diverges from the CLI-persisted header
@@ -138,6 +151,33 @@ def get_current_mcp_session_id() -> str:
     return session_id or "default"
 
 
+def _project_scope_key(handle: dict[str, Any] | None) -> str:
+    """Keep aliases local to a concrete project while retaining native owners."""
+    if not handle:
+        return 'unbound'
+    mode = str(handle.get('mode') or '').lower().replace('-', '')
+    if mode == 'localgpr':
+        path = str(handle.get('path') or '')
+        if not path and handle.get('project_dir') and handle.get('project_name'):
+            path = str(Path(handle['project_dir']) / (str(handle['project_name']) + '.gpr'))
+        if path:
+            return 'local:' + str(Path(path).expanduser().resolve())
+    return repr((mode, str(handle.get('path') or ''), str(handle.get('host') or handle.get('server_host') or ''),
+                 str(handle.get('port') or handle.get('server_port') or ''), str(handle.get('repository_name') or handle.get('repository') or ''),
+                 str(handle.get('server_username') or handle.get('username') or ''),
+                 str(handle.get('project_dir') or ''), str(handle.get('project_name') or '')))
+
+
+def _program_info_open(info: Any) -> bool:
+    program = getattr(info, 'program', None)
+    if program is None:
+        return info is not None
+    try:
+        return not (hasattr(program, 'isClosed') and program.isClosed())
+    except Exception:
+        return False
+
+
 @dataclass
 class SessionContext:
     """Per-MCP-session state: open programs, active program, project handle, tool history.
@@ -150,6 +190,9 @@ class SessionContext:
     project_handle: dict[str, Any] | None = None
     open_programs: dict[str, ProgramInfo] = field(default_factory=dict)
     active_program_key: str | None = None
+    # Retaining these references preserves native owners across project switches;
+    # only the active project's alias map participates in program resolution.
+    project_program_contexts: dict[str, tuple[dict[str, Any], str | None, dict[str, list[tuple[str, str]]]]] = field(default_factory=dict)
     preferences: dict[str, Any] = field(default_factory=dict)
     tool_history: list[dict[str, Any]] = field(default_factory=list)
     project_binaries: list[dict[str, Any]] = field(default_factory=list)
@@ -171,7 +214,8 @@ class SessionContext:
         logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContext.get_active_program_info")
         if not self.active_program_key:
             return None
-        return self.open_programs.get(self.active_program_key)
+        info = self.open_programs.get(self.active_program_key)
+        return info if _program_info_open(info) else None
 
 
 @dataclass
@@ -446,6 +490,15 @@ class SessionContextStore:
         logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.set_project_handle")
         session = self.get_or_create(session_id)
         with self._lock:
+            previous_key = _project_scope_key(session.project_handle)
+            next_key = _project_scope_key(handle)
+            if previous_key != next_key:
+                session.project_program_contexts[previous_key] = (
+                    session.open_programs, session.active_program_key, session.pending_versioned_labels)
+                programs, active_key, labels = session.project_program_contexts.get(next_key, ({}, None, {}))
+                session.open_programs = programs
+                session.active_program_key = active_key
+                session.pending_versioned_labels = labels
             session.project_handle = handle
 
     def get_project_handle(self, session_id: str) -> dict[str, Any] | None:
@@ -500,33 +553,34 @@ class SessionContextStore:
             return list(session.pending_versioned_labels.get(key, []))
 
     def copy_pending_versioned_labels_resolved(self, session_id: str, program_path: str) -> list[tuple[str, str]]:
-        """Pending labels for the canonical path plus any bucket sharing the same basename.
+        """Pending labels for the exact path, or one unambiguous basename alias.
 
         create-label and checkin-program can disagree on the stored session path key (canonicalize drift,
         adapter vs. tool path); a strict key lookup then misses rows and versioned reopen check-in uploads
         empty symbol trees (flaky LFG 02d / step 5).
         """
         logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.copy_pending_versioned_labels_resolved")
-        merged: list[tuple[str, str]] = list(self.copy_pending_versioned_labels(session_id, program_path))
-        seen: set[tuple[str, str]] = set(merged)
         raw = (program_path or "").strip().replace("\\", "/")
         if not raw:
-            return merged
-        want_base = raw.split("/")[-1].lower()
-        if not want_base:
-            return merged
+            return []
+        canonical = self.canonicalize_program_path(session_id, raw).lower().lstrip('/')
         session = self.get_or_create(session_id)
         with self._lock:
-            for k, lst in session.pending_versioned_labels.items():
-                k_norm = str(k).strip().replace("\\", "/")
-                kb = k_norm.split("/")[-1].lower()
-                if kb != want_base:
-                    continue
-                for t in lst:
-                    if t not in seen:
-                        seen.add(t)
-                        merged.append(t)
-        return merged
+            if '/' not in raw:
+                inventory_paths = {str(item.get('path') or item.get('name') or '').replace('\\', '/').lower().lstrip('/')
+                                   for item in session.project_binaries
+                                   if str(item.get('path') or item.get('name') or '').replace('\\', '/').rsplit('/', 1)[-1].lower() == raw.lower()}
+                if len(inventory_paths) > 1:
+                    return []
+            exact = [values for key, values in session.pending_versioned_labels.items()
+                     if str(key).replace('\\', '/').lower().lstrip('/') == canonical]
+            if not exact and '/' not in raw:
+                candidates = [(key, values) for key, values in session.pending_versioned_labels.items()
+                              if str(key).replace('\\', '/').rsplit('/', 1)[-1].lower() == canonical]
+                distinct = {str(key).replace('\\', '/').lower().lstrip('/') for key, _ in candidates}
+                if len(distinct) == 1:
+                    exact = [values for _, values in candidates]
+            return list(dict.fromkeys(value for values in exact for value in values))
 
     def clear_pending_versioned_labels(self, session_id: str, program_path: str) -> None:
         """Drop pending labels after a successful versioned check-in for this program."""
@@ -556,19 +610,15 @@ class SessionContextStore:
         session = self.get_or_create(session_id)
         resolved: str | None = None
         with self._lock:
-            for item in session.project_binaries:
-                p = str(item.get("path") or "").strip().replace("\\", "/")
-                name = str(item.get("name") or "").strip()
-                if not p and not name:
-                    continue
-                p_l = p.lower()
-                n_l = name.lower()
-                if p_l == want_l or p_l.endswith("/" + want_base) or n_l == want_base:
-                    resolved = p if p.startswith("/") else (f"/{p}" if p else f"/{name}")
-                    break
-                if want_l == f"/{n_l}" or want_l.lstrip("/") == n_l:
-                    resolved = p if p.startswith("/") else f"/{name}"
-                    break
+            paths = [str(item.get('path') or item.get('name') or '').strip().replace('\\', '/')
+                     for item in session.project_binaries]
+            exact = [path for path in paths if path.lower().lstrip('/') == want_l.lstrip('/')]
+            if exact:
+                resolved = '/' + exact[0].lstrip('/')
+            elif '/' not in want_l:
+                candidates = {('/' + path.lstrip('/')) for path in paths if path.rsplit('/', 1)[-1].lower() == want_base}
+                if len(candidates) == 1:
+                    resolved = next(iter(candidates))
         out = resolved if resolved is not None else want
         if resolved is not None and out != want:
             logger.info(
@@ -638,26 +688,38 @@ class SessionContextStore:
         logger.debug("diag.enter %s", "mcp_server/session_context.py:SessionContextStore.get_program_info")
         session = self.get_or_create(session_id)
         with self._lock:
+            key_l = key.strip().replace('\\', '/').lower().lstrip('/')
+            if '/' not in key.strip().replace('\\', '/'):
+                inventory_paths = {str(item.get('path') or item.get('name') or '').replace('\\', '/').lower().lstrip('/')
+                                   for item in session.project_binaries
+                                   if str(item.get('path') or item.get('name') or '').replace('\\', '/').rsplit('/', 1)[-1].lower() == key_l}
+                if len(inventory_paths) > 1:
+                    return None
             direct = session.open_programs.get(key)
-            if direct is not None:
+            if direct is not None and _program_info_open(direct):
                 return direct
 
-            # Fallback: case-insensitive key match, then path without leading slashes, then Ghidra program name
-            key_l = key.strip().lower()
-            for existing_key, info in session.open_programs.items():
-                if existing_key.strip().lower() == key_l:
+            # Explicit folder paths never resolve through a different folder's
+            # basename. Unqualified names must be unique in the project inventory.
+            matches = [(existing_key, info) for existing_key, info in session.open_programs.items()
+                       if _program_info_open(info)]
+            for existing_key, info in matches:
+                if existing_key.strip().replace('\\', '/').lower().lstrip('/') == key_l:
                     return info
-                if existing_key.strip().lower().lstrip("/") == key_l.lstrip("/"):
-                    return info
-
+            if '/' in key.strip().replace('\\', '/'):
+                return None
+            candidates = {}
+            for existing_key, info in matches:
                 try:
-                    program: GhidraProgram = getattr(info, "program", None)
-                    if program is not None:
-                        # Match by last path component (e.g. "binary.exe") vs program.getName()
-                        if str(program.getName()).strip().lower() == key_l.split("/")[-1]:
-                            return info
+                    program = getattr(info, 'program', None)
+                    if program is not None and str(program.getName()).strip().lower() == key_l:
+                        domain_file = program.getDomainFile() if hasattr(program, 'getDomainFile') else None
+                        path = str(domain_file.getPathname()) if domain_file is not None else existing_key
+                        candidates[path.lower().lstrip('/')] = info
                 except Exception:
                     continue
+            if len(candidates) == 1:
+                return next(iter(candidates.values()))
 
             return None
 

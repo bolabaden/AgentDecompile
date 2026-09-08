@@ -177,10 +177,10 @@
     const path = (window.location.pathname || "").replace(/\/$/, "") || "/";
     if (path !== "/dashboard") return;
     const moved = {
-      review: "/dashboard/functions#review",
-      builds: "/dashboard/functions#builds",
-      graph: "/dashboard/functions#graph",
-      logical: "/dashboard/functions#logical"
+      review: "/dashboard?window=wb-review",
+      builds: "/dashboard?window=wb-corpus",
+      graph: "/dashboard?window=wb-graph",
+      logical: "/dashboard?window=wb-logical"
     };
     const dest = moved[(window.location.hash || "").replace(/^#/, "")];
     if (dest) window.location.replace(dest);

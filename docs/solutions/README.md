@@ -1,19 +1,32 @@
 # Documented solutions
 
-Searchable institutional learnings from solved problems in AgentDecompile. Each file uses YAML frontmatter (`module`, `problem_type`, `component`, `tags`) for filtering.
+Searchable institutional learnings from solved problems. Each file uses YAML frontmatter (`module`, `problem_type`, `component`, `tags`). Search by module or tag before changing `src/agentdecompile_cli/`.
+
+User how-to lives in [USAGE.md](../../USAGE.md). Vocabulary: [CONCEPTS.md](../../CONCEPTS.md). Plans hub: [../plans/README.md](../plans/README.md).
+
+```mermaid
+flowchart TD
+  problem[Solved problem] --> learning[docs/solutions entry]
+  learning --> agents[AGENTS.md hop]
+  learning --> skills[Skill references]
+```
 
 ## Categories
 
-| Directory | problem_type examples |
-|-----------|---------------------|
-| `integration-issues/` | MCP session, Ghidra import, tool dispatch |
-| `architecture-patterns/` | Coordinators, locking, fail-closed behavior, **tiered RE tool routing**, **decomp matching toolchain** (`decomp-matching-toolchain.md`), **capabilities MCP resource** (`capabilities-mcp-resource.md`, `tiered-re-analysis-routing.md`, `tiered-re-analysis-knowledgebase.md`), **agent-native discovery arc** (`agent-native-discovery-arc.md`), **agent-native CRUD arc** (`agent-native-crud-arc.md`), **empty-session bootstrap hints** (`empty-session-bootstrap-hints.md`), **auto-checkin response footer** (`auto-checkin-response-footer.md`), **MCP initialize preamble** (`mcp-initialize-instructions-preamble.md`), **variable rename integration test** (`variable-rename-integration-test.md`) |
+| Directory | What is here |
+|-----------|----------------|
+| `architecture-patterns/` | Coordinators, claim tiers, MCP surface, tiered RE, decomp matching |
+| `integration-issues/` | MCP session, Ghidra import, analysis gate |
 | `developer-experience/` | CLI ergonomics for agents |
-| `logic-errors/` | Incorrect flags or state before analysis |
-| `workflow-issues/` | LFG, shared Ghidra server, check-in |
-| `best-practices/` | Conventions and tooling decisions |
+| `mcp-ghidra-integration/` | Shared check-in / local VC mirror |
+| `tooling-decisions/` | Plugin packaging and similar |
+| `workflow-learnings/` | Dated run receipts — historical, not current smoke how-to |
 
-Run `ce-compound` after solving a non-trivial problem to add a learning. Run `ce-compound-refresh` periodically to keep docs aligned with the codebase.
+Dated `workflow-learnings/` files may name old binaries or work dirs. Leave them. Current reconstruct smoke is `docs/CRITICAL_PATH.md`.
+
+Current advertised tool counts are computed from `src/agentdecompile_cli/registry.py` (see README / TOOLS_LIST preamble). Do not copy a number out of an old learning.
+
+Run `ce-compound` after solving a non-trivial problem. Run `ce-compound-refresh` periodically.
 
 Validate new frontmatter:
 

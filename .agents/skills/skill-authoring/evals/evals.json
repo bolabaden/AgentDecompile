@@ -1,0 +1,30 @@
+{
+  "skill_name": "skill-authoring",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "https://agentskills.io/specification update our skills",
+      "expected_output": "Agent loads skill-authoring and follows skills/skill-authoring/SKILL.md (or .agents/skills).",
+      "assertions": [
+        "The run consults the skill-authoring skill body, not only the description",
+        "No leftover target/ or invented BSim corpus is treated as fresh proof"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "look at the other pages on that domain",
+      "expected_output": "Same skill, different phrasing still activates and produces the skill's required artifact or next command.",
+      "assertions": [
+        "Activation is based on user intent, not an exact keyword match"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "decompile FUN_401000",
+      "expected_output": "Agent does not treat this as a skill-authoring task.",
+      "assertions": [
+        "skill-authoring is not the primary skill used"
+      ]
+    }
+  ]
+}

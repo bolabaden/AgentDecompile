@@ -13,6 +13,7 @@ import json
 import logging
 import multiprocessing
 import os
+import signal
 import socket
 import sys
 import tempfile
@@ -1710,6 +1711,105 @@ def _resolve_project_path_setting(
     return resolved_directory, resolved_project_name, None
 
 
+def _inodes_for_listen(port: int) -> set[int]:
+    found: set[int] = set()
+    port_h = f"{int(port):04X}"
+    for name in ("/proc/net/tcp", "/proc/net/tcp6"):
+        path = Path(name)
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines()[1:]:
+            parts = line.split()
+            if len(parts) < 10:
+                continue
+            local = parts[1]
+            state = parts[3]
+            if state != "0A":
+                continue
+            if not local.upper().endswith(":" + port_h):
+                continue
+            try:
+                found.add(int(parts[9]))
+            except ValueError:
+                continue
+    return found
+
+
+def pids_listening_on(port: int) -> list[int]:
+    """PIDs with a listening socket on ``port`` (Linux /proc)."""
+    inodes = _inodes_for_listen(port)
+    if not inodes:
+        return []
+    pids: list[int] = []
+    proc = Path("/proc")
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        fd_dir = entry / "fd"
+        try:
+            for fd in fd_dir.iterdir():
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+                if not target.startswith("socket:["):
+                    continue
+                raw = target[8:].rstrip("]")
+                try:
+                    inode = int(raw)
+                except ValueError:
+                    continue
+                if inode in inodes:
+                    pids.append(int(entry.name))
+                    break
+        except OSError:
+            continue
+    return pids
+
+
+def reclaim_listen_port(host: str, port: int, *, timeout: float = 8.0) -> bool:
+    """Stop a previous agentdecompile-server on this port. Other owners stay."""
+    _ = host
+    mine = []
+    for pid in pids_listening_on(port):
+        if pid in {os.getpid(), os.getppid()}:
+            continue
+        cmd = Path(f"/proc/{pid}/cmdline")
+        try:
+            blob = cmd.read_bytes()
+        except OSError:
+            continue
+        text = blob.replace(b"\x00", b" ").decode("utf-8", "replace")
+        if "agentdecompile" in text:
+            mine.append(pid)
+    if not mine:
+        return not pids_listening_on(port)
+    for pid in mine:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+        sys.stderr.write(f"[launcher.start] Replacing agentdecompile-server pid {pid} on port {port}\n")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        left = [p for p in mine if Path(f"/proc/{p}").exists()]
+        if not left:
+            break
+        time.sleep(0.15)
+    for pid in mine:
+        if Path(f"/proc/{pid}").exists():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+    time.sleep(0.2)
+    return not pids_listening_on(port)
+
+
 class AgentDecompileLauncher:
     """Python MCP Server launcher with PyGhidra integration.
 
@@ -1975,30 +2075,21 @@ class AgentDecompileLauncher:
                     },
                 )
 
-            # Start the server.  When the configured port is already in use
-            # (e.g. another agentdecompile-server instance on the same host),
-            # auto-recover by picking a random available port so that the stdio
-            # bridge still works. The user is warned clearly.
+            # Start the server. An older agentdecompile-server on the same
+            # port is replaced so operators keep one URL. A foreign listener
+            # is an error, not a hop to a random port.
+            wanted = int(server_config.port)
+            reclaim_listen_port(selected_host, wanted)
             try:
                 self.port = self.mcp_server.start()
             except RuntimeError as _port_err:
                 if "already in use" not in str(_port_err):
                     raise
-                # Pick a random available port and retry once
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _tmp:
-                    _tmp.bind((selected_host, 0))
-                    fallback_port = int(_tmp.getsockname()[1])
-                sys.stderr.write(
-                    f"[launcher.start] WARNING: Port {server_config.port} on {selected_host} is already in use. "
-                    f"Auto-selecting random port {fallback_port} so the server can start.\n"
-                    f"  Tip: stop the other process or pass --port <N> to choose a specific port.\n"
-                )
-                logger.warning(
-                    "Port %s in use — falling back to random port %s: %s",
-                    server_config.port, fallback_port, _port_err,
-                )
-                server_config.port = fallback_port
-                os.environ["AGENT_DECOMPILE_PORT"] = str(fallback_port)
+                if not reclaim_listen_port(selected_host, wanted):
+                    raise RuntimeError(
+                        f"Port {wanted} on {selected_host} is already in use by a "
+                        "process that is not agentdecompile-server."
+                    ) from _port_err
                 self.mcp_server = PythonMcpServer(server_config, auth_config=auth_config)
                 self.mcp_server.set_program_info(self.program_info)
                 if self.pyghidra_context is not None:
@@ -2010,7 +2101,7 @@ class AgentDecompileLauncher:
                             "projectName": project_name,
                             "projectPathGpr": str(Path(projects_dir) / f"{project_name}.gpr"),
                             "serverHost": selected_host,
-                            "serverPort": fallback_port,
+                            "serverPort": wanted,
                             "transportMode": "local-pyghidra",
                         },
                     )

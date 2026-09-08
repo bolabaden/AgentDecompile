@@ -35,6 +35,7 @@ from agentdecompile_recovery.corpus.dashboard.common import (
     rel,
     table as render_table,
     tcp_up,
+    table_exists,
 )
 from agentdecompile_recovery.corpus.dashboard.panels import viz
 
@@ -76,8 +77,8 @@ STARTED_AT = datetime.now()
 COVERAGE = as_root() / "output" / "exact_universal" / "_coverage.json"
 QUEUE_SUMMARY = as_root() / "output" / "work_queue" / "logical_queue_summary.json"
 CLAIM = (
-    "These pages are a live view. They are not completion. Real C and "
-    "byte-accuracy are separate columns. A green label is not a match."
+    "This is a live view. It is not completion. Real C and "
+    "byte-accuracy are separate. A green label is not a match."
 )
 
 # --------------------------------------------------------------------------
@@ -445,7 +446,8 @@ def headline_numbers() -> dict:
         "SELECT COUNT(DISTINCT CASE WHEN real_c=1 THEN logical_id END), "
         "COUNT(DISTINCT CASE WHEN real_c=1 AND binary_id IS NOT NULL AND addr IS NOT NULL "
         "THEN printf('%d:%lld', binary_id, addr) END), "
-        "SUM(real_c=1 AND logical_id IS NULL) FROM recovered_function"
+        "SUM(real_c=1 AND logical_id IS NULL) FROM recovered_function",
+        ignore_missing=True,
     )
     if err:
         out["errors"].append(err)
@@ -458,6 +460,50 @@ def headline_numbers() -> dict:
     elif isinstance(queue, dict):
         out["queued"] = queue.get("logical_functions_queued")
     return out
+
+
+def headline_numbers_for_slugs(slugs: set[str]) -> dict:
+    """Tab-scoped headline: recovered logical functions for selected builds only."""
+    if not slugs:
+        return headline_numbers()
+    out = {"real_c": None, "placed_concrete": None, "unplaced_real_c": None,
+           "queued": None, "errors": []}
+    placeholders = ",".join("?" * len(slugs))
+    row, err = query_db(
+        "SELECT COUNT(DISTINCT CASE WHEN r.real_c=1 THEN r.logical_id END), "
+        "COUNT(DISTINCT CASE WHEN r.real_c=1 AND r.binary_id IS NOT NULL AND r.addr IS NOT NULL "
+        "THEN printf('%d:%lld', r.binary_id, r.addr) END), "
+        "SUM(r.real_c=1 AND r.logical_id IS NULL) "
+        "FROM recovered_function r JOIN binary b ON b.id=r.binary_id "
+        f"WHERE b.slug IN ({placeholders})",
+        tuple(sorted(slugs)),
+        ignore_missing=True,
+    )
+    if err:
+        out["errors"].append(err)
+    elif row:
+        out["real_c"], out["placed_concrete"], out["unplaced_real_c"] = row[0]
+    return out
+
+
+def render_session_hero(slugs: set[str]) -> str:
+    """Compact recovery headline for the workbench overview island."""
+    n = headline_numbers_for_slugs(slugs)
+    real_c = n.get("real_c")
+    if real_c is None:
+        return ""
+    report_href = "/report?embed=1"
+    return (
+        '<section class="hero hero-compact">'
+        '<div class="hero-main">'
+        '<h2 class="eyebrow">Verified readable C in this tab</h2>'
+        f'<p class="hero-n is-partial">'
+        f'<span class="num">{_hero_count(real_c, report_href, "logical functions with assembly-free source in tab builds")}</span>'
+        f' <span class="of">logical functions</span></p>'
+        f'<p class="hero-meta">{fnum(n.get("placed_concrete"))} concrete instances · '
+        f'{fnum(n.get("unplaced_real_c"))} without logical identity</p>'
+        '</div></section>'
+    )
 
 
 def _pct(part, whole) -> str:
@@ -579,9 +625,9 @@ def render_hero() -> str:
         f'<p class="hero-n is-{esc(state.replace(" ", "-"))}">{value}</p>'
         f'<div class="bar big st-{esc(state.replace(" ", "-"))}">'
         f'<i style="width:{frac * 100:.5f}%"></i></div>'
-        '<p class="hero-sub">The numerator and denominator are logical functions. '
-        'A result counts only when assembly-free C or C++ compiles to the shipped '
-        'function bytes. Machine-code wrappers and assembly exports never count.</p>'
+        '<p class="hero-sub">Both numbers are logical functions. '
+        'A result counts only when C or C++ compiles to the shipped bytes. '
+        'Wrappers and assembly exports never count.</p>'
         f'<p class="hero-meta">{fnum(n.get("placed_concrete"))} concrete instances are '
         f'address-bound. {fnum(n.get("unplaced_real_c"))} assembly-free artifacts remain '
         'unplaced and are not included in this ratio.</p>'
@@ -605,11 +651,7 @@ def render_hero() -> str:
 
 
 def render_statusbar() -> str:
-    probes = [
-        _probe("db", _probe_db),
-        _probe("ghidra", _probe_ghidra),
-        _probe("disk", _probe_disk),
-    ]
+    probes = render_status_probes()
     chips = "".join(
         f'<span class="chip st-{esc(p["state"].replace(" ", "-"))}">{esc(p["text"])}</span>'
         for p in probes)
@@ -624,6 +666,540 @@ def render_statusbar() -> str:
         '<span class="pulse" id="pulse">loading</span>'
         "</header>"
     )
+
+
+def render_status_probes() -> list[dict]:
+    """Health chips shared by the classic overview and the React workbench."""
+    return [
+        _probe("db", _probe_db),
+        _probe("ghidra", _probe_ghidra),
+        _probe("disk", _probe_disk),
+    ]
+
+
+def _headline_byte_exact() -> tuple[int | str, list[str]]:
+    """Receipt-backed byte identity only. Never added to real_c.
+
+    recovered_function has no byte_exact column. Missing measurement is
+    the word unmeasured, not 0.
+    """
+    errors: list[str] = []
+    cov, cov_err = load_json(COVERAGE)
+    if cov_err:
+        errors.append(cov_err)
+    if isinstance(cov, dict) and cov.get("byte_exact") is not None:
+        try:
+            return int(cov.get("byte_exact")), errors
+        except (TypeError, ValueError):
+            pass
+    if isinstance(cov, list):
+        total = 0
+        found = False
+        for item in cov:
+            if not isinstance(item, dict) or item.get("byte_exact") is None:
+                continue
+            found = True
+            try:
+                total += int(item.get("byte_exact") or 0)
+            except (TypeError, ValueError):
+                pass
+        if found:
+            return total, errors
+    root = as_root()
+    for cand in (
+        root / "output" / "objdiff-check.json",
+        root / "objdiff-check.json",
+    ):
+        data, _err = load_json(cand)
+        if isinstance(data, dict) and data.get("byte_exact") is not None:
+            try:
+                return int(data.get("byte_exact")), errors
+            except (TypeError, ValueError):
+                pass
+    return "unmeasured", errors
+
+
+def render_corpus_status() -> dict:
+    """JSON for the workbench Overview / Pipeline React surfaces."""
+    from agentdecompile_recovery.corpus.dashboard.panels import steps
+
+    n = headline_numbers()
+    byte_exact, byte_errs = _headline_byte_exact()
+    errors = list(n.get("errors") or []) + byte_errs
+    try:
+        ladder = steps.as_payload()
+    except Exception as exc:  # noqa: BLE001 — panel must stay up
+        ladder = {"at": None, "errors": [str(exc)], "corpus_steps": [], "binaries": []}
+    errors.extend(ladder.get("errors") or [])
+    atlas_host = os.environ.get("DECOMP_ATLAS_HOST") or "127.0.0.1"
+    atlas_port = os.environ.get("DECOMP_ATLAS_PORT") or "5173"
+    return {
+        "ok": True,
+        "claimBoundary": CLAIM,
+        "headline": {
+            "real_c": n.get("real_c"),
+            "byte_exact": byte_exact if byte_exact is not None else "unmeasured",
+            "placed_concrete": n.get("placed_concrete"),
+            "unplaced_real_c": n.get("unplaced_real_c"),
+            "queued": n.get("queued"),
+        },
+        "probes": render_status_probes(),
+        "atlas": {
+            "in_tree": "/atlas",
+            "decomp": f"http://{atlas_host}:{atlas_port}/",
+        },
+        "ladder": ladder,
+        "report": recovery_report_json(),
+        "mission": _mission_json(),
+        "review": review_queue_json(),
+        "errors": errors,
+    }
+
+
+def review_queue_json(limit: int = 40) -> dict:
+    """Review-tier match rows for the React review tab."""
+    out = {"ok": True, "by_status": {}, "rows": [], "errors": []}
+    counts, err = query_db("SELECT status, COUNT(*) FROM match GROUP BY status")
+    if err:
+        out["ok"] = False
+        out["errors"].append(err)
+        return out
+    out["by_status"] = {str(s or ""): int(n or 0) for s, n in counts}
+    rows, rerr = query_db(
+        "SELECT src_binary, src_addr, dst_binary, dst_addr, score, status, id, evidence "
+        "FROM match WHERE status='review' ORDER BY score DESC LIMIT ?",
+        (int(limit),),
+        ignore_missing=True,
+    )
+    if rerr:
+        out["errors"].append(rerr)
+        return out
+    out["rows"] = [
+        {
+            "match_id": r[6],
+            "evidence": r[7],
+            "src_binary_id": r[0],
+            "src_addr": r[1],
+            "dst_binary_id": r[2],
+            "dst_addr": r[3],
+            "score": r[4],
+            "status": r[5],
+            "src_name": "",
+            "dst_name": "",
+        }
+        for r in rows
+    ]
+    return out
+
+
+def logical_listing_json(q: str = "", after: int = 0, limit: int | str = "all") -> dict:
+    """Logical identities for the React identities window."""
+    from agentdecompile_recovery.corpus.dashboard.common import page_window
+
+    _, cap = page_window(0, limit)
+    out = {"ok": True, "q": q or "", "after": int(after or 0), "rows": [], "more": False, "limit": "all" if cap is None else cap, "errors": []}
+    has_names = table_exists("logical_name")
+    name = "COALESCE(ln.name, lf.best_name, lf.canon_key)" if has_names else "COALESCE(lf.best_name, lf.canon_key)"
+    tier = "ln.tier_name" if has_names else "NULL"
+    name_join = "LEFT JOIN logical_name ln ON ln.logical_id=lf.id " if has_names else ""
+    binds: list[object] = [int(after or 0)]
+    where = "WHERE lf.id>?"
+    if q:
+        where += f" AND ({name} LIKE ? ESCAPE '\\' OR lf.canon_key LIKE ? ESCAPE '\\')"
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        binds.extend([f"%{escaped}%", f"%{escaped}%"])
+    sql = (
+        f"SELECT lf.id, {name}, {tier}, "
+        "COUNT(i.binary_id), MAX(i.confidence), lf.source_file "
+        "FROM logical_function lf " + name_join +
+        "LEFT JOIN identity i ON i.logical_id=lf.id " + where +
+        " GROUP BY lf.id ORDER BY lf.id"
+    )
+    if cap is not None:
+        sql += " LIMIT ?"
+        binds.append(cap)
+    rows, err = query_db(sql, tuple(binds), ignore_missing=True)
+    if err:
+        out["ok"] = False
+        if "no such table" in str(err).lower():
+            out["empty_reason"] = "No logical identities yet. They appear after cross-build matching."
+        else:
+            out["errors"].append(err)
+        return out
+    out["more"] = False
+    out["rows"] = [
+        {
+            "id": r[0],
+            "name": r[1] or "unnamed",
+            "tier": r[2] or "unresolved",
+            "members": r[3],
+            "confidence": r[4],
+            "source_file": Path(r[5]).name if r[5] else "",
+        }
+        for r in rows
+    ]
+    return out
+
+
+def logical_detail_json(raw_id: str) -> tuple[dict, int]:
+    try:
+        lid = int(raw_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": f"{raw_id} is not a logical function id"}, 404
+    lf, err = query_db(
+        "SELECT canon_key, canon_class, canon_method, game, best_name, best_signature, "
+        "source_file, object_file, n_members FROM logical_function WHERE id=?",
+        (lid,),
+        ignore_missing=True,
+    )
+    if err:
+        return {"ok": False, "error": err}, 503
+    if not lf:
+        return {"ok": False, "error": f"no logical function #{lid}"}, 404
+    keys = (
+        "canon_key", "canon_class", "canon_method", "game", "best_name",
+        "best_signature", "source_file", "object_file", "n_members",
+    )
+    g = dict(zip(keys, lf[0]))
+    members, merr = query_db(
+        "SELECT b.slug, i.addr, i.confidence, i.method, i.evidence FROM identity i "
+        "JOIN binary b ON b.id=i.binary_id WHERE i.logical_id=? ORDER BY b.slug",
+        (lid,),
+        ignore_missing=True,
+    )
+    rows = []
+    if not merr:
+        for slug, addr, conf, method, evidence in members or []:
+            rows.append({
+                "slug": slug,
+                "addr": format_address(int(addr)) if addr is not None else "",
+                "confidence": conf,
+                "method": method or "",
+                "evidence": evidence,
+            })
+    payload = {
+        "ok": True,
+        "id": lid,
+        "name": g.get("best_name") or g.get("canon_key") or f"#{lid}",
+        "members": rows,
+        "errors": [merr] if merr else [],
+    }
+    payload.update(g)
+    return payload, 200
+
+
+def binary_page_json(slug: str) -> tuple[dict, int]:
+    rec = _binary(slug)
+    if rec is None:
+        return {"ok": False, "error": f"no build called {slug} is in the binary table"}, 404
+    bid = int(rec["id"])
+    ident_rows, ident_err = query_db(
+        "SELECT COUNT(*), COUNT(DISTINCT logical_id) FROM identity WHERE binary_id=?",
+        (bid,),
+        ignore_missing=True,
+    )
+    bound = logicals = 0
+    if not ident_err and ident_rows:
+        bound, logicals = (ident_rows[0][0] or 0, ident_rows[0][1] or 0)
+    recov_rows, recov_err = query_db(
+        "SELECT COUNT(*), COUNT(DISTINCT logical_id), "
+        "COUNT(DISTINCT CASE WHEN addr IS NOT NULL THEN addr END) "
+        "FROM recovered_function WHERE binary_id=? AND real_c=1",
+        (bid,),
+        ignore_missing=True,
+    )
+    artifacts = logical = concrete = None
+    if not recov_err and recov_rows and recov_rows[0][0]:
+        artifacts, logical, concrete = recov_rows[0]
+    total = rec.get("func_count") or 0
+    wanted = [
+        (as_root() / "output" / "export_cpp" / str(rec["slug"]), "readable source package"),
+        (as_root() / "extract" / "stabs" / f"{rec['slug']}.json", "STABS dump"),
+        (as_root() / str(rec["repo_path"]).lstrip("/"), "the binary itself"),
+    ]
+    disk = []
+    for path, label in wanted:
+        disk.append({
+            "label": label,
+            "path": rel(path) if path else "",
+            "exists": bool(path and path.exists()),
+        })
+    errors = [e for e in (ident_err, recov_err) if e]
+    return {
+        "ok": True,
+        "slug": rec["slug"],
+        "id": bid,
+        "repo_path": rec.get("repo_path") or "",
+        "game": rec.get("game") or "",
+        "platform": rec.get("platform") or "",
+        "arch": rec.get("arch") or "",
+        "bits": rec.get("bits"),
+        "format": rec.get("format") or "",
+        "md5": rec.get("md5") or "",
+        "func_count": rec.get("func_count"),
+        "named_count": rec.get("named_count"),
+        "role": rec.get("role") or "",
+        "identity": {
+            "bound": bound,
+            "logicals": logicals,
+            "unbound": max(0, int(total or 0) - int(bound or 0)),
+        },
+        "recovery": {
+            "artifacts": artifacts,
+            "logical": logical,
+            "concrete": concrete,
+        },
+        "artifacts": disk,
+        "errors": errors,
+    }, 200
+
+
+def session_overview_json(slugs: list[str], programs: list[str] | None = None) -> dict:
+    slug_set = {str(item).strip() for item in slugs if str(item).strip()}
+    program_names = [str(item).strip() for item in (programs or []) if str(item).strip()]
+    headline = headline_numbers_for_slugs(slug_set) if slug_set else {}
+    by_slug, _, err = _binaries()
+    rows = []
+    for name in sorted(slug_set):
+        rec = by_slug.get(name)
+        if rec:
+            rows.append({
+                "slug": rec["slug"],
+                "game": rec.get("game"),
+                "platform": rec.get("platform"),
+                "func_count": rec.get("func_count"),
+                "named_count": rec.get("named_count"),
+                "role": rec.get("role"),
+            })
+        else:
+            rows.append({"slug": name, "missing": True})
+    return {
+        "ok": True,
+        "slugs": sorted(slug_set),
+        "programs": program_names,
+        "programsTitle": "Project programs",
+        "programHint": "Program in the open Ghidra project",
+        "headline": headline,
+        "binaries": rows,
+        "empty": not slug_set and not program_names,
+        "errors": [err] if err else [],
+    }
+
+
+def database_evidence_json() -> tuple[dict, int]:
+    rows, err = query_db(
+        "SELECT name, type FROM sqlite_master WHERE type IN ('table','index') "
+        "AND name NOT LIKE 'sqlite_%' ORDER BY type, name"
+    )
+    if err:
+        return {"ok": False, "error": err, "objects": []}, 503
+    size_mb = None
+    mtime = None
+    if DB_PATH is None:
+        return {"ok": False, "error": "AGENT_DECOMPILE_CORPUS_DB is unset", "objects": []}, 503
+    try:
+        stat = DB_PATH.stat()
+        size_mb = round(stat.st_size / (1 << 20), 1)
+        mtime = ago(stat.st_mtime)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc), "objects": []}, 503
+    objects = [{"name": name, "type": kind} for name, kind in rows]
+    return {
+        "ok": True,
+        "path": rel(DB_PATH),
+        "size_mb": size_mb,
+        "mtime": mtime,
+        "tables": sum(1 for item in objects if item["type"] == "table"),
+        "indexes": sum(1 for item in objects if item["type"] == "index"),
+        "objects": objects,
+    }, 200
+
+
+def artifact_json(raw: str = "") -> tuple[dict, int]:
+    work = _work_dir()
+    if not raw:
+        if work is not None and work.is_dir():
+            return _artifact_dir_json(work.resolve(), rel(work.resolve())), 200
+        return {"ok": False, "error": "Set AGENT_DECOMPILE_CORPUS_WORK_DIR to a run directory."}, 200
+    target, err = _resolve_artifact(raw)
+    if target is None:
+        status = 403 if err and str(err).startswith("refused") else 404
+        return {"ok": False, "error": err or "not found"}, status
+    parent = ""
+    allowed_roots = []
+    if ROOT is not None:
+        allowed_roots.extend((ROOT.resolve() / name).resolve() for name in ARTIFACT_ROOT_NAMES)
+    if work is not None:
+        allowed_roots.append(work.resolve())
+    if target not in allowed_roots:
+        parent = rel(target.parent)
+    if target.is_dir():
+        payload = _artifact_dir_json(target, rel(target))
+        payload["parent"] = parent
+        return payload, 200
+    return _artifact_file_json(target, rel(target), parent), 200
+
+
+def _artifact_dir_json(target: Path, relpath: str) -> dict:
+    try:
+        entries = sorted(os.scandir(target), key=lambda e: (not e.is_dir(), e.name))
+    except OSError as exc:
+        return {"ok": False, "error": str(exc), "path": relpath, "kind": "dir", "entries": []}
+    rows = []
+    for entry in entries[:MAX_DIR_ENTRIES]:
+        child = rel(Path(entry.path))
+        public_child, denied = _resolve_artifact(child)
+        if denied or public_child is None:
+            continue
+        try:
+            stat = public_child.stat()
+            size = None if public_child.is_dir() else stat.st_size
+            when = ago(stat.st_mtime)
+        except OSError:
+            size, when = None, "?"
+        rows.append({
+            "name": entry.name,
+            "path": child,
+            "dir": public_child.is_dir(),
+            "size": size,
+            "mtime": when,
+        })
+    return {
+        "ok": True,
+        "kind": "dir",
+        "path": relpath,
+        "entries": rows,
+        "truncated": len(entries) > MAX_DIR_ENTRIES,
+    }
+
+
+def _artifact_file_json(target: Path, relpath: str, parent: str) -> dict:
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        return {"ok": False, "error": str(exc), "path": relpath, "kind": "file"}
+    if target.suffix.lower() in BINARY_SUFFIXES:
+        return {
+            "ok": True,
+            "kind": "file",
+            "path": relpath,
+            "parent": parent,
+            "size": size,
+            "text": "",
+            "binary": True,
+        }
+    try:
+        with target.open("rb") as fh:
+            head = fh.read(ARTIFACT_SNIFF_BYTES)
+            if b"\x00" in head:
+                return {
+                    "ok": True,
+                    "kind": "file",
+                    "path": relpath,
+                    "parent": parent,
+                    "size": size,
+                    "text": "",
+                    "binary": True,
+                }
+            rest = fh.read(max(0, MAX_ARTIFACT_BYTES - len(head)))
+    except OSError as exc:
+        return {"ok": False, "error": str(exc), "path": relpath, "kind": "file"}
+    text = (head + rest).decode("utf-8", "replace")
+    if target.suffix.lower() == ".json" and size <= MAX_ARTIFACT_BYTES:
+        try:
+            text = json.dumps(json.loads(text), indent=1)
+        except ValueError:
+            pass
+    return {
+        "ok": True,
+        "kind": "file",
+        "path": relpath,
+        "parent": parent,
+        "size": size,
+        "text": text,
+        "truncated": size > MAX_ARTIFACT_BYTES,
+        "binary": False,
+    }
+
+
+PANEL_WINDOW = {
+    "steps": "wb-pipeline",
+    "knowledge": "wb-knowledge",
+    "stabs": "wb-stabs",
+    "processes": "wb-processes",
+    "recovery": "wb-recovery",
+    "roundtrip": "wb-roundtrip",
+    "binaries": "wb-corpus",
+    "crossmatch": "wb-match",
+    "directives": "wb-mission",
+    "callgraph": "wb-graph",
+    "entities": "wb-fnbrowse",
+}
+
+
+def panel_payload_json(sid: str) -> tuple[dict, int]:
+    section = SECTION_BY_ID.get(sid or "")
+    if section is None:
+        return {"ok": False, "error": f"no such panel {sid}"}, 404
+    payload = None
+    if section.module is not None:
+        as_payload = getattr(section.module, "as_payload", None)
+        if callable(as_payload):
+            try:
+                payload = as_payload()
+            except Exception as exc:  # noqa: BLE001
+                payload = {"error": str(exc)}
+    return {
+        "ok": True,
+        "id": section.id,
+        "title": section.title,
+        "why": section.why,
+        "window": PANEL_WINDOW.get(section.id, "wb-overview"),
+        "payload": payload,
+    }, 200
+
+
+def browse_block_json(block: str, query: dict) -> tuple[dict, int]:
+    name = (block or "").strip().lower()
+    if name not in BROWSE_BLOCKS:
+        return {"ok": False, "error": f"no browse block called {block or ''}"}, 404
+    params = {k: (v[0] if v else "") for k, v in query.items()}
+    if name == "logical":
+        return logical_listing_json(
+            q=params.get("lq") or params.get("logical_q") or "",
+            after=int(params.get("logical_after") or 0 or 0) if str(params.get("logical_after") or "").isdigit() else 0,
+            limit=params.get("limit") or "all",
+        ), 200
+    if name == "review":
+        return review_queue_json(), 200
+    if name == "builds":
+        from agentdecompile_recovery.corpus.dashboard.panels import steps
+        return {"ok": True, "block": name, "binaries": (steps.as_payload() or {}).get("binaries") or []}, 200
+    if name == "graph":
+        return {"ok": True, "block": name, "window": "wb-graph"}, 200
+    slug = (params.get("binary") or params.get("slug") or "").strip()
+    from agentdecompile_recovery.corpus.dashboard.workbench import list_functions
+    payload = list_functions(slug, q=params.get("q") or "", offset=0, limit="all")
+    payload["block"] = name
+    return payload, 200
+
+
+def _mission_json() -> dict:
+    from agentdecompile_recovery.corpus.dashboard.panels import directives
+
+    goal, err = directives._load_goal()
+    if err or not isinstance(goal, dict):
+        return {"ok": False, "error": err or "mission contract missing"}
+    evidence = [x for x in goal.get("evidence", []) if isinstance(x, str)]
+    return {
+        "ok": True,
+        "id": goal.get("id") or "MASTER",
+        "title": goal.get("title") or "",
+        "objective": goal.get("objective") or "",
+        "status": goal.get("status") or "in_progress",
+        "acceptance": [x for x in goal.get("acceptance_criteria", []) if isinstance(x, str)],
+        "evidence": evidence,
+    }
 
 
 def render_section(section: Section, level: int = 2) -> str:
@@ -762,7 +1338,7 @@ def render_pipeline_rail() -> tuple[str, bool]:
     return html, bool(pending)
 
 
-def render_binary_bars() -> str:
+def render_binary_bars(*, slugs: set[str] | None = None) -> str:
     """One bar per build (Rule D item 3), each a door to `/binary/<slug>`.
 
     Reads only the cached `binary` table snapshot `_binaries()` already keeps
@@ -771,6 +1347,8 @@ def render_binary_bars() -> str:
     (kx/fix_func_counts.py); a count is a magnitude, not a verification claim,
     so every bar takes the neutral state, same reasoning viz.py uses for its
     histogram and heatmap.
+
+    When ``slugs`` is set, only those corpus rows are shown (workbench tab scope).
     """
     try:
         by_slug, _, err = _binaries()
@@ -778,6 +1356,8 @@ def render_binary_bars() -> str:
             return missing_html(err)
         rows = []
         for slug, rec in sorted(by_slug.items()):
+            if slugs is not None and slug not in slugs:
+                continue
             repo = str(rec.get("repo_path") or "")
             if repo in DRM_EXCLUDED:
                 continue
@@ -920,9 +1500,9 @@ def render_live_priority() -> str:
     return (
         '<div class="block livepri">'
         '<div class="blockhead"><h2 class="h-sec">Live now</h2>'
-        '<span class="sub">Ghidra-C compile is the priority for '
+        '<span class="sub">Ghidra-C compile is the current job for '
         f'{esc(label)}. Identity match does not use Wine. Byte-exact recovery '
-        'is the hero above, a different claim.</span></div>'
+        'is a different count.</span></div>'
         f'<div class="kv">'
         f'<div><b>{compiled:,} / {denom:,}</b>'
         f'<span>{esc(label)} Ghidra C compiling ({pct:.1f}%)</span></div>'
@@ -951,7 +1531,7 @@ def render_hero_block() -> str:
         return ('<section class="hero"><div class="hero-main">'
                 '<p class="eyebrow">Recovered source &mdash; real C <b>and</b> '
                 'byte-identical</p>'
-                '<p class="hero-n is-unmeasured"><span class="num">&mdash;</span>'
+                '<p class="hero-n is-unmeasured"><span class="num">unmeasured</span>'
                 f'<span class="of"> measuring, {pending:.0f}s so far</span></p>'
                 '<p class="hero-sub">Read from <code>recovered_function</code> and '
                 'from the coverage artifact, on a disk the recovery jobs are also '
@@ -983,7 +1563,7 @@ def render_body() -> str:
                 else '<span class="age">up to date</span>')
     parts.append(
         f'<div class="block" data-sec="rail" data-etag="{_etag(rail_html)}">'
-        '<div class="blockhead"><h2 class="h-sec">The pipeline, corpus-wide</h2>'
+        '<div class="blockhead"><h2 class="h-sec">Corpus-wide steps</h2>'
         '<span class="sub">Each step is a link to what proves it.</span>'
         f'{rail_meta}</div>{rail_html}</div>')
 
@@ -991,18 +1571,16 @@ def render_body() -> str:
     parts.append(
         f'<div class="block" data-sec="binbars" data-etag="{_etag(bars_html)}">'
         '<div class="blockhead"><h2 class="h-sec">Every build, compared</h2>'
-        '<span class="sub">Functions per build, one shared scale. Click a bar to '
-        'open that build &mdash; its ladder, cross-match reach, recovery numbers '
-        'and evidence live there, together.</span></div>'
+        '<span class="sub">Functions per build, one scale. Click a bar to '
+        'open that build.</span></div>'
         f'{bars_html}</div>')
 
     # One line, not a callout box: this is a signpost to another view, and a
     # bordered panel would make it a peer of the two charts above it.
     parts.append(
         '<p class="sub" data-sec="graphlink" data-etag="static">'
-        'The call graph answers a question about one function, not about the '
-        'corpus, so it is not drawn on load. '
-        '<a href="/dashboard/functions#graph">Open the call graph</a> · '
+        'The call graph is for one function. It is not drawn on load. '
+        '<a href="/dashboard?window=wb-graph">Open the call graph</a> · '
         '<a href="/dashboard#run">Run work on this page</a>.</p>')
 
     # Collapsed, these two are summaries and sit side by side; opened, either one
@@ -1043,7 +1621,9 @@ def render_page(body: str | None = None, title: str | None = None) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>{esc(title or WORKSPACE_NAME)}</title>"
         f"<style>{CSS}</style>"
-        '<link rel="stylesheet" href="/dashboard/static/dashboard.css"></head><body>'
+        '<link rel="stylesheet" href="/dashboard/static/dashboard.css">'
+        '<link rel="stylesheet" href="/dashboard/static/workbench.css"></head>'
+        '<body class="workbench-page">'
         '<a class="skip-link" href="#app">Skip to content</a>'
         f'<main id="app" data-live="{1 if live else 0}" tabindex="-1">'
         f"{body if body is not None else render_body()}</main>"
@@ -1090,14 +1670,14 @@ def _graph_params(query: dict) -> dict:
 
 
 def function_workspace_href(slug: str, addr: int, *, bits: int = 32, **params) -> str:
-    path = f"/dashboard/function/{quote(str(slug), safe='')}/{format_address(addr, bits)}"
-    keep = {k: v for k, v in params.items()
-            if v not in (None, "", "both", "comfortable", "curved", "default", 2, "2")}
+    hexed = format_address(addr, bits)
+    keep = {"window": "wb-fnbrowse", "binary": slug, "addr": hexed}
+    extra = {k: v for k, v in params.items()
+             if v not in (None, "", "both", "comfortable", "curved", "default", 2, "2")}
     if params.get("depth") in (1, "1"):
-        keep["depth"] = params["depth"]
-    if not keep:
-        return path
-    return path + "?" + urlencode(keep)
+        extra["depth"] = params["depth"]
+    keep.update(extra)
+    return "/dashboard?" + urlencode(keep)
 
 
 def graph_to_function_target(query: dict) -> str:
@@ -1131,7 +1711,7 @@ def graph_to_function_target(query: dict) -> str:
         )
         if not err and rows:
             return function_workspace_href(str(rows[0][0]), int(rows[0][1]), bits=int(rows[0][2] or 32), **extra)
-    return "/dashboard/functions#graph"
+    return "/dashboard?window=wb-graph"
 
 
 def _call_fragment(fn, params: dict) -> str:
@@ -1190,7 +1770,7 @@ def render_graph(query: dict) -> str:
         + '<h2 class="h-sec">Call graph</h2>'
         + render_graph_embed(query)
         + '<p class="annot">This view now lives on Functions. '
-        '<a href="/dashboard/functions#graph">Open the browse workspace</a>.</p></div>'
+        '<a href="/dashboard?window=wb-graph">Open the browse workspace</a>.</p></div>'
     )
 
 
@@ -1378,7 +1958,7 @@ def _binary(slug: str):
 
 
 def _href_binary(slug: str) -> str:
-    return "/dashboard/binary/" + quote(str(slug), safe="")
+    return "/dashboard?" + urlencode({"window": "wb-corpus", "binary": slug})
 
 
 def _crumbs(trail: list[tuple[str, str | None]]) -> str:
@@ -1434,8 +2014,7 @@ def _drill(
 def _not_found(what: str, trail: list[tuple[str, str | None]]) -> str:
     return _drill("Not found", trail,
                   f'<div class="callout warn">{esc(what)}</div>'
-                  '<p class="sub">Pick a build from the overview and follow its '
-                  'counts down from there.</p>')
+                  '<p class="sub">Pick a build from the overview.</p>')
 
 
 def _late_missing(name: str, err: str | None, what: str) -> str:
@@ -1821,7 +2400,7 @@ def _named_block(anchor: str, title: str, why: str, body: str, *, open_default: 
     )
 
 
-def _builds_table_html() -> str:
+def _builds_table_html(*, slugs: set[str] | None = None) -> str:
     rows, err = query_db(
         "SELECT b.slug, b.repo_path, b.role, b.platform, b.arch, b.bits, b.format, "
         "b.func_count, b.named_count, b.md5, "
@@ -1833,6 +2412,8 @@ def _builds_table_html() -> str:
         return missing_html(err)
     table_rows = []
     for slug, repo_path, role, platform, arch, bits, fmt, funcs, named, _md5, copies, canonical in rows:
+        if slugs is not None and str(slug) not in slugs:
+            continue
         duplicate = int(copies or 0) > 1 and slug != canonical
         scope = "duplicate" if duplicate else (role or "included")
         table_rows.append([
@@ -1870,8 +2451,8 @@ def _review_embed_html(params: dict | None = None) -> str:
 
 def _run_work_html() -> str:
     return (
-        '<p class="sub">These buttons run the same cataloged corpus CLI and MCP tools '
-        "as the terminal. Destructive actions ask for confirm. A finished job is not a match.</p>"
+        '<p class="sub">These buttons run the same CLI and MCP tools as the terminal. '
+        "Destructive actions ask first. A finished job is not a match.</p>"
         '<div class="action-bar" id="action-bar"></div>'
         '<label class="action-filter-label" for="action-filter">Filter actions</label>'
         '<input id="action-filter" class="action-filter" type="search" '
@@ -1885,7 +2466,7 @@ def _home_workspace_sections() -> str:
         _named_block(
             "run",
             "Run work",
-            "Compile, cross-place, decompile, and every other CLI or MCP action. Stay on this page.",
+            "Run the same catalog verbs here. Stay on this page.",
             _run_work_html(),
             open_default=True,
         )
@@ -1898,7 +2479,7 @@ def _home_workspace_sections() -> str:
         + _named_block(
             "operations",
             "Jobs and logs",
-            "What is running now, and the tail of every log.",
+            "Running jobs and log tails.",
             _operations_embed_html(),
         )
     )
@@ -1918,8 +2499,7 @@ def render_binary_page(slug: str) -> tuple[str, int]:
             return missing_html(f"{label} unavailable: {exc}")
 
     body = "".join([
-        '<p class="sub">One build, and every stage of the project as a property '
-        'of it. Every count here opens the set it counts.</p>',
+        '<p class="sub">One build. Each count opens the set it counts.</p>',
         _sub_panel("This build", _safe(_binary_facts, "build facts")),
         _steps_for_binary(slug),
         _sub_panel("Cross-match", _safe(_binary_identity, "identity rows")),
@@ -1965,14 +2545,14 @@ def render_functions_page(query: dict) -> tuple[str, int]:
         + _named_block(
             "functions",
             "Functions",
-            "Search, filter, and page this build. Rows per page includes All.",
+            "Search and page this build.",
             richer,
             open_default=not (open_graph or open_review or open_logical),
         )
         + _named_block(
             "logical",
             "Logical identities",
-            "Same function across builds. Search uses its own box so it does not collide with Find a function.",
+            "Same function across builds. Search uses its own box.",
             _logical_listing_html(query, carry=params),
             open_default=open_logical,
         )
@@ -1998,6 +2578,35 @@ def render_functions_page(query: dict) -> tuple[str, int]:
         )
     )
     return _drill(title, trail, body, page="functions", slug=slug or ""), 200
+
+
+BROWSE_BLOCKS = ("functions", "logical", "review", "graph", "builds")
+
+
+def render_browse_block(block: str, query: dict) -> tuple[str, int]:
+    """One block of the old browse workspace, bare, for a workbench window.
+
+    The browse page used to be a second full page with five collapsed blocks.
+    The workbench now owns navigation, so each block is served on its own and
+    mounted as a window instead of nesting a page inside a page.
+    """
+    name = (block or "").strip().lower()
+    if name not in BROWSE_BLOCKS:
+        return f'<p class="miss">no browse block called {esc(block or "")}</p>', 404
+    params = {k: (v[0] if v else "") for k, v in query.items()}
+    slug = (params.get("binary") or params.get("slug") or "").strip()
+    if slug and not params.get("binary"):
+        params["binary"] = slug
+    if name == "functions":
+        body, _ok = _entity_call("render_functions", params)
+        return body, 200
+    if name == "logical":
+        return _logical_listing_html(query, carry=params), 200
+    if name == "review":
+        return _review_embed_html(params), 200
+    if name == "graph":
+        return render_graph_embed(query), 200
+    return _builds_table_html(), 200
 
 
 def render_builds_page() -> tuple[str, int]:
@@ -2117,6 +2726,74 @@ def render_function_page(slug: str, raw_addr: str, query: dict | None = None) ->
     ), 200
 
 
+def recovery_report_fragment() -> str:
+    """Live SQL tiles for recovered_function — same body as /recovery in kotorxid."""
+    return _recovery_inner_html()
+
+
+def recovery_report_json(limit: int = 80) -> dict:
+    """Same recovered_function tiles as the HTML report, for the React report tab."""
+    out = {
+        "ok": True,
+        "logical": None,
+        "artifacts": None,
+        "unplaced": None,
+        "unbound": None,
+        "by_build": [],
+        "functions": [],
+        "errors": [],
+    }
+    rows, err = query_db(
+        "SELECT b.slug, COUNT(*), COUNT(DISTINCT r.logical_id), "
+        "COUNT(DISTINCT printf('%d:%lld', r.binary_id, r.addr)) "
+        "FROM recovered_function r JOIN binary b ON b.id=r.binary_id "
+        "WHERE r.real_c=1 GROUP BY b.id, b.slug ORDER BY 3 DESC"
+    )
+    if err:
+        out["ok"] = False
+        out["errors"].append(err)
+        return out
+    out["artifacts"] = sum(int(r[1] or 0) for r in rows)
+    out["by_build"] = [
+        {
+            "slug": r[0],
+            "artifacts": r[1],
+            "logical": r[2],
+            "concrete": r[3],
+        }
+        for r in rows
+    ]
+    logical_rows, logical_err = query_db(
+        "SELECT COUNT(DISTINCT logical_id), "
+        "SUM(logical_id IS NULL), SUM(binary_id IS NULL OR addr IS NULL) "
+        "FROM recovered_function WHERE real_c=1"
+    )
+    if logical_err:
+        out["errors"].append(logical_err)
+    elif logical_rows:
+        out["logical"], out["unbound"], out["unplaced"] = logical_rows[0]
+    recent, rerr = query_db(
+        "SELECT r.name, b.slug, r.size, r.convention, r.logical_id "
+        "FROM recovered_function r JOIN binary b ON b.id = r.binary_id "
+        "WHERE r.real_c=1 ORDER BY r.size DESC LIMIT ?",
+        (int(limit),),
+    )
+    if rerr:
+        out["errors"].append(rerr)
+    else:
+        out["functions"] = [
+            {
+                "name": r[0],
+                "slug": r[1],
+                "size": r[2],
+                "convention": r[3] or "",
+                "logical_id": r[4],
+            }
+            for r in recent
+        ]
+    return out
+
+
 def render_report_page(query: dict) -> tuple[str, int]:
     """Recovery results live on the overview; this URL stays as a deep link."""
     _ = query
@@ -2139,9 +2816,8 @@ def _recovery_inner_html() -> str:
     if not rows:
         return (
             '<div class="callout warn">No recovered functions are in '
-            'the database right now. An ingest rebuilds this table in '
-            'place, so if one is running this reads empty for a minute '
-            'or two. The files themselves are on disk either way.</div>'
+            'the database. An ingest rebuilds this table. '
+            'Files stay on disk either way.</div>'
         )
 
     artifacts = sum(int(r[1]) for r in rows)
@@ -2160,9 +2836,8 @@ def _recovery_inner_html() -> str:
         f"<div><b>{fnum(unplaced)}</b><span>artifacts without a concrete address</span></div>"
         f"<div><b>{fnum(unbound)}</b><span>artifacts without a logical identity</span></div>"
         "</div>"
-        '<p class="sub">These counts include only assembly-free C or C++ artifacts. '
-        'They do not include emitted bytes, inline assembly, naked wrappers, or '
-        'assembly export packages.</p>')
+        '<p class="sub">These counts include only assembly-free C or C++. '
+        'They omit emitted bytes, wrappers, and assembly exports.</p>')
 
     body = ["<table><thead><tr><th>build</th><th class=\"num\">artifacts</th>"
             "<th class=\"num\">logical functions</th><th class=\"num\">concrete instances</th>"
@@ -2184,7 +2859,7 @@ def _recovery_inner_html() -> str:
     if not rerr and recent:
         lines = ["<h2 class=\"h-sec\">Recovered functions</h2>",
                  f'<p class="sub">Largest {len(recent)} of {fnum(artifacts)}. '
-                 'Every row compiled to bytes identical to the original.</p>',
+                 'Each row compiled to the original bytes.</p>',
                  "<table><thead><tr><th>function</th><th>build</th>"
                  "<th class=\"num\">bytes</th><th>convention</th><th>logical function</th>"
                  "</tr></thead><tbody>"]
@@ -2254,17 +2929,26 @@ def _logical_listing_html(query: dict, carry: dict | None = None) -> str:
         "LEFT JOIN identity i ON i.logical_id=lf.id " + where +
         " GROUP BY lf.id ORDER BY lf.id LIMIT ?", tuple(binds))
     if err:
+        # A store that has never had cross-build matching run has no identity
+        # tables at all. That is a stage nobody reached, not a broken query.
+        if "no such table" in str(err).lower():
+            return (
+                '<p class="sub">No logical identities yet. They appear after '
+                "cross-build matching. Use Match, or run "
+                "<code>corpus.cross-place</code> from Commands.</p>"
+            )
         return missing_html(err)
     more = len(rows) > page_size
     rows = rows[:page_size]
     hidden = []
     carry = carry or {}
+    hidden.append('<input type="hidden" name="window" value="wb-logical">')
     for key in ("binary", "slug", "q", "page_size", "size_band"):
         val = carry.get(key) or ""
         if val:
             hidden.append(f'<input type="hidden" name="{esc(key)}" value="{esc(val)}">')
     form = (
-        '<form class="search-form" action="/dashboard/functions#logical" method="get" role="search">'
+        '<form class="search-form" action="/dashboard" method="get" role="search">'
         + "".join(hidden) +
         '<label for="logical-search">Find a logical function</label>'
         f'<input id="logical-search" name="lq" value="{esc(q)}" '
@@ -2297,7 +2981,8 @@ def _logical_listing_html(query: dict, carry: dict | None = None) -> str:
             nxt["binary"] = carry["binary"]
         if page_size != PAGE or show_all:
             nxt["page_size"] = "all" if show_all else str(page_size)
-        href = "/dashboard/functions?" + urlencode(nxt) + "#logical"
+        nxt["window"] = "wb-logical"
+        href = "/dashboard?" + urlencode(nxt)
         next_label = "all remaining" if show_all else f"Next {page_size}"
         pager = f'<p class="pager"><a href="{esc(href)}">{esc(next_label)}</a></p>'
     return form + listing + pager
@@ -2437,7 +3122,7 @@ code{font-family:var(--font-mono);font-size:12px;color:var(--fg-max)}
 .ladderline .pct{color:var(--fg-annot);font-size:12px;font-variant-numeric:tabular-nums}
 .step{border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-panel);
  margin:0 0 var(--s2)}
-.step > summary{display:grid;grid-template-columns:52px 1fr auto auto;gap:var(--s3);
+.step > summary{display:grid;grid-template-columns:52px 1fr auto auto auto;gap:var(--s3);
  align-items:center;padding:var(--s3) var(--s4);cursor:pointer;list-style:none}
 .step > summary::-webkit-details-marker{display:none}
 .step > summary::marker{content:""}
@@ -2450,6 +3135,11 @@ code{font-family:var(--font-mono);font-size:12px;color:var(--fg-max)}
 .stepcount{font-variant-numeric:tabular-nums;color:var(--fg-max);white-space:nowrap}
 .stepcount .of{color:var(--fg-head)}
 .stepcount .unit{color:var(--fg-annot);font-size:11px}
+.step-run{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
+ padding:2px 8px;border-radius:6px;text-decoration:none;color:var(--link);
+ border:1px solid var(--line-strong);white-space:nowrap;justify-self:end}
+.step-run:hover{background:var(--bg-raised)}
+.step-run.disabled{color:var(--fg-annot);border-color:var(--line);opacity:.65;cursor:not-allowed}
 .step.st-done{box-shadow:inset 3px 0 0 var(--st-proven-bd)}
 .step.st-partial,.step.st-running{box-shadow:inset 3px 0 0 var(--st-partial-bd)}
 .step.st-not-started,.step.st-unmeasured{box-shadow:inset 3px 0 0 var(--st-unproven-bd)}
@@ -2461,7 +3151,7 @@ code{font-family:var(--font-mono);font-size:12px;color:var(--fg-max)}
 .next .k{font-size:10px;letter-spacing:.1em;text-transform:uppercase;
  color:var(--fg-head);margin-right:var(--s2)}
 @media (max-width:720px){.step > summary{grid-template-columns:44px 1fr}
- .step .pill,.step .stepcount{grid-column:2}}
+ .step .pill,.step .stepcount,.step .step-run{grid-column:2}}
 
 /* state pills */
 .pill{font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;
@@ -2807,6 +3497,61 @@ def render_operations_page() -> tuple[str, int]:
     ), 200
 
 
+def render_session_overview(
+    slugs: list[str],
+    programs: list[str] | None = None,
+) -> str:
+    """Corpus overview scoped to the active workbench tab (project + imports)."""
+    slug_set = {str(item).strip() for item in slugs if str(item).strip()}
+    program_names = [
+        str(item).strip()
+        for item in (programs or [])
+        if str(item).strip()
+    ]
+    if not slug_set and not program_names:
+        return (
+            '<p class="sub">No project is open in this tab. Open or create a project first.</p>'
+        )
+    title = ", ".join(sorted(slug_set)) if slug_set else "project programs only"
+    program_rows = [
+        [
+            esc(name),
+            '<span class="badge">Ghidra program</span>',
+            "Program in the open Ghidra project. Add and Remove in Explorer change this list.",
+        ]
+        for name in program_names
+    ]
+    program_block = ""
+    if program_rows:
+        program_block = (
+            '<div class="block"><div class="blockhead">'
+            '<h2 class="h-sec">Project programs</h2></div>'
+            '<p class="sub">These names come from the open Ghidra project. '
+            "They match Explorer. "
+            "Add and Remove change this project.</p>"
+            + render_table(
+                ["program", "kind", "note"],
+                program_rows,
+            )
+            + "</div>"
+        )
+    bars = render_binary_bars(slugs=slug_set) if slug_set else missing_html(
+        "No corpus slugs in this tab."
+    )
+    table = _builds_table_html(slugs=slug_set) if slug_set else missing_html(
+        "No corpus slugs in this tab."
+    )
+    return (
+        render_session_hero(slug_set)
+        + f'<p class="sub">Showing the open project'
+        f"{(': <strong>' + esc(title) + '</strong>') if slug_set else ''}. "
+        "Ghidra program names are listed separately — they are not store rows.</p>"
+        f"{program_block}"
+        f'<div class="block"><div class="blockhead"><h2 class="h-sec">Tab builds</h2></div>{bars}</div>'
+        f'<div class="block"><div class="blockhead"><h2 class="h-sec">Tab store rows</h2></div>{table}</div>'
+    )
+
+
 def render_home() -> str:
     return render_page(None, WORKSPACE_NAME)
 
@@ -2814,18 +3559,21 @@ def render_home() -> str:
 PAGE_INDEX = {
     "app": "/dashboard",
     "dashboard": "/dashboard",
+    "explorer": "/dashboard/explorer",
     "overview": "/dashboard/overview",
     "atlas": "/atlas",
     "report": "/report",
+    "recovery": "/report",
     "docs": "/docs",
     "swagger": "/docs",
-    "functions": "/dashboard/functions",
-    "logical": "/dashboard/functions#logical",
-    "graph": "/dashboard/functions#graph",
-    "review": "/dashboard/functions#review",
-    "artifact": "/dashboard/artifact",
-    "builds": "/dashboard/functions#builds",
-    "operations": "/dashboard#operations",
+    "functions": "/dashboard?window=wb-fnbrowse",
+    "logical": "/dashboard?window=wb-logical",
+    "graph": "/dashboard?window=wb-graph",
+    "review": "/dashboard?window=wb-review",
+    "artifact": "/dashboard?window=wb-artifacts",
+    "evidence": "/dashboard?window=wb-evidence",
+    "builds": "/dashboard?window=wb-corpus",
+    "operations": "/dashboard?window=wb-processes",
     "healthz": "/dashboard/healthz",
     "static": "/dashboard/static",
     "actions": "/api/v1/actions",

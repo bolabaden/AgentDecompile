@@ -47,7 +47,7 @@ Today’s surfaces are split: leftover Atlas on 5173, classic dashboard panels, 
 
 ### Key Decisions
 
-- One page, tool strip, no tab bar. (session-settled: user-directed — chosen over separate sites or a tab strip: the operator stays on one professional surface.) Governs R2, R3.
+- One React page, every surface in document flow, no tool-strip button group. Sticky **project session** tabs at the top are required (open / create / close / rename). They must not hide Atlas, report, panels, or tools. (session-settled: user-directed.) Governs R2, R3.
 - Public CLI and advertised MCP only in Swagger. (session-settled: user-directed — chosen over advertising GUI-only hidden tools: headless 8080 is not the Ghidra GUI.) Governs R6.
 - Dual overlapping bars are decomp and validate, not byte-accuracy. (session-settled: user-directed — chosen over a third accuracy bar: compiling C and a linked image stay separate from objdiff 0.) Governs R5.
 - Leftover 5173 is not restyled. (session-settled: user-directed — chosen over restyling Mizuchi Atlas: 8080 is the Atlas.) Governs R10.
@@ -66,7 +66,7 @@ Today’s surfaces are split: leftover Atlas on 5173, classic dashboard panels, 
 
 - R1. 8080 serves one workbench as the default `/dashboard` (and `/app`) with AgentDecompile chrome and no Mizuchi branding.
 - R2. The page keeps every capability of the current UIs (overview panels, functions/logical/review/graph/builds, atlas prompt, report, artifacts, action dock), reachable without a tab strip.
-- R3. Center content switches by a tool strip or command palette. Deep links use `tool`, `slug`, `addr`, `logical_id`. Old URLs redirect here or keep a no-JS fallback.
+- R3. Center content stays on screen: ingest, sources, functions, inspector, graph, jobs, Atlas, report, leftover panels, and the tool list. Search or `?tool=` / `?focus=` scrolls to a section. Deep links use `tool`, `slug`, `addr`, `logical_id`. Old URLs redirect here or keep a no-JS fallback. No tool-strip button group. A sticky `role=tablist` of **project sessions** is required at the top; it does not hide other surfaces.
 
 **Live work**
 
@@ -113,7 +113,7 @@ flowchart TD
 
 ### Acceptance Examples
 
-- AE1. Covers R1, R2, R3. `/dashboard` shows AgentDecompile, a tool strip, and no `role=tablist`. `/docs` is one click away.
+- AE1. Covers R1, R2, R3. `/dashboard` shows AgentDecompile, ingest, sources, graph, Atlas, report, leftover panels, and tools on one React page, with sticky project session tabs and no tool strip. `/docs` is one click away.
 - AE2. Covers R7, R8, R9. Drop a small PE, see it listed; register a second path; remove the first only after confirm.
 - AE3. Covers R6, F4. `/openapi.json` contains an operationId for every public corpus/recover/reconstruct/cli/MCP verb, with named properties not a freeform argv blob.
 - AE4. Covers R5, F3. Two long jobs start and both show running.
@@ -215,6 +215,6 @@ Tests: missing `.link-stamp` forces relink; empty env HTML has no kotorxid defau
 - Product Contract R1–R11 have a unit or browser check.
 - Catalog completeness test green.
 - Binary add (path and upload) and confirm-remove green.
-- Workbench on 8080 has dropzone, tool strip, Swagger link, live job pulse.
+- Workbench on 8080 is React, responsive, dropzone always visible, leftover panels on the page, Docs link, live job pulse. No tool strip.
 - Link stamp honesty tests green.
 - No product-path defaults. No 5173 restyle.

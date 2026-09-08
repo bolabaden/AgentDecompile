@@ -19,7 +19,17 @@
     save: "/dashboard/api/workbench/save",
     saveAs: "/dashboard/api/workbench/save-as",
     sessions: "/dashboard/api/workbench/sessions",
+    ensureProgram: "/dashboard/api/workbench/ensure-program",
+    workspace: "/dashboard/api/workbench/workspace",
+    programs: "/dashboard/api/workbench/programs",
+    matchStatus: "/dashboard/api/workbench/match-status",
+    matchDecide: "/dashboard/api/workbench/match-decide",
+    recoverStatus: "/dashboard/api/workbench/recover-status",
+    corpusStatus: "/dashboard/api/workbench/corpus-status",
     ghidraDefaults: "/dashboard/api/workbench/ghidra-defaults",
+    artifacts: "/dashboard/artifact",
+    evidence: "/dashboard/evidence/database",
+    context: "/dashboard/api/workbench/context",
     actions: "/api/v1/actions",
     jobs: "/api/v1/jobs",
     serverShutdown: "/dashboard/api/server/shutdown",
@@ -33,7 +43,7 @@
     { id: "wb-sources", title: "Project", keys: ["source", "binary"] },
     { id: "wb-functions", title: "Functions", keys: ["function", "func", "addr"] },
     { id: "wb-inspect", title: "Inspector", keys: ["inspect", "sibling", "preview"] },
-    { id: "wb-graph", title: "Call graph", keys: ["graph", "call"] },
+    { id: "wb-graph", title: "Call trees", keys: ["graph", "call"] },
     { id: "wb-jobs", title: "Jobs", keys: ["job", "pulse"] },
     { id: "wb-atlas", title: "Atlas", keys: ["atlas", "map", "score", "prompt"] },
     { id: "wb-report", title: "Report", keys: ["report"] },
@@ -42,8 +52,8 @@
     { id: "wb-logical", title: "Logical identities", keys: ["logical", "identity", "sibling"] },
     { id: "wb-artifacts", title: "Artifacts", keys: ["artifact"] },
     { id: "wb-pipeline", title: "Pipeline", keys: ["pipeline", "steps"] },
-    { id: "wb-match", title: "Cross-match", keys: ["match", "cross"] },
-    { id: "wb-recovery", title: "Recovery", keys: ["recovery"] },
+    { id: "wb-match", title: "Match", keys: ["match", "cross"] },
+    { id: "wb-recovery", title: "Recover", keys: ["recovery", "recover", "dump"] },
     { id: "wb-stabs", title: "STABS", keys: ["stabs", "donor"] },
     { id: "wb-knowledge", title: "Knowledge", keys: ["knowledge"] },
     { id: "wb-roundtrip", title: "Roundtrip", keys: ["roundtrip", "rebuild"] },
@@ -53,13 +63,14 @@
     { id: "wb-tools", title: "Commands", keys: ["mcp", "cli", "tool", "command", "swagger"] }
   ];
 
-  /* Three working tabs plus More. Atlas, Cross-match, Report and the rest
-     stay reachable from More, View, and the command palette — they are not
-     a second row of chrome. */
+  /* Analyze / Match / Recover are the methodology. Atlas, Pipeline, Corpus
+     table and the rest stay in More — they are not a second row of chrome. */
   const EDITOR_PRIMARY = [
     { id: "decompile", title: "Listing" },
     { id: "wb-fnbrowse", title: "Functions" },
-    { id: "graph", title: "Graph" }
+    { id: "graph", title: "Call trees" },
+    { id: "wb-match", title: "Match" },
+    { id: "wb-recovery", title: "Recover" }
   ];
 
   function slugFromDiskPath(filePath, fileName) {
@@ -83,6 +94,20 @@
     if (platform.indexOf("linux-") === 0 && lower.endsWith("-linux")) base = base.slice(0, -6);
     else if (platform.indexOf("win") === 0 && lower.endsWith("-win")) base = base.slice(0, -4);
     return base + "-" + platform;
+  }
+
+  function humanError(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return "";
+    if (text.charAt(0) === "{") {
+      try {
+        const obj = JSON.parse(text);
+        return String(obj.error || obj.message || text).slice(0, 280);
+      } catch (_err) {
+        return text.slice(0, 280);
+      }
+    }
+    return text.slice(0, 280);
   }
 
   function importSlug(item) {
@@ -159,25 +184,28 @@
   function kindLabel(row) {
     const kind = (row && row.kind) || "binary";
     if (kind === "ghidra-project") return "gpr";
+    if (kind === "packed-program") return "gzf";
     if (kind === "shared-fs") return "shared-fs";
-    if (kind === "shared-project" || kind === "shared-http") return "shared-http";
+    if (kind === "shared-project" || kind === "shared-http") return "ghidra-server";
     if (kind === "draft") return "draft";
     return "bin";
   }
 
   function styleKind(kind) {
     if (kind === "ghidra-project" || kind === "gpr") return "gpr";
+    if (kind === "packed-program" || kind === "gzf") return "gzf";
     if (kind === "shared-fs") return "shared-fs";
-    if (kind === "shared-project" || kind === "shared-http") return "shared-http";
+    if (kind === "shared-project" || kind === "shared-http" || kind === "ghidra-server") return "ghidra-server";
     if (kind === "draft") return "draft";
     return "bin";
   }
 
   function kindTitle(kind) {
     if (kind === "ghidra-project" || kind === "gpr" || kind === "project-dir") return "Local Ghidra project";
+    if (kind === "packed-program" || kind === "gzf") return "Packed Ghidra program";
     if (kind === "dir") return "Folder";
-    if (kind === "shared-fs") return "Shared server (filesystem)";
-    if (kind === "shared-project" || kind === "shared-http") return "Shared server (HTTP)";
+    if (kind === "shared-fs") return "On-disk Ghidra Server tree";
+    if (kind === "shared-project" || kind === "shared-http" || kind === "ghidra-server") return "Ghidra Server";
     if (kind === "draft") return "New session";
     if (kind === "binary" || kind === "bin") return "Binary";
     return kind || "Unknown";
@@ -489,17 +517,151 @@
     });
   }
 
+  function wireStepActions(host) {
+    if (!host || host.dataset.stepActionsWired) return;
+    host.dataset.stepActionsWired = "1";
+    host.addEventListener("click", function (ev) {
+      const link = ev.target.closest("a.step-run[data-action-id]");
+      if (!link || !host.contains(link)) return;
+      ev.preventDefault();
+      if (link.classList.contains("disabled") || link.getAttribute("aria-disabled") === "true") return;
+      const actionId = link.getAttribute("data-action-id");
+      if (!actionId) return;
+      const params = {};
+      const slug = link.getAttribute("data-action-slug");
+      const program = link.getAttribute("data-action-program");
+      const src = link.getAttribute("data-action-src");
+      const dst = link.getAttribute("data-action-dst");
+      if (slug) {
+        params.slug = slug;
+        params.id = slug;
+      }
+      if (program) params.program = program;
+      if (src) params.src = src;
+      if (dst) params.dst = dst;
+      if (slug && !params.db) {
+        const uiEnv = window.AgentDecompileUI;
+        if (uiEnv && typeof uiEnv.getEnvDefaults === "function") {
+          const env = uiEnv.getEnvDefaults();
+          if (env && env.db) params.db = env.db;
+        }
+      }
+      const ui = window.AgentDecompileUI;
+      if (ui && typeof ui.runCatalogAction === "function") {
+        ui.runCatalogAction(actionId, params);
+        return;
+      }
+      if (window.AgentDecompileActions && window.AgentDecompileActions.openForm) {
+        window.AgentDecompileActions.openForm(actionId);
+      }
+    });
+  }
+
+  function wireMatchDecide(host) {
+    if (!host || host.dataset.matchDecideWired) return;
+    host.dataset.matchDecideWired = "1";
+    host.addEventListener("click", function (ev) {
+      const link = ev.target.closest("a.wb-match-decide[data-match-id][data-decision]");
+      if (!link || !host.contains(link)) return;
+      ev.preventDefault();
+      if (link.dataset.busy === "1") return;
+      const matchId = link.getAttribute("data-match-id");
+      const decision = link.getAttribute("data-decision");
+      if (!matchId || !decision) return;
+      link.dataset.busy = "1";
+      fetch(API.matchDecide, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ match_id: Number(matchId), decision: decision })
+      }).then(function (res) {
+        return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+      }).then(function (payload) {
+        link.dataset.busy = "0";
+        const ui = window.AgentDecompileUI || {};
+        if (payload.ok && payload.data && payload.data.ok) {
+          const msg = (decision === "accept" ? "Accepted" : "Rejected")
+            + " match #" + matchId + " → " + payload.data.status;
+          if (typeof ui.showToast === "function") ui.showToast(msg, "info");
+          reloadIslands();
+          return;
+        }
+        const err = (payload.data && payload.data.error) || "Could not update match.";
+        if (typeof ui.showToast === "function") ui.showToast(err, "error");
+      }).catch(function (err) {
+        link.dataset.busy = "0";
+        const ui = window.AgentDecompileUI || {};
+        if (typeof ui.showToast === "function") {
+          ui.showToast(String(err.message || err), "error");
+        }
+      });
+    });
+  }
+
+  function reviewPageMatchIds() {
+    const host = document.querySelector("#wb-review .wb-legacy");
+    if (!host) return [];
+    const ids = [];
+    const seen = {};
+    host.querySelectorAll("table tbody tr").forEach(function (tr) {
+      let id = 0;
+      const span = tr.querySelector("td:first-child [data-match-id]");
+      if (span) {
+        id = Number(span.getAttribute("data-match-id"));
+      } else {
+        const link = tr.querySelector("a.wb-match-decide[data-match-id]");
+        if (link) id = Number(link.getAttribute("data-match-id"));
+      }
+      if (id && !seen[id]) {
+        seen[id] = 1;
+        ids.push(id);
+      }
+    });
+    return ids;
+  }
+
+  function batchReviewPage(decision) {
+    const matchIds = reviewPageMatchIds();
+    const ui = window.AgentDecompileUI || {};
+    if (!matchIds.length) {
+      if (typeof ui.showToast === "function") ui.showToast("No review rows on this page.", "error");
+      return;
+    }
+    fetch(API.matchDecideBatch, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ match_ids: matchIds, decision: decision })
+    }).then(function (res) {
+      return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+    }).then(function (payload) {
+      if (payload.ok && payload.data && payload.data.ok) {
+        const d = payload.data;
+        const verb = decision === "accept" ? "Accepted" : "Rejected";
+        const msg = verb + " " + d.updated + " match" + (d.updated === 1 ? "" : "es")
+          + (d.skipped ? " (" + d.skipped + " skipped)" : "");
+        if (typeof ui.showToast === "function") ui.showToast(msg, "info");
+        reloadIslands();
+        return;
+      }
+      const err = (payload.data && payload.data.error) || "Could not update matches.";
+      if (typeof ui.showToast === "function") ui.showToast(err, "error");
+    }).catch(function (err) {
+      if (typeof ui.showToast === "function") {
+        ui.showToast(String(err.message || err), "error");
+      }
+    });
+  }
+
   function TabRoster({ programs, imports, selectedSlug, selectedProgram, onPickProgram, onPickImport }) {
     const programList = programs || [];
     const importList = imports || [];
     if (!programList.length && !importList.length) {
-      return html`<div className="wb-tab-roster wb-empty">Nothing in this tab yet. File → Open, then Add binaries…</div>`;
+      return html`<div className="wb-tab-roster wb-empty">Nothing in this tab yet. File → Open, then Add to project…</div>`;
     }
     return html`<div className="wb-tab-roster" id="wb-tab-roster">
-      <p className="wb-hint">Same roster as Explorer. Ghidra programs are not corpus store rows.</p>
-      ${importList.length ? html`<table className="wb-roster-table">
-        <caption className="wb-kicker">Imports · corpus store</caption>
-        <thead><tr><th>Slug</th><th>Kind</th></tr></thead>
+      <p className="wb-hint">This list is the Ghidra project. Add and Remove change it.</p>
+      ${!programList.length && importList.length ? html`<table className="wb-roster-table">
+        <caption className="wb-kicker">Binaries</caption>
+        <thead><tr><th>Name</th><th>Kind</th></tr></thead>
         <tbody>
           ${importList.map(function (item) {
             const row = item.row || {};
@@ -511,7 +673,7 @@
             </tr>`;
           })}
         </tbody>
-      </table>` : html`<p className="wb-hint">No imports in this tab.</p>`}
+      </table>` : null}
       ${programList.length ? html`<table className="wb-roster-table">
         <caption className="wb-kicker">Programs · open Ghidra project</caption>
         <thead><tr><th>Program</th><th>Kind</th></tr></thead>
@@ -539,6 +701,598 @@
   const ISLAND_BUS = { subs: [] };
   function reloadIslands() {
     ISLAND_BUS.subs.slice().forEach(function (fn) { fn(); });
+  }
+
+  function CallGraphView({ graph, onPick }) {
+    const data = graph || {};
+    const center = data.center || null;
+    const callers = data.callers || [];
+    const callees = data.callees || [];
+    const neighbors = data.neighbors || [];
+    if (!center && !callers.length && !callees.length && !neighbors.length) {
+      return html`<div id="wb-callgraph" className="wb-callgraph wb-callgraph-empty">
+        <p>No graph yet. Pick a program.</p>
+      </div>`;
+    }
+    function nodeBtn(node, extra) {
+      if (!node) return null;
+      return html`<button type="button" className=${"wb-cg-node " + (extra || "")}
+        data-addr=${node.addr}
+        title=${(node.kind || "") + " " + (node.addr || "")}
+        onClick=${function () { if (onPick) onPick(node); }}>
+        <code>${node.addr}</code>
+        <span>${node.name}</span>
+        ${node.kind ? html`<i>${node.kind}</i>` : null}
+      </button>`;
+    }
+    return html`<div id="wb-callgraph" className="wb-callgraph">
+      <div className="wb-cg-col wb-cg-callers">
+        <h3>Callers ${callers.length ? "· " + callers.length : ""}</h3>
+        ${callers.length ? callers.map(function (node) { return nodeBtn(node, "in"); })
+          : html`<p class="wb-hint">No incoming refs at this entry.</p>`}
+      </div>
+      <div className="wb-cg-col wb-cg-center">
+        <h3>This function</h3>
+        ${nodeBtn(center, "on")}
+      </div>
+      <div className="wb-cg-col wb-cg-callees">
+        <h3>Callees ${callees.length ? "· " + callees.length : ""}</h3>
+        ${callees.length ? callees.map(function (node) { return nodeBtn(node, "out"); })
+          : html`<p class="wb-hint">No outgoing refs at the entry.</p>`}
+      </div>
+      ${neighbors.length ? html`<div className="wb-cg-neighbors">
+        <h3>Nearby</h3>
+        ${neighbors.map(function (node) { return nodeBtn(node, "near"); })}
+      </div>` : null}
+    </div>`;
+  }
+
+  function fmtCount(n) {
+    if (n == null || n === "") return "—";
+    return String(n);
+  }
+
+  function fmtByteExact(n) {
+    if (n == null || n === "" || n === "unmeasured") return "unmeasured";
+    return String(n);
+  }
+
+  function stepStateClass(state) {
+    const key = String(state || "unmeasured").replace(/\s+/g, "-");
+    return "wb-step st-" + key;
+  }
+
+  function atlasHref(status) {
+    const raw = status && status.atlas && status.atlas.decomp;
+    if (raw) {
+      try {
+        const u = new URL(raw, window.location.href);
+        u.hostname = window.location.hostname;
+        return u.toString();
+      } catch (_err) {
+        return raw;
+      }
+    }
+    return "http://" + window.location.hostname + ":5173/";
+  }
+
+  function CorpusHeadline({ headline, claim }) {
+    const h = headline || {};
+    return html`<section className="wb-corpus-hero" id="wb-corpus-hero">
+      <p className="wb-kicker">Readable C and byte identity stay separate</p>
+      <div className="wb-corpus-pair">
+        <div>
+          <p className="wb-hero-n">${fmtCount(h.real_c)} <span class="of">logical functions with real C</span></p>
+          <p className="wb-hint">${fmtCount(h.placed_concrete)} concrete instances · ${fmtCount(h.unplaced_real_c)} without a logical id</p>
+        </div>
+        <div>
+          <p className="wb-hero-n">${fmtByteExact(h.byte_exact)} <span class="of">byte-exact receipts</span></p>
+          <p className="wb-hint">Not added to real C. A compile is not a match.</p>
+        </div>
+      </div>
+      ${h.queued != null ? html`<p className="wb-hint">Queue still holds ${fmtCount(h.queued)} logical functions.</p>` : null}
+      <p className="wb-claim">${claim || "This is a live view. It is not completion."}</p>
+    </section>`;
+  }
+
+  function HealthStrip({ probes, atlasUrl }) {
+    const list = probes || [];
+    return html`<div className="wb-health" id="wb-health">
+      ${list.map(function (p, i) {
+        const text = (p && p.text) || "probe";
+        const st = (p && p.state) || "unmeasured";
+        const ok = st === "done" || st === "up";
+        return html`<span key=${i} className=${"wb-health-chip" + (ok ? "" : " is-down")}>${text}</span>`;
+      })}
+      ${atlasUrl ? html`<a className="wb-health-chip" href=${atlasUrl} target="_blank" rel="noreferrer">Atlas :5173</a>` : null}
+    </div>`;
+  }
+
+  function AtlasReact({ onToast }) {
+    const [data, setData] = useState(null);
+    const [err, setErr] = useState("");
+    const [picked, setPicked] = useState(null);
+    useEffect(function () {
+      let gone = false;
+      fetch("/atlas/api/loadProject", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+        .then(function (res) { return res.json().then(function (body) { return { ok: res.ok, body: body }; }); })
+        .then(function (pack) {
+          if (gone) return;
+          if (!pack.ok || pack.body.error) {
+            setErr(pack.body.error || "Atlas project is not loaded.");
+            setData(null);
+            return;
+          }
+          setErr("");
+          setData(pack.body);
+        })
+        .catch(function (e) { if (!gone) setErr(String(e && e.message || e)); });
+      return function () { gone = true; };
+    }, []);
+    const fns = ((data && data.data && data.data.functions) || []).slice(0, 80);
+    return html`<div className="wb-atlas-react">
+      <p className="wb-hint">${data && data.platform ? ("Platform " + data.platform) : "In-tree Atlas API. Decomp Atlas on :5173 stays a separate app."}</p>
+      ${err ? html`<p className="wb-hint">${err}</p>` : null}
+      <table className="wb-fnb-table">
+        <thead><tr><th>Function</th><th>C module</th><th>Calls</th></tr></thead>
+        <tbody>
+          ${fns.length ? fns.map(function (fn) {
+            return html`<tr key=${fn.id || fn.name} className=${picked && picked.id === fn.id ? "on" : ""}
+              onClick=${function () { setPicked(fn); if (onToast) onToast(fn.name || fn.id); }}>
+              <td><code>${fn.name || fn.id}</code></td>
+              <td>${fn.cModulePath || ""}</td>
+              <td>${(fn.callsFunctions || []).length}</td>
+            </tr>`;
+          }) : html`<tr><td colspan="3">No Atlas index on this server yet.</td></tr>`}
+        </tbody>
+      </table>
+      ${picked ? html`<pre className="wb-job-log">${(picked.cCode || picked.asmCode || "").slice(0, 4000)}</pre>` : null}
+    </div>`;
+  }
+
+  function ReportReact({ report }) {
+    const r = report || {};
+    return html`<div className="wb-report-react">
+      <div className="wb-corpus-pair">
+        <p className="wb-hero-n">${fmtCount(r.logical)} <span class="of">logical recovered</span></p>
+        <p className="wb-hero-n">${fmtCount(r.artifacts)} <span class="of">artifacts</span></p>
+      </div>
+      <p className="wb-hint">Unplaced ${fmtCount(r.unplaced)} · unbound ${fmtCount(r.unbound)}. Real C only.</p>
+      <table className="wb-fnb-table">
+        <thead><tr><th>Build</th><th>Artifacts</th><th>Logical</th><th>Concrete</th></tr></thead>
+        <tbody>
+          ${(r.by_build || []).map(function (b) {
+            return html`<tr key=${b.slug}>
+              <td><code>${b.slug}</code></td>
+              <td>${fmtCount(b.artifacts)}</td>
+              <td>${fmtCount(b.logical)}</td>
+              <td>${fmtCount(b.concrete)}</td>
+            </tr>`;
+          })}
+        </tbody>
+      </table>
+      <table className="wb-fnb-table">
+        <thead><tr><th>Function</th><th>Build</th><th>Bytes</th><th>Convention</th><th>Logical</th></tr></thead>
+        <tbody>
+          ${(r.functions || []).map(function (fn, i) {
+            return html`<tr key=${i}>
+              <td><code>${fn.name || ""}</code></td>
+              <td>${fn.slug || ""}</td>
+              <td>${fmtCount(fn.size)}</td>
+              <td>${fn.convention || ""}</td>
+              <td>${fn.logical_id != null ? fn.logical_id : "—"}</td>
+            </tr>`;
+          })}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  function MissionReact({ mission }) {
+    const m = mission || {};
+    if (!m.ok) return html`<p className="wb-hint">${m.error || "No mission contract on disk."}</p>`;
+    return html`<article className="wb-mission-react">
+      <p className="wb-kicker">${m.id} · ${m.status}</p>
+      <h3>${m.title || "Mission"}</h3>
+      <p>${m.objective || ""}</p>
+      <h4>Acceptance</h4>
+      <ol>${(m.acceptance || []).map(function (item, i) { return html`<li key=${i}>${item}</li>`; })}</ol>
+      <h4>Evidence paths</h4>
+      <ul>${(m.evidence || []).map(function (item, i) { return html`<li key=${i}><code>${item}</code></li>`; })}</ul>
+    </article>`;
+  }
+
+  function ReviewReact({ review, onDecide }) {
+    const r = review || {};
+    const statuses = r.by_status || {};
+    return html`<div className="wb-review-react">
+      <p className="wb-hint">${Object.keys(statuses).map(function (k) { return k + " " + statuses[k]; }).join(" · ") || "No match table."}</p>
+      <table className="wb-fnb-table">
+        <thead><tr><th>Score</th><th>Source</th><th>Dest</th><th></th></tr></thead>
+        <tbody>
+          ${(r.rows || []).length ? (r.rows || []).map(function (row, i) {
+            return html`<tr key=${i}>
+              <td>${fmtCount(row.score)}</td>
+              <td><code>${row.src_name || row.src_addr}</code></td>
+              <td><code>${row.dst_name || row.dst_addr}</code></td>
+              <td>
+                <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { if (onDecide) onDecide(row, "accept"); }}>Accept</button>
+                <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { if (onDecide) onDecide(row, "reject"); }}>Reject</button>
+              </td>
+            </tr>`;
+          }) : html`<tr><td colspan="4">No review-tier matches queued.</td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  function StepLadder({ steps, title, onRun }) {
+    const list = steps || [];
+    if (!list.length) return html`<p className="wb-hint">No ladder facts yet.</p>`;
+    return html`<section className="wb-ladder">
+      ${title ? html`<h3 className="wb-ladder-title">${title}</h3>` : null}
+      <ol className="wb-ladder-list">
+        ${list.map(function (step) {
+          const st = step.state || "unmeasured";
+          const unattempted = (st === "not started" || st === "unmeasured") && !step.done;
+          const count = unattempted
+            ? "not attempted"
+            : (fmtCount(step.done) + " / " + fmtCount(step.total) + (step.unit ? " " + step.unit : ""));
+          return html`<li key=${step.key || step.title} className=${stepStateClass(st)}>
+            <div className="wb-step-head">
+              <span className="wb-step-no">${step.label || ""}</span>
+              <span className="wb-step-name">${step.title || step.key}</span>
+              <span className="wb-step-state">${st}</span>
+              <span className="wb-step-count">${count}</span>
+              ${step.action_id && onRun ? html`<button type="button" className="wb-btn wb-btn-mini"
+                disabled=${!step.action_enabled}
+                onClick=${function () { onRun(step); }}>Run</button>` : null}
+            </div>
+            <p className="wb-hint">${step.why || ""}</p>
+            ${step.next ? html`<p className="wb-hint">Next: ${step.next}</p>` : null}
+          </li>`;
+        })}
+      </ol>
+    </section>`;
+  }
+
+  function BinaryCompareTable({ binaries, onOpen }) {
+    const rows = binaries || [];
+    if (!rows.length) return html`<p className="wb-hint">No non-DRM builds in the corpus snapshot.</p>`;
+    return html`<table className="wb-fnb-table wb-compare-table">
+      <thead><tr>
+        <th>Build</th><th>Game</th><th>Functions</th><th>Bound</th><th>Real C</th><th>Named</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(function (b) {
+          return html`<tr key=${b.slug} onClick=${function () { if (onOpen) onOpen(b); }}>
+            <td><code>${b.slug}</code></td>
+            <td>${b.game || ""} ${b.platform || ""}</td>
+            <td>${fmtCount(b.func_count)}</td>
+            <td>${fmtCount(b.bound)}</td>
+            <td>${fmtCount(b.real_c)}</td>
+            <td>${fmtCount(b.named_count)}</td>
+          </tr>`;
+        })}
+      </tbody>
+    </table>`;
+  }
+
+  function ProgramHero({ overview }) {
+    if (!overview) return null;
+    const blocks = overview.memory || [];
+    const named = Number(overview.namedCount || 0);
+    const total = Number(overview.functionCount || 0);
+    const pct = total ? Math.round((named / total) * 100) : 0;
+    return html`<div id="wb-program-hero" className="wb-program-hero">
+      <p className="wb-hero-n">${total || 0} <span class="of">functions</span>
+        <span class="st">${named} named · ${pct}%</span></p>
+      <p className="wb-hint">${overview.program || ""} ${overview.path || ""} · ${overview.language || ""} · base ${overview.imageBase || ""}</p>
+      ${total ? html`<div className="wb-bar" aria-hidden="true"><i style=${{ width: pct + "%" }}></i></div>` : null}
+      ${blocks.length ? html`<ul className="wb-mem">
+        ${blocks.map(function (block) {
+          return html`<li key=${block.name + block.start}><code>${block.start}</code> ${block.name} · ${block.length}</li>`;
+        })}
+      </ul>` : null}
+    </div>`;
+  }
+
+  const BSIM_HONEST = {
+    missing_datadir: "No BSim datadir on disk.",
+    not_a_datadir: "The BSim path is not a directory.",
+    no_postgres: "Datadir has no PostgreSQL cluster.",
+    no_bsim_database: "Datadir has no BSim database.",
+    empty_database: "BSim database exists but holds 0 executables.",
+    populated: "BSim holds executables.",
+    database_unreachable: "BSim did not answer."
+  };
+
+  function repoForSlug(slugName, binaries) {
+    const row = (binaries || []).find(function (item) { return item.slug === slugName; });
+    return (row && row.repo) || "";
+  }
+
+  function workDirPath(workDir) {
+    return String(workDir || "").replace(/\/$/, "");
+  }
+
+  function hasCorpusContext(ctx) {
+    return Boolean((ctx && ctx.slug) || (ctx && ctx.program));
+  }
+
+  function matchPairParams(ctx, binaries, siblings) {
+    const srcSlug = (ctx && ctx.slug) || "";
+    const src = repoForSlug(srcSlug, binaries) || (ctx && ctx.repo) || (ctx && ctx.program) || "";
+    let dst = "";
+    if (siblings && siblings.length) {
+      for (let i = 0; i < siblings.length; i += 1) {
+        const sib = siblings[i];
+        if (!sib || !sib.slug || sib.slug === srcSlug) continue;
+        const hit = repoForSlug(sib.slug, binaries);
+        if (hit) {
+          dst = hit;
+          break;
+        }
+      }
+    }
+    if (!dst && ctx && ctx.tabRows && ctx.tabRows.length) {
+      const donor = ctx.tabRows.find(function (row) { return row.role === "donor"; });
+      const other = ctx.tabRows.find(function (row) {
+        return row.slug && row.slug !== srcSlug;
+      });
+      if (donor && donor.slug && donor.slug !== srcSlug) {
+        dst = repoForSlug(donor.slug, binaries) || donor.repo || "";
+      } else if (other) {
+        dst = repoForSlug(other.slug, binaries) || other.repo || "";
+      }
+    }
+    if (!dst && binaries.length > 1 && srcSlug) {
+      const other = binaries.find(function (row) { return row.slug && row.slug !== srcSlug; });
+      if (other) dst = other.repo || "";
+    }
+    return { src: src, dst: dst, ok: Boolean(src && dst) };
+  }
+
+  function identityActionParams(actionId, ctx, binaries, siblings) {
+    const work = workDirPath(ctx && ctx.work_dir);
+    const slugName = (ctx && ctx.slug) || "";
+    const programName = (ctx && ctx.program) || (ctx && ctx.repo) || slugName || "";
+    const base = { program: programName, slug: slugName };
+    if (actionId === "corpus.match-pair") {
+      return Object.assign(base, matchPairParams(ctx, binaries, siblings));
+    }
+    if (actionId === "corpus.apply-stabs") {
+      const out = Object.assign({}, base);
+      if (work && slugName) out.manifest = work + "/extract/stabs/" + slugName + ".manifest.jsonl";
+      const row = (binaries || []).find(function (item) { return item.slug === slugName; });
+      if (row && row.id) out["binary-id"] = row.id;
+      return out;
+    }
+    if (actionId === "corpus.logical-build") return base;
+    if (actionId === "corpus.merge-parts") {
+      const out = Object.assign({}, base);
+      if (work) out["parts-dir"] = work + "/parts";
+      return out;
+    }
+    if (actionId === "corpus.propagate-corpus" || actionId === "corpus.propagate-source") return base;
+    return base;
+  }
+
+  function catalogParamsFor(actionId, overrides) {
+    const extra = overrides || {};
+    const ui = window.AgentDecompileUI || {};
+    const ctx = typeof ui.getToolContext === "function" ? ui.getToolContext() : {};
+    const env = typeof ui.getEnvDefaults === "function" ? ui.getEnvDefaults() : {};
+    const binaries = typeof ui.getBinaries === "function" ? ui.getBinaries() : [];
+    const siblings = typeof ui.getSiblings === "function" ? ui.getSiblings() : [];
+    const slug = extra.slug || extra.id || ctx.slug || "";
+    const mergedCtx = Object.assign({}, ctx, {
+      slug: slug || ctx.slug || "",
+      program: extra.program || ctx.program || "",
+      db: ctx.db || env.db || "",
+      work_dir: ctx.work_dir || env.work_dir || "",
+      kb: ctx.kb || env.kb || ""
+    });
+    const base = identityActionParams(actionId, mergedCtx, binaries, siblings);
+    const out = Object.assign({}, base, extra);
+    if (slug && !out.db && (mergedCtx.db || env.db)) out.db = mergedCtx.db || env.db;
+    if (slug && !out.slug) out.slug = slug;
+    if (slug && !out.id) out.id = slug;
+    return out;
+  }
+
+  function MatchWorkbench({
+    program, selected, detail, bsim,
+    onRefresh, onRunMatch, onRunMatchFunction,
+    onApplyStabs, onLogicalBuild, onMergeParts, onPropagate,
+    onRunCrossPlace, onExtractStabs, onPickSibling,
+    canMatchPair, canMatchFunction, canIdentity
+  }) {
+    const state = (bsim && bsim.state) || "";
+    const siblings = (detail && detail.siblings) || [];
+    let line = BSIM_HONEST[state] || (bsim && bsim.summary) || "Checking BSim…";
+    if (state === "populated") {
+      line = "BSim holds " + ((bsim && bsim.executables) || 0) + " executables.";
+    }
+    return html`<div className="wb-re-pane" id="wb-match-pane">
+      <p className="wb-hint">${program ? ("Program " + program) : "Pick a program in Explorer."}
+        ${selected ? (" · " + ((selected.name || selected.addr) + " " + (selected.addr || ""))) : ""}</p>
+      <div id="wb-match-bsim" className=${"wb-bsim-state st-" + (state || "unknown")}>
+        <strong>BSim</strong>
+        <p>${line}</p>
+        ${bsim && bsim.datadir ? html`<p className="wb-hint"><code>${bsim.datadir}</code></p>` : null}
+      </div>
+      <div className="wb-fn-tools" role="toolbar" aria-label="Match">
+        <button type="button" id="wb-match-run" className="wb-btn wb-btn-primary"
+          disabled=${canMatchPair === false}
+          onClick=${onRunMatch}>Run match</button>
+        <button type="button" id="wb-match-fn" className="wb-btn"
+          disabled=${canMatchFunction === false}
+          onClick=${onRunMatchFunction}>Match function</button>
+        <button type="button" id="wb-match-apply-stabs" className="wb-btn wb-btn-mini"
+          disabled=${canIdentity === false}
+          onClick=${onApplyStabs}>Apply STABS</button>
+        <button type="button" id="wb-match-logical-build" className="wb-btn wb-btn-mini"
+          disabled=${canIdentity === false}
+          onClick=${onLogicalBuild}>Logical build</button>
+        <button type="button" id="wb-match-merge-parts" className="wb-btn wb-btn-mini"
+          disabled=${canIdentity === false}
+          onClick=${onMergeParts}>Merge parts</button>
+        <button type="button" id="wb-match-propagate" className="wb-btn wb-btn-mini"
+          disabled=${canIdentity === false}
+          onClick=${onPropagate}>Propagate</button>
+        <button type="button" id="wb-match-cross" className="wb-btn"
+          onClick=${onRunCrossPlace}>Run cross-place</button>
+        <button type="button" className="wb-btn" onClick=${onRefresh}>Refresh</button>
+      </div>
+      <section className="wb-stabs-detail">
+        <h3>STABS</h3>
+        <p className="wb-hint">Donor symbols for this program, if a STABS file exists.</p>
+        <button type="button" id="wb-match-stabs" className="wb-btn wb-btn-mini" onClick=${onExtractStabs}>Extract STABS</button>
+      </section>
+      ${siblings.length ? html`<section>
+        <h3>Siblings</h3>
+        <ul className="wb-siblings">
+          ${siblings.map(function (sib) {
+            return html`<li key=${(sib.slug || "") + (sib.addr || "")}>
+              <button type="button" className="wb-text-action"
+                onClick=${function () { if (onPickSibling) onPickSibling(sib); }}>${sib.slug || sib.program || ""} ${sib.addr || ""} ${sib.name || ""}</button>
+            </li>`;
+          })}
+        </ul>
+      </section>` : html`<p className="wb-hint">No sibling matches for this function yet.</p>`}
+    </div>`;
+  }
+
+  function RepoStatus({ dossier, user }) {
+    if (!dossier || !dossier.ok) {
+      return html`<p id="wb-repo-status" className="wb-repo-row wb-repo-empty">No active project</p>`;
+    }
+    const kind = dossier.kind || "";
+    if (kind === "shared-project") {
+      const host = dossier.host || "";
+      const port = Number(dossier.port || 0);
+      const portBit = (port && port !== 13100) ? (":" + port) : "";
+      const repo = dossier.repository || "";
+      const who = dossier.user || user || "";
+      return html`<p id="wb-repo-status" className=${"wb-repo-row" + (dossier.reachable ? " on" : " off")}>
+        <span>Project Repository: ${repo || "—"}</span>
+        <span>${dossier.reachable
+          ? ("Reachable at " + host + portBit)
+          : ("Disconnected from " + (host || "Ghidra Server"))}</span>
+        ${who ? html`<span>User ${who}</span>` : null}
+        ${dossier.mirror_available ? html`<span>Local copy bound for listing</span>` : null}
+      </p>`;
+    }
+    if (kind === "shared-fs") {
+      return html`<p id="wb-repo-status" className="wb-repo-row">On-disk Ghidra Server tree. No live RMI session.</p>`;
+    }
+    if (kind === "packed-program") {
+      return html`<p id="wb-repo-status" className="wb-repo-row">Packed Ghidra program ${dossier.slug || ""}</p>`;
+    }
+    if (kind === "ghidra-project") {
+      return html`<p id="wb-repo-status" className="wb-repo-row">Local project ${dossier.slug || ""}</p>`;
+    }
+    return html`<p id="wb-repo-status" className="wb-repo-row">${kindTitle(kind)}</p>`;
+  }
+
+  function ArtifactsReact({ path, onOpen }) {
+    const [data, setData] = useState(null);
+    const [note, setNote] = useState("");
+    useEffect(function () {
+      const url = API.artifacts + (path ? "?p=" + encodeURIComponent(path) : "");
+      fetch(url, { cache: "no-store" }).then(function (res) { return res.json(); }).then(function (body) {
+        setData(body);
+        setNote("");
+      }).catch(function (err) {
+        setNote(String(err && err.message || err));
+      });
+    }, [path]);
+    if (note) return html`<p className="wb-dialog-error">${note}</p>`;
+    if (!data) return html`<p className="wb-hint">Reading artifacts…</p>`;
+    if (!data.ok) return html`<p className="wb-hint">${data.error || "No artifacts."}</p>`;
+    if (data.kind === "dir") {
+      return html`<div className="wb-artifacts">
+        <p className="wb-hint"><code>${data.path || "."}</code></p>
+        ${data.parent != null && data.parent !== "" ? html`<button type="button" className="wb-text-action"
+          onClick=${function () { if (onOpen) onOpen(data.parent); }}>Up</button>` : null}
+        <ul className="wb-artifact-list">
+          ${(data.entries || []).map(function (entry) {
+            return html`<li key=${entry.path}>
+              <button type="button" className="wb-text-action"
+                onClick=${function () { if (onOpen) onOpen(entry.path); }}>
+                ${entry.name}${entry.dir ? "/" : ""}
+              </button>
+              ${entry.size != null ? html`<span className="wb-hint">${formatBytes(entry.size)}</span>` : null}
+            </li>`;
+          })}
+        </ul>
+      </div>`;
+    }
+    return html`<div className="wb-artifacts">
+      ${data.parent != null ? html`<button type="button" className="wb-text-action"
+        onClick=${function () { if (onOpen) onOpen(data.parent); }}>Up</button>` : null}
+      <p className="wb-hint"><code>${data.path || ""}</code></p>
+      ${data.binary
+        ? html`<p className="wb-hint">Binary file. Not shown as text.</p>`
+        : html`<pre className="wb-preview">${data.text || ""}</pre>`}
+    </div>`;
+  }
+
+  function EvidenceReact() {
+    const [data, setData] = useState(null);
+    useEffect(function () {
+      fetch(API.evidence, { cache: "no-store" }).then(function (res) { return res.json(); }).then(setData)
+        .catch(function () { setData({ ok: false, error: "Could not read database evidence." }); });
+    }, []);
+    if (!data) return html`<p className="wb-hint">Reading the corpus database…</p>`;
+    if (!data.ok) return html`<p className="wb-hint">${data.error || "Database evidence is unset."}</p>`;
+    return html`<div className="wb-evidence">
+      <p className="wb-hint"><code>${data.path || ""}</code> ${data.size_mb != null ? data.size_mb + " MB" : ""}</p>
+      <table className="wb-fnb-table">
+        <thead><tr><th>Name</th><th>Type</th></tr></thead>
+        <tbody>
+          ${(data.objects || []).map(function (row) {
+            return html`<tr key=${row.type + row.name}><td><code>${row.name}</code></td><td>${row.type}</td></tr>`;
+          })}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  function RecoverWorkbench({ program, selected, recover, recoveredRoot, onRefresh, onDump, onOneShot, onExportC, onDecompile, onGhidraBulk, onCrossPlace, onIngest }) {
+    const state = (recover && recover.state) || "";
+    const files = (recover && recover.files) || [];
+    const summary = (recover && recover.summary)
+      || (recoveredRoot ? "A recovered source directory is set." : "No recovered source yet.");
+    return html`<div className="wb-re-pane" id="wb-recover-pane">
+      <p className="wb-hint">${program ? ("Program " + program) : "Pick a program in Explorer."}
+        ${selected ? (" · " + (selected.name || selected.addr)) : ""}</p>
+      <div id="wb-recover-status" className=${"wb-bsim-state st-" + (state || "none")}>
+        <strong>Source</strong>
+        <p>${summary}</p>
+        ${recover && recover.path ? html`<p className="wb-hint"><code>${recover.path}</code></p>` : null}
+      </div>
+      <div className="wb-fn-tools" role="toolbar" aria-label="Recover">
+        <button type="button" id="wb-recover-run" className="wb-btn wb-btn-primary"
+          onClick=${onGhidraBulk}>Ghidra bulk</button>
+        <button type="button" className="wb-btn" onClick=${onCrossPlace}>Cross-place</button>
+        <button type="button" id="wb-recover-export" className="wb-btn"
+          onClick=${onExportC}>Export C</button>
+        <button type="button" className="wb-btn" onClick=${onIngest}>Ingest recovered</button>
+        <button type="button" className="wb-btn" onClick=${onDecompile}>Decompile function</button>
+        <button type="button" className="wb-btn" onClick=${onRefresh}>Refresh</button>
+      </div>
+      ${((recover && recover.leftoverCount) || 0) > 0 ? html`<div className="wb-fn-tools" role="toolbar" aria-label="Leftover">
+        <button type="button" className="wb-btn" onClick=${onDump}>Dump leftover</button>
+        <button type="button" className="wb-btn" onClick=${onOneShot}>One-shot leftover</button>
+      </div>` : html`<p className="wb-hint">Leftover dump stays off until a leftover set exists.</p>`}
+      ${files.length ? html`<ul className="wb-recover-files">
+        ${files.map(function (name) {
+          return html`<li key=${name}><code>${name}</code></li>`;
+        })}
+      </ul>` : html`<p className="wb-hint">Run Ghidra bulk to write compiling C.</p>`}
+    </div>`;
   }
 
   function HtmlIsland({ url, refreshKey, className, compact }) {
@@ -593,7 +1347,7 @@
             const report = /\/report/.test(url);
             if (payload.status === 404 && (atlas || report)) {
               ref.current.innerHTML = '<p class="wb-hint">' + (atlas ? "Atlas" : "Report")
-                + " is not on this dashboard-only process. Open the full MCP HTTP app, or stay on Overview.</p>";
+                + " is not on this process. Open the full HTTP app, or stay on Overview.</p>";
               return;
             }
             ref.current.innerHTML = '<p class="wb-hint">Panel failed (' + payload.status + ").</p>";
@@ -605,6 +1359,8 @@
           }
           ref.current.innerHTML = '<div class="wb-legacy' + (compact ? " wb-legacy-compact" : "") + '">' + payload.text + "</div>";
           sanitizeLegacy(ref.current);
+          wireStepActions(ref.current);
+          wireMatchDecide(ref.current);
           runScripts(ref.current);
           if (!stillPending()) return;
           const wait = PENDING_DELAYS[attempt];
@@ -624,7 +1380,7 @@
         if (timer) window.clearTimeout(timer);
       };
     }, [url, refreshKey, compact, manualKey]);
-    return html`<div ref=${ref} className=${className || "wb-island"} />`;
+    return html`<div ref=${ref} className=${className || "wb-island"}><p className="wb-hint">Loading panel…</p></div>`;
   }
 
   function DockPanel({ id, title, children, className, actions }) {
@@ -656,11 +1412,27 @@
   ];
 
   const CENTER_TABS = [
-    { id: "decompile", label: "Decompile" },
-    { id: "graph", label: "Call Graph" }
+    { id: "decompile", label: "Listing" },
+    { id: "graph", label: "Call trees" }
   ];
 
   const QUICK_ACTION_SETS = {
+    home: [
+      { id: "corpus.ghidra-bulk", label: "Ghidra bulk", mutating: true },
+      { id: "corpus.cross-place", label: "Cross-place" },
+      { id: "mcp.status", label: "Status" },
+      { id: "mcp.list-functions", label: "List functions" }
+    ],
+    atlas: [
+      { id: "corpus.genproject", label: "Genproject" },
+      { id: "mcp.decompile-function", label: "Decompile", needsFunction: true },
+      { id: "mcp.get-function", label: "Get function", needsFunction: true }
+    ],
+    functions: [
+      { id: "mcp.list-functions", label: "List functions" },
+      { id: "mcp.search-symbols", label: "Search symbols" },
+      { id: "corpus.logical-build", label: "Logical build", needsProject: true }
+    ],
     explorer: [
       { ui: "upload", label: "Add files…" },
       { ui: "import", label: "Open…" },
@@ -676,7 +1448,15 @@
     ],
     pipeline: [
       { id: "corpus.stages", label: "Stages" },
-      { id: "corpus.run", label: "Run pipeline", danger: true }
+      { id: "corpus.run", label: "Run pipeline", danger: true },
+      { id: "corpus.extract-stabs", label: "1 Extract", needsProject: true },
+      { id: "corpus.match-pair", label: "2 Match", needsProject: true, mutating: true },
+      { id: "corpus.calibrate-global", label: "3 Calibrate global", mutating: true },
+      { id: "corpus.workspace", label: "4 Link floor", mutating: true },
+      { id: "corpus.ghidra-bulk", label: "5 Ghidra bulk", mutating: true },
+      { id: "corpus.cross-place", label: "6 Cross-place" },
+      { id: "corpus.genproject", label: "7 Leftover" },
+      { id: "corpus.objdiff-check", label: "8 Objdiff audit", mutating: true }
     ],
     function: [
       { id: "mcp.decompile-function", label: "Decompile", needsFunction: true },
@@ -778,22 +1558,22 @@
 
   const MORE_SURFACE_IDS = new Set([
     "wb-overview", "wb-atlas", "wb-report", "wb-pipeline",
-    "wb-jobs", "wb-match", "wb-recovery", "wb-stabs", "wb-knowledge",
+    "wb-jobs", "wb-stabs", "wb-knowledge",
     "wb-roundtrip", "wb-processes", "wb-mission", "wb-corpus", "wb-review",
-    "wb-logical", "wb-artifacts", "wb-tools"
+    "wb-logical", "wb-artifacts", "wb-evidence", "wb-tools"
   ]);
 
 
   const CORPUS_NAV = [
     { id: "wb-overview", title: "Overview", more: true },
     { id: "wb-atlas", title: "Atlas", more: true },
-    { id: "wb-match", title: "Cross-match", more: true },
     { id: "wb-report", title: "Report", more: true },
     { id: "wb-pipeline", title: "Pipeline", more: true },
-    { id: "wb-recovery", title: "Recovery", more: true },
     { id: "wb-stabs", title: "STABS", more: true },
     { id: "wb-knowledge", title: "Knowledge", more: true },
     { id: "wb-logical", title: "Logical identities", more: true },
+    { id: "wb-artifacts", title: "Artifacts", more: true },
+    { id: "wb-evidence", title: "Database", more: true },
     { id: "wb-review", title: "Review", more: true },
     { id: "wb-corpus", title: "Corpus", more: true },
     { id: "wb-tools", title: "Commands", more: true }
@@ -826,6 +1606,10 @@
     if (!id) return "decompile";
     if (id === "wb-inspect" || id === "wb-functions" || id === "inspect" || id === "wb-ingest") return "decompile";
     if (id === "wb-graph") return "graph";
+    if (id === "match" || id === "cross-match" || id === "crossmatch") return "wb-match";
+    if (id === "recover" || id === "recovery") return "wb-recovery";
+    if (id === "artifact" || id === "artifacts") return "wb-artifacts";
+    if (id === "evidence" || id === "wb-evidence") return "wb-evidence";
     return id;
   }
 
@@ -867,7 +1651,12 @@
   }
 
   function scrollToSurface(surfaceId) {
-    const node = document.getElementById(surfaceId);
+    const aliases = {
+      decompile: "wb-inspect",
+      inspect: "wb-inspect",
+      graph: "wb-graph"
+    };
+    const node = document.getElementById(aliases[surfaceId] || surfaceId);
     if (node) {
       node.classList.add("wb-surface-flash");
       window.setTimeout(function () { node.classList.remove("wb-surface-flash"); }, 1400);
@@ -897,12 +1686,41 @@
     return params;
   }
 
-  function formatJobSummary(data) {
+  function actionTitle(id, catalog) {
+    const key = String(id || "");
+    if (!key) return "";
+    const known = {
+      "corpus.add-binary": "Opened project",
+      "corpus.remove-binary": "Removed program",
+      "corpus.edit-binary": "Edited program",
+      "corpus.extract-stabs": "Extract STABS",
+      "corpus.bsim-ingest": "BSim ingest",
+      "corpus.bsim-report": "BSim report",
+      "corpus.cross-place": "Cross-place",
+      "corpus.match-pair": "Match pair",
+      "corpus.apply-stabs": "Apply STABS",
+      "corpus.logical-build": "Logical build",
+      "corpus.merge-parts": "Merge parts",
+      "corpus.propagate-source": "Propagate source",
+      "corpus.export-c": "Export C",
+      "mcp.analyze-program": "Analyze program",
+      "mcp.match-function": "Match function",
+      "mcp.decompile-function": "Decompile",
+      "reconstruct.one-shot": "Dump source"
+    };
+    if (known[key]) return known[key];
+    const act = (catalog || []).find(function (item) { return item.id === key; });
+    if (act && act.title) return act.title;
+    return key.split(".").pop().replace(/-/g, " ");
+  }
+
+  function formatJobSummary(data, catalog) {
     if (!data) return "";
     if (data.job) {
       const job = data.job;
+      const title = actionTitle(job.actionId, catalog);
       return "Job " + job.id + " — " + (job.status || "started")
-        + (job.actionId ? " (" + job.actionId + ")" : "");
+        + (title ? " (" + title + ")" : "");
     }
     if (data.ok === false && data.error) return String(data.error);
     if (data.argv && data.argv.length) return "Dry run: " + data.argv.slice(0, 8).join(" ");
@@ -995,7 +1813,10 @@
     { id: "file.open-url", title: "Open from URL…", accel: "mod+shift+U", group: "File" },
     { id: "file.save", title: "Save", accel: "mod+S", group: "File" },
     { id: "file.save-as", title: "Save As…", accel: "mod+shift+S", group: "File" },
-    { id: "file.add-binaries", title: "Add binaries…", accel: "mod+I", group: "File" },
+    { id: "file.checkin", title: "Check in to Ghidra server", group: "File" },
+    { id: "file.open-program", title: "Open selected program in Ghidra", group: "File" },
+    { id: "file.add-binaries", title: "Add to project…", accel: "mod+I", group: "File" },
+    { id: "file.remove-binary", title: "Remove from project", accel: "Del", group: "File" },
     { id: "file.reload", title: "Reload from disk", accel: "alt+R", group: "File" },
     { id: "file.close-tab", title: "Close Tab", accel: "alt+W", group: "File" },
     { id: "edit.rename-tab", title: "Rename Tab", accel: "F2", group: "Edit" },
@@ -1003,33 +1824,35 @@
     { id: "view.explorer", title: "Explorer", accel: "mod+shift+E", group: "View" },
     { id: "view.listing", title: "Listing", accel: "alt+1", group: "View" },
     { id: "view.browse", title: "Functions", accel: "alt+F", group: "View" },
-    { id: "view.graph", title: "Call Graph", accel: "alt+2", group: "View" },
+    { id: "view.graph", title: "Call trees", accel: "alt+2", group: "View" },
+    { id: "view.artifacts", title: "Artifacts", group: "View" },
+    { id: "view.evidence", title: "Database evidence", group: "View" },
     { id: "view.logical", title: "Logical identities", accel: "alt+L", group: "View" },
     { id: "view.overview", title: "Overview", accel: "alt+3", group: "View" },
     { id: "view.atlas", title: "Atlas", accel: "alt+4", group: "View" },
-    { id: "view.cross-match", title: "Cross-match", accel: "alt+5", group: "View" },
+    { id: "view.cross-match", title: "Match", accel: "alt+5", group: "View" },
     { id: "view.inspect", title: "Inspector", accel: "alt+6", group: "View" },
     { id: "view.tools", title: "Commands", accel: "alt+7", group: "View" },
     { id: "view.jobs", title: "Jobs", accel: "alt+J", group: "View" },
     { id: "view.pipeline", title: "Pipeline", group: "View" },
     { id: "view.report", title: "Report", group: "View" },
-    { id: "view.recovery", title: "Recovery", group: "View" },
+    { id: "view.recovery", title: "Recover", group: "View" },
     { id: "view.stabs", title: "STABS", group: "View" },
     { id: "view.knowledge", title: "Knowledge", group: "View" },
     { id: "view.review", title: "Review", group: "View" },
     { id: "view.corpus", title: "Corpus table", group: "View" },
-    { id: "view.density-compact", title: "Compact density", group: "View" },
-    { id: "view.density-comfortable", title: "Comfortable density", group: "View" },
-    { id: "view.jobs-rail", title: "Jobs dock on side (wide screens)", group: "View" },
-    { id: "view.jobs-bottom", title: "Jobs dock on bottom", group: "View" },
+    { id: "view.density-compact", title: "Use compact layout", group: "View" },
+    { id: "view.density-comfortable", title: "Use roomy layout", group: "View" },
+    { id: "view.jobs-rail", title: "Dock jobs on the side", group: "View" },
+    { id: "view.jobs-bottom", title: "Dock jobs at the bottom", group: "View" },
     { id: "analyze.program", title: "Analyze program", accel: "mod+shift+A", group: "Analyze" },
     { id: "analyze.bsim-ingest", title: "Ingest repository into BSim", accel: "mod+shift+B", group: "Analyze" },
     { id: "analyze.bsim-report", title: "Report BSim database", group: "Analyze" },
     { id: "analyze.bsim-create", title: "Create BSim database", group: "Analyze" },
     { id: "run.cross-place", title: "Run Cross-place", accel: "mod+shift+X", group: "Run" },
     { id: "run.last", title: "Run last action", accel: "Enter", group: "Run" },
-    { id: "help.access", title: "Keyboard & five ways…", accel: "shift+?", group: "Help" },
-    { id: "help.classic-overview", title: "Classic overview (legacy)", group: "Help" }
+    { id: "help.access", title: "Shortcuts and menus…", accel: "shift+?", group: "Help" },
+    { id: "help.overview", title: "Overview", group: "Help" }
   ];
 
   const COMMAND_BY_ID = {};
@@ -1344,64 +2167,106 @@
     </div>`;
   }
 
-  function JobsDock({ jobs, expanded, onToggle, selectedId, jobDetail, onSelectJob, onCancel, pinned }) {
+  function SplitHandle({ axis, label, onDrag }) {
+    return html`<div className=${"wb-split wb-split-" + axis} role="separator"
+      aria-orientation=${axis === "x" ? "vertical" : "horizontal"}
+      aria-label=${label}
+      onMouseDown=${onDrag}></div>`;
+  }
+
+  function beginResize(ev, startPx, setter, key, axis, min, max, invert) {
+    ev.preventDefault();
+    const origin = axis === "x" ? ev.clientX : ev.clientY;
+    document.body.classList.add(axis === "x" ? "wb-resizing-x" : "wb-resizing-y");
+    function move(e) {
+      const delta = (axis === "x" ? e.clientX : e.clientY) - origin;
+      const next = Math.round(Math.min(max, Math.max(min, startPx + (invert ? -delta : delta))));
+      setter(next);
+      writeUiPref(key, String(next));
+    }
+    function up() {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      document.body.classList.remove("wb-resizing-x", "wb-resizing-y");
+    }
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  }
+
+  function LogDock({
+    entries, tab, onTab, open, onToggle, selectedId, onSelect,
+    jobs, selectedJobId, jobDetail, onSelectJob, onCancel, actions, height, onResize
+  }) {
     const list = jobs || [];
     const running = list.filter(function (job) { return job.status === "running" || job.status === "queued"; });
-    if (!list.length && !pinned) return null;
     const detail = jobDetail || null;
     const logText = detail && detail.log ? String(detail.log).slice(-12000) : "";
-    return html`<aside id="wb-jobs-dock" className=${"wb-jobs-dock" + (expanded ? " open" : "") + (pinned ? " pinned" : "")}>
-      <header className="wb-jobs-dock-head">
-        <button type="button" className="wb-jobs-dock-toggle" onClick=${onToggle}>
+    const rows = (entries || []).slice().reverse();
+    return html`<aside id="wb-log-dock" className=${"wb-log-dock" + (open ? " open" : "")}
+      style=${open ? { height: height + "px" } : undefined}>
+      <${SplitHandle} axis="y" label="Resize log"
+        onDrag=${onResize} />
+      <header className="wb-log-dock-head">
+        <button type="button" className=${"wb-log-tab" + (tab === "log" ? " on" : "")}
+          onClick=${function () { onTab("log"); if (!open) onToggle(true); }}>Log</button>
+        <button type="button" className=${"wb-log-tab" + (tab === "jobs" ? " on" : "")}
+          onClick=${function () { onTab("jobs"); if (!open) onToggle(true); }}>
           Jobs${running.length ? " · " + running.length + " running" : ""}
         </button>
         <span className="wb-hint">A finished job is not a match.</span>
+        <button type="button" className="wb-log-toggle" onClick=${function () { onToggle(!open); }}>
+          ${open ? "Hide" : "Show"}
+        </button>
       </header>
-      ${expanded ? html`<div className="wb-jobs-dock-body">
-        <ul className="wb-job-list">
-          ${list.length ? list.map(function (job) {
-            const on = job.id === selectedId;
-            const live = job.status === "running" || job.status === "queued";
-            return html`<li key=${job.id} className=${on ? "on" : ""}>
-              <button type="button" className="wb-job-row" onClick=${function () { onSelectJob(job.id); }}>
-                <code>${job.id}</code>
-                <span>${job.actionId || ""}</span>
-                <span className=${"st-" + (job.status || "unknown")}>${job.status}</span>
+      ${open ? html`<div className="wb-log-body">
+        ${tab === "log" ? html`<ul className="wb-log-list" id="wb-log-list">
+          ${rows.length ? rows.map(function (item) {
+            const on = item.id === selectedId;
+            const preview = item.text.length > 140 && !on ? item.text.slice(0, 137) + "…" : item.text;
+            return html`<li key=${item.id} className=${"wb-log-item kind-" + (item.kind || "info") + (on ? " on" : "")}>
+              <button type="button" className="wb-log-row" onClick=${function () { onSelect(on ? "" : item.id); }}>
+                <span className="wb-log-kind">${item.kind || "note"}</span>
+                <span className="wb-log-text">${preview}</span>
               </button>
-              ${live ? html`<button type="button" className="wb-btn danger wb-job-cancel"
-                onClick=${function (ev) { ev.stopPropagation(); onCancel(job.id); }}>Cancel</button>` : null}
             </li>`;
-          }) : html`<li className="wb-hint">No jobs yet.</li>`}
-        </ul>
-        ${selectedId && logText ? html`<pre className="wb-job-log">${logText}</pre>`
-          : selectedId ? html`<p className="wb-hint">Loading log…</p>` : null}
+          }) : html`<li className="wb-hint">No log lines yet.</li>`}
+        </ul>` : html`<div className="wb-jobs-dock-body">
+          <ul className="wb-job-list">
+            ${list.length ? list.map(function (job) {
+              const on = job.id === selectedJobId;
+              const live = job.status === "running" || job.status === "queued";
+              return html`<li key=${job.id} className=${on ? "on" : ""}>
+                <button type="button" className="wb-job-row" onClick=${function () { onSelectJob(job.id); }}>
+                  <code>${job.id}</code>
+                  <span>${actionTitle(job.actionId, actions)}</span>
+                  <span className=${"st-" + (job.status || "unknown")}>${job.status}</span>
+                </button>
+                ${live ? html`<button type="button" className="wb-btn danger wb-job-cancel"
+                  onClick=${function (ev) { ev.stopPropagation(); onCancel(job.id); }}>Cancel</button>` : null}
+              </li>`;
+            }) : html`<li className="wb-hint">No jobs yet.</li>`}
+          </ul>
+          ${selectedJobId && logText ? html`<pre className="wb-job-log">${logText}</pre>`
+            : selectedJobId ? html`<p className="wb-hint">Loading log…</p>` : null}
+        </div>`}
       </div>` : null}
     </aside>`;
   }
 
-  const PAGE_SIZES = [50, 80, 100, 200];
+  const LIST_LIMITS = ["all", 10, 20, 50, 100, 200];
 
-  function FuncPager({ offset, limit, shown, total, onOffset, onLimit, compact }) {
-    const first = total ? offset + 1 : 0;
-    const last = offset + shown;
-    const canBack = offset > 0;
-    const canNext = last < total;
+  function FuncPager({ limit, shown, total, onLimit, compact }) {
+    const clipped = limit !== "all" && shown && total && shown < total;
     return html`<div className=${"wb-pager" + (compact ? " wb-pager-compact" : "")}>
-      <button type="button" className="wb-btn wb-btn-mini" disabled=${!canBack}
-        aria-label="First page" onClick=${function () { onOffset(0); }}>⏮</button>
-      <button type="button" className="wb-btn wb-btn-mini" disabled=${!canBack}
-        aria-label="Previous page" onClick=${function () { onOffset(Math.max(0, offset - limit)); }}>◀</button>
-      <span className="wb-pager-count">${total ? first + "–" + last + " of " + total : "0 of 0"}</span>
-      <button type="button" className="wb-btn wb-btn-mini" disabled=${!canNext}
-        aria-label="Next page" onClick=${function () { onOffset(offset + limit); }}>▶</button>
-      ${compact ? null : html`<label className="wb-pager-size">
-        <span className="sr-only">Rows per page</span>
-        <select value=${String(limit)} onChange=${function (ev) { onLimit(Number(ev.target.value)); }}>
-          ${PAGE_SIZES.map(function (size) {
-            return html`<option key=${size} value=${String(size)}>${size} rows</option>`;
+      <span className="wb-pager-count">${clipped ? shown + " of " + total : (total || shown || 0) + " functions"}</span>
+      <label className="wb-pager-size">
+        <span className="sr-only">How many functions to show</span>
+        <select value=${String(limit)} onChange=${function (ev) { onLimit(ev.target.value); }}>
+          ${LIST_LIMITS.map(function (size) {
+            return html`<option key=${String(size)} value=${String(size)}>${size === "all" ? "All" : size}</option>`;
           })}
         </select>
-      </label>`}
+      </label>
     </div>`;
   }
 
@@ -1420,6 +2285,9 @@
     const [query, setQuery] = useState(start.get("q") || "");
     const [selected, setSelected] = useState(null);
     const [detail, setDetail] = useState(null);
+    const [overview, setOverview] = useState(null);
+    const [corpusStatus, setCorpusStatus] = useState(null);
+    const [graph, setGraph] = useState(null);
     const [actions, setActions] = useState([]);
     const [jobs, setJobs] = useState([]);
     const [programProgress, setProgramProgress] = useState({});
@@ -1435,9 +2303,11 @@
     const [sharedRepo, setSharedRepo] = useState("");
     const [sharedProgram, setSharedProgram] = useState("");
     const [sharedUrl, setSharedUrl] = useState("");
+    const [sharedUser, setSharedUser] = useState("");
+    const [artifactPath, setArtifactPath] = useState(start.get("p") || "");
     const [ingestNote, setIngestNote] = useState("");
-    const [toast, setToast] = useState("");
-    const [toastKind, setToastKind] = useState("");
+    const [logEntries, setLogEntries] = useState([]);
+    const [openLogId, setOpenLogId] = useState("");
     const [lastNote, setLastNote] = useState("Ready");
     const [statusError, setStatusError] = useState("");
     const [dialogError, setDialogError] = useState("");
@@ -1457,6 +2327,7 @@
     const [saveAsName, setSaveAsName] = useState("");
     const [saveAsDest, setSaveAsDest] = useState("");
     const [saveAsUrl, setSaveAsUrl] = useState("");
+    const [addPath, setAddPath] = useState("");
     const [editRole, setEditRole] = useState("member");
     const [editLabel, setEditLabel] = useState("");
     const [probes, setProbes] = useState([]);
@@ -1466,19 +2337,25 @@
     const [treeExpanded, setTreeExpanded] = useState(true);
     const [envDefaults, setEnvDefaults] = useState({ db: "", work_dir: "", kb: "", mcp_url: "" });
     const [recoveredRoot, setRecoveredRoot] = useState("");
+    const [bsimStatus, setBsimStatus] = useState(null);
+    const [recoverInfo, setRecoverInfo] = useState(null);
     const [paletteOpen, setPaletteOpen] = useState(false);
     const [paletteQuery, setPaletteQuery] = useState("");
     const [commandFilter, setCommandFilter] = useState("");
     const [funcOffset, setFuncOffset] = useState(0);
-    const [funcLimit, setFuncLimit] = useState(80);
+    const [funcLimit, setFuncLimit] = useState("all");
     const DEFAULT_FUNCTION_ACTION = "mcp.decompile-function";
     const [pendingActionId, setPendingActionId] = useState("");
     const [lastActionId, setLastActionId] = useState(DEFAULT_FUNCTION_ACTION);
     const [actionExpanded, setActionExpanded] = useState(false);
     const [confirmDialog, setConfirmDialog] = useState(null);
-    const [jobsDockOpen, setJobsDockOpen] = useState(false);
+    const [logOpen, setLogOpen] = useState(true);
+    const [logTab, setLogTab] = useState("log");
     const [selectedJobId, setSelectedJobId] = useState("");
     const [jobDetail, setJobDetail] = useState(null);
+    const [sideW, setSideW] = useState(function () { return Number(readUiPref("wb-side-w", "360")) || 360; });
+    const [explorerH, setExplorerH] = useState(function () { return Number(readUiPref("wb-explorer-h", "240")) || 240; });
+    const [logH, setLogH] = useState(function () { return Number(readUiPref("wb-log-h", "180")) || 180; });
     const [moreOpen, setMoreOpen] = useState(false);
     const [density, setDensity] = useState(function () { return readUiPref("wb-density", "compact"); });
     const [jobsRail, setJobsRail] = useState(function () { return readUiPref("wb-jobs-rail", "0") === "1"; });
@@ -1488,6 +2365,7 @@
     const [jobLiveText, setJobLiveText] = useState("");
     const jobsSnapshotRef = useRef([]);
     const pipelineChainedRef = useRef({});
+    const ensureSeqRef = useRef(0);
     const chainAfterAnalyzeRef = useRef(function () {});
     const funcSeqRef = useRef(0);
     const funcSlugRef = useRef(slug);
@@ -1534,6 +2412,16 @@
       });
     }, []);
 
+    const loadCorpusStatus = useCallback(async function () {
+      try {
+        const res = await fetch(API.corpusStatus, { cache: "no-store" });
+        const data = await res.json();
+        setCorpusStatus(data);
+      } catch (err) {
+        setCorpusStatus({ ok: false, error: String(err && err.message || err) });
+      }
+    }, []);
+
     const loadFuncs = useCallback(async function (nextSlug, nextQuery) {
       const useSlug = nextSlug !== undefined ? nextSlug : slug;
       if (!useSlug && !program) {
@@ -1544,32 +2432,87 @@
       }
       const seq = funcSeqRef.current + 1;
       funcSeqRef.current = seq;
+      const loc = (typeof currentLocator === "function" ? currentLocator() : "") || "";
       const url = API.functions + "?slug=" + encodeURIComponent(useSlug)
         + "&q=" + encodeURIComponent(nextQuery !== undefined ? nextQuery : query)
         + "&offset=" + Math.max(0, funcOffset) + "&limit=" + funcLimit
-        + (program ? "&program=" + encodeURIComponent(program) : "");
+        + (program ? "&program=" + encodeURIComponent(program) : "")
+        + (loc ? "&locator=" + encodeURIComponent(loc) : "");
       const res = await fetch(url, { cache: "no-store" });
       const data = await res.json();
       if (seq !== funcSeqRef.current) return;
       setRows(data.results || []);
       setTotal(data.total || 0);
-      if (!data.ok && data.error) setFuncNote(data.error);
+      if (!data.ok && data.error) setFuncNote(humanError(data.error));
       else if (!(data.results || []).length) {
-        setFuncNote(data.error || (program
-          ? (program + " has no functions listed yet. Analyze → Ingest repository into BSim.")
+        setFuncNote(humanError(data.error) || (program
+          ? (program + " has no functions yet. Analyze → Analyze program.")
           : (funcOffset ? "Past the end of this build. Go back a page." : "Pick a program in Explorer.")));
       } else setFuncNote("");
     }, [slug, query, program, funcOffset, funcLimit]);
 
+    const applyWorkspace = useCallback(function (data, row) {
+      if (!data || !data.ok) {
+        if (data && data.error) {
+          setDetail(function (prev) {
+            return {
+              name: (row && row.name) || (prev && prev.name) || "",
+              addr: (row && row.addr) || (prev && prev.addr) || "",
+              preview: "// Could not open listing\n// " + humanError(data.error)
+            };
+          });
+        }
+        return data;
+      }
+      if (data.overview) setOverview(data.overview);
+      if (data.graph) setGraph(data.graph);
+      const listing = data.listing || data;
+      if (listing && (listing.preview || listing.name || listing.addr || data.decompile || listing.decompile)) {
+        setDetail(Object.assign({}, listing, data.decompile ? { decompile: data.decompile } : {}));
+      }
+      const pick = data.selected || row;
+      if (pick && pick.addr) {
+        setSelected(pick);
+        setContext(pick);
+      }
+      return data;
+    }, [setContext]);
+
+    const loadWorkspace = useCallback(async function (name, row, locatorHint) {
+      const loc = locatorHint || (typeof currentLocator === "function" ? currentLocator() : "") || "";
+      const prog = name || program || "";
+      if (!loc || !prog) return null;
+      const sameProgram = !program || !name || program === name;
+      const addr = (row && row.addr) || (sameProgram && selected && selected.addr) || "";
+      const url = API.workspace
+        + "?locator=" + encodeURIComponent(loc)
+        + "&program=" + encodeURIComponent(prog)
+        + "&slug=" + encodeURIComponent(slug || "")
+        + (addr ? "&addr=" + encodeURIComponent(addr) : "");
+      const data = await fetch(url, { cache: "no-store" }).then(function (res) { return res.json(); });
+      return applyWorkspace(data, row);
+    }, [program, slug, selected, applyWorkspace]);
+
     const selectRow = useCallback(async function (row) {
       setSelected(row);
       setContext(row);
+      const loc = (typeof currentLocator === "function" ? currentLocator() : "") || "";
+      if (loc && program) {
+        const ws = await loadWorkspace(program, row);
+        if (ws && ws.ok) return;
+      }
       const res = await fetch(
-        API.detail + "?slug=" + encodeURIComponent(slug) + "&addr=" + encodeURIComponent(row.addr),
+        API.detail + "?slug=" + encodeURIComponent(slug)
+          + "&addr=" + encodeURIComponent(row.addr)
+          + (loc ? "&locator=" + encodeURIComponent(loc) : "")
+          + (program ? "&program=" + encodeURIComponent(program) : ""),
         { cache: "no-store" }
       );
-      setDetail(await res.json());
-    }, [slug, setContext]);
+      const data = await res.json();
+      setDetail(data);
+      if (data.graph) setGraph(data.graph);
+      if (data.overview) setOverview(data.overview);
+    }, [slug, program, setContext, loadWorkspace]);
 
     function onFuncRowClick(ev, row) {
       if (!row) return;
@@ -1606,6 +2549,14 @@
       setCheckAnchor(row.addr);
     }
 
+    const loadContext = useCallback(async function () {
+      try {
+        const res = await fetch(API.context, { cache: "no-store" });
+        const data = await res.json();
+        if (data.defaults) setEnvDefaults(data.defaults);
+      } catch (_err) { /* optional */ }
+    }, []);
+
     const loadActions = useCallback(async function () {
       const res = await fetch(API.actions, { cache: "no-store" });
       const data = await res.json();
@@ -1613,6 +2564,34 @@
       setActions(list);
       if (data.context && data.context.defaults) setEnvDefaults(data.context.defaults);
     }, []);
+
+    const loadMatchStatus = useCallback(async function () {
+      try {
+        const res = await fetch(API.matchStatus, { cache: "no-store" });
+        const data = await res.json();
+        setBsimStatus(data);
+        return data;
+      } catch (_err) {
+        setBsimStatus({ ok: true, state: "database_unreachable", summary: "Could not read BSim status." });
+        return null;
+      }
+    }, []);
+
+    const loadRecoverStatus = useCallback(async function () {
+      try {
+        const url = API.recoverStatus
+          + "?program=" + encodeURIComponent(program || "")
+          + "&slug=" + encodeURIComponent(slug || "");
+        const res = await fetch(url, { cache: "no-store" });
+        const data = await res.json();
+        setRecoverInfo(data);
+        if (data.path) setRecoveredRoot(data.path);
+        return data;
+      } catch (_err) {
+        setRecoverInfo({ ok: true, state: "none", summary: "Could not read recovered source." });
+        return null;
+      }
+    }, [program, slug]);
 
     const loadBrowse = useCallback(async function (nextPath) {
       const res = await fetch(API.browse + "?path=" + encodeURIComponent(nextPath || ""), { cache: "no-store" });
@@ -1636,31 +2615,37 @@
       setDossier(data);
     }, []);
 
-    /* The status bar carries durable state. A failure is an event, so it goes to the toast
-       and to a status slot that clears itself instead of sitting there for the session. */
     function showToast(message, kind) {
       const text = String(message || "");
-      const tone = kind || "";
-      setToast(text);
-      setToastKind(tone);
+      if (!text) return;
+      const tone = kind || "info";
+      const entry = {
+        id: "log-" + Date.now() + "-" + Math.random().toString(16).slice(2, 8),
+        at: Date.now(),
+        kind: tone,
+        text: text
+      };
+      setLogEntries(function (prev) {
+        const next = prev.concat(entry);
+        return next.length > 200 ? next.slice(-200) : next;
+      });
+      setLogTab("log");
+      setLogOpen(true);
+      if (tone === "error") setOpenLogId(entry.id);
       setIngestNote(text);
       window.clearTimeout(showToast._errTimer);
       if (tone === "error") {
         setStatusError(text);
-        if (text) {
-          showToast._errTimer = window.setTimeout(function () { setStatusError(""); }, 20000);
-        }
+        showToast._errTimer = window.setTimeout(function () { setStatusError(""); }, 20000);
       } else {
         setStatusError("");
-        if (text) setLastNote(text);
+        setLastNote(text);
       }
-      if (text) {
-        window.clearTimeout(showToast._timer);
-        showToast._timer = window.setTimeout(function () {
-          setToast("");
-          setToastKind("");
-        }, tone === "error" ? 8000 : 5000);
-      }
+    }
+
+    function openLogJobs() {
+      setLogTab("jobs");
+      setLogOpen(true);
     }
 
     const putSessions = useCallback(async function (nextActive, nextSessions, revision) {
@@ -1740,6 +2725,89 @@
       if (currentSession && currentSession.projectSlug) {
         setSlug(currentSession.projectSlug);
       }
+      const loc = currentLocator();
+      if (picked && loc) {
+        loadWorkspace(picked, null, loc);
+        ensureGhidraProgram(picked, { locator: loc, quiet: true });
+      }
+    }
+
+    async function ensureGhidraProgram(name, options) {
+      const opts = options || {};
+      const target = String(name || program || "").trim();
+      const locator = opts.locator || currentLocator();
+      if (!target || !locator) return null;
+      ensureSeqRef.current += 1;
+      const seq = ensureSeqRef.current;
+      setProgramProgress(function (prev) {
+        const next = Object.assign({}, prev);
+        next[target] = { pct: 12, tool: "open", status: "running" };
+        return next;
+      });
+      if (!opts.quiet) showToast("Opening " + target + "…");
+      try {
+        const res = await fetch(API.ensureProgram, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ locator: locator, program: target })
+        });
+        const data = await res.json();
+        if (seq !== ensureSeqRef.current) return data;
+        if (data.results && data.results.length) {
+          setRows(data.results);
+          setTotal(data.total || data.results.length);
+          setFuncNote("");
+          const first = data.results[0];
+          setSelected(first);
+          setOverview(function (prev) {
+            if (prev && prev.program === target && prev.functionCount) return prev;
+            return {
+              program: target,
+              functionCount: data.total || data.results.length,
+              namedCount: data.named || 0,
+              path: data.program_path || target
+            };
+          });
+          setDetail(function (prev) {
+            if (prev && prev.preview && String(prev.preview).indexOf("Opening ") !== 0) return prev;
+            return {
+              name: first.name,
+              addr: first.addr,
+              preview: "// " + target + "\n// " + (data.total || data.results.length)
+                + " functions from the Ghidra project\n" + (first.name || "") + "  @ " + (first.addr || "")
+            };
+          });
+          setProgramProgress(function (prev) {
+            const next = Object.assign({}, prev);
+            next[target] = { pct: 70, tool: "workspace", status: "running" };
+            return next;
+          });
+          await loadWorkspace(target, first, locator);
+          setProgramProgress(function (prev) {
+            const next = Object.assign({}, prev);
+            next[target] = { pct: 100, tool: "list-functions", status: "ok" };
+            return next;
+          });
+          if (!opts.quiet) showToast(target + " — " + (data.total || data.results.length) + " functions", "success");
+          return data;
+        }
+        setProgramProgress(function (prev) {
+          const next = Object.assign({}, prev);
+          next[target] = { pct: 40, tool: "list-functions", status: data.next === "analyze-program" ? "ok" : "failed" };
+          return next;
+        });
+        await loadFuncs();
+        if (data.error && !opts.quiet) showToast(data.error, data.next === "analyze-program" ? "" : "error");
+        return data;
+      } catch (err) {
+        setProgramProgress(function (prev) {
+          const next = Object.assign({}, prev);
+          next[target] = { pct: 0, tool: "open", status: "failed" };
+          return next;
+        });
+        if (!opts.quiet) showToast("Could not open " + target + " in Ghidra.", "error");
+        return null;
+      }
     }
 
     const currentSession = useMemo(function () {
@@ -1766,11 +2834,20 @@
       sessionOverviewSlugs.forEach(function (name) {
         url += "&slug=" + encodeURIComponent(name);
       });
-      ((dossier && dossier.ok ? (dossier.programs || []) : []).map(programName).filter(Boolean)).forEach(function (name) {
+      const programNames = [];
+      const seenPrograms = new Set();
+      function addProgram(name) {
+        if (!name || seenPrograms.has(name)) return;
+        seenPrograms.add(name);
+        programNames.push(name);
+      }
+      if (currentSession && currentSession.program) addProgram(currentSession.program);
+      ((dossier && dossier.ok ? (dossier.programs || []) : []).map(programName).filter(Boolean)).forEach(addProgram);
+      programNames.forEach(function (name) {
         url += "&program=" + encodeURIComponent(name);
       });
       return url;
-    }, [sessionOverviewSlugs, dossier]);
+    }, [sessionOverviewSlugs, dossier, currentSession]);
 
     useEffect(function () {
       window.AgentDecompileUI = {
@@ -1781,6 +2858,8 @@
       };
       window.KotorXidUI = window.AgentDecompileUI;
       loadBinaries();
+      loadCorpusStatus();
+      loadContext();
       loadActions();
       loadBrowse("");
       fetch(API.sessions, { cache: "no-store" }).then(function (res) { return res.json(); }).then(function (data) {
@@ -1806,6 +2885,7 @@
         if (data.host) setSharedHost(String(data.host));
         if (data.port) setSharedPort(String(data.port));
         if (data.repository) setSharedRepo(String(data.repository));
+        if (data.user) setSharedUser(String(data.user));
       }).catch(function () { /* keep defaults */ });
       function loadProbes() {
         fetch("/dashboard/healthz", { cache: "no-store" }).then(function (res) { return res.json(); }).then(function (data) {
@@ -1835,10 +2915,19 @@
           createProject();
         } else if (key === "w") {
           ev.preventDefault();
+          runCommand("file.close-tab");
         } else if (key === "i") {
           ev.preventDefault();
+          runCommand("file.add-binaries");
         } else if (key === "j") {
           ev.preventDefault();
+          runCommand("view.jobs");
+        } else if (key === "a" && ev.shiftKey) {
+          ev.preventDefault();
+          runCommand("analyze.program");
+        } else if (key === "b" && ev.shiftKey) {
+          ev.preventDefault();
+          runCommand("analyze.bsim-ingest");
         }
       }
       window.addEventListener("keydown", onKey);
@@ -1846,7 +2935,13 @@
         window.clearInterval(probeTimer);
         window.removeEventListener("keydown", onKey);
       };
-    }, [loadBinaries, loadActions, loadBrowse, loadPreview]);
+    }, [loadBinaries, loadContext, loadActions, loadBrowse, loadPreview]);
+
+    useEffect(function () {
+      if (!dossier || !dossier.ok || program) return;
+      const names = (dossier.programs || []).map(programName).filter(Boolean);
+      if (names.length === 1) setProgram(names[0]);
+    }, [dossier, program]);
 
     useEffect(function () {
       /* Reset paging on the same tick as the slug change so we do not fetch the
@@ -1860,6 +2955,11 @@
       }
       loadFuncs(slug, query);
     }, [slug, program, query, funcOffset, funcLimit, loadFuncs]);
+
+    useEffect(function () {
+      if (centerTab === "wb-match") loadMatchStatus();
+      if (centerTab === "wb-recovery") loadRecoverStatus();
+    }, [centerTab, loadMatchStatus, loadRecoverStatus]);
 
     /* A deep link from the old browse page names an address; land on that row so
        the link means the same thing it used to. Disarm after the first page so
@@ -1916,7 +3016,7 @@
     }, [binaries]);
 
     useEffect(function () {
-      if (running.length) setJobsDockOpen(true);
+      if (running.length) openLogJobs();
     }, [running.length]);
 
     useEffect(function () {
@@ -2049,14 +3149,14 @@
           jobsSnapshotRef.current = list;
           if (note) {
             setJobLiveText(note);
-            showToast(note, /failed|cancelled/.test(note) ? "error" : "success");
+            showToast(note, /failed|cancelled/.test(note) ? "error" : "info");
           }
           setJobs(list);
           const nextProgress = {};
           list.forEach(function (job) {
             chainAfterAnalyzeRef.current(job);
             const params = job.params || {};
-            const key = String(params.program || params.binary || params.name || "").trim();
+            const key = String(params.program || params.programPath || params.binary || params.name || "").trim();
             if (!key) return;
             const pct = typeof job.progress === "number" ? job.progress : (job.status === "ok" ? 100 : job.status === "queued" ? 4 : 22);
             nextProgress[key] = { pct: pct, tool: job.actionId || "", status: job.status };
@@ -2099,7 +3199,6 @@
         })
       });
       const data = await res.json();
-      reactJob("corpus.add-binary", data);
       if (!options || !options.quiet) {
         setIngestNote(data.ok ? "Registered " + (data.binary && data.binary.slug) : (data.error || "register failed"));
         if (data.ok && data.binary && !(options && options.intoProject)) {
@@ -2227,6 +3326,10 @@
           });
         });
       }
+      list = list.filter(function (item) {
+        if (item.id === id) return true;
+        return tabHasRealProject(item) || sessionImportSlugs(item).length;
+      });
       setDossier(inspected);
       setPreview(inspected);
       const nextSlug = sameProject && prevSlug ? prevSlug : (projectSlug || "");
@@ -2237,25 +3340,27 @@
       await putSessions(id, list);
       setIngestNote("Loaded " + nextTitle);
       closeDialog();
+      if (nextProgram) ensureGhidraProgram(nextProgram, { quiet: true, locator: value });
       return { ok: true, list: list, id: id, projectSlug: projectSlug || "", inspected: inspected };
     }
 
     function builtSharedUrl() {
       if (sharedUrl.trim()) return sharedUrl.trim();
       const host = sharedHost.trim() || "127.0.0.1";
-      const port = sharedPort.trim() || "13100";
+      const portNum = parseInt(sharedPort.trim() || "13100", 10);
       const repo = sharedRepo.trim();
       const prog = sharedProgram.trim();
       if (!repo) return "";
-      return "ghidra://" + host + ":" + port + "/" + repo + (prog ? "/" + prog.replace(/^\/+/, "") : "");
+      const portBit = (!portNum || portNum === 13100) ? "" : (":" + portNum);
+      return "ghidra://" + host + portBit + "/" + repo + (prog ? "/" + prog.replace(/^\/+/, "") : "");
     }
 
     async function registerShared(ev) {
       if (ev) ev.preventDefault();
       const locator = builtSharedUrl();
       if (!locator) {
-        showToast("Shared HTTP needs a repository name or a ghidra:// / http(s) URL.", "error");
-        setDialogError("Shared HTTP needs a repository name or a ghidra:// / http(s) URL.");
+        showToast("Enter a repository name or a ghidra:// URL.", "error");
+        setDialogError("Enter a repository name or a ghidra:// URL.");
         return;
       }
       await openLocator(locator, sharedRepo || sharedProgram || "shared");
@@ -2337,16 +3442,20 @@
     async function reloadProject() {
       setMenu("");
       setStatusError("");
-      showToast("Reloading…");
       const locator = currentLocator();
+      if (!locator) {
+        showToast("This tab has no project to reload.");
+        return;
+      }
+      showToast("Reloading…");
       try {
         await loadBinaries();
         await loadActions();
-        if (locator) await loadPreview(locator);
+        await loadPreview(locator);
         await loadFuncs(slug, query);
         if (selected && selected.addr) await selectRow(selected);
         reloadIslands();
-        showToast(locator ? "Reloaded " + locator : "Reloaded corpus store", "success");
+        showToast(locator ? "Reloaded " + locator : "This tab has no project to reload.", locator ? "success" : "");
       } catch (err) {
         showToast("Reload failed: " + String((err && err.message) || err), "error");
       }
@@ -2405,7 +3514,7 @@
         return null;
       }
       if (saveAsTarget === "shared-project" && !(saveAsUrl || "").trim()) {
-        failDialog("A shared project needs a ghidra:// or http(s) server URL.");
+        failDialog("A shared project needs a ghidra:// server URL.");
         return null;
       }
       const res = await fetch(API.saveAs, {
@@ -2425,7 +3534,9 @@
         return data;
       }
       closeDialog();
-      const next = data.locator || data.local_checkout || data.gpr;
+      const next = saveAsTarget === "shared-project"
+        ? (data.http_locator || data.locator || data.local_checkout || data.gpr)
+        : (data.locator || data.local_checkout || data.gpr);
       if (next && next !== currentLocator()) {
         const carryImports = sessionImportSlugs(currentSession);
         const opened = await openLocator(next, data.slug || saveAsName);
@@ -2496,8 +3607,7 @@
         return;
       }
       if (id === "wb-jobs") {
-        setJobsDockOpen(true);
-        setCenterTab("wb-jobs");
+        openLogJobs();
         return;
       }
       const tab = editorTabFor(id);
@@ -2569,7 +3679,7 @@
         { title: "Open in Functions", run: function () { selectImportBinary(row); } },
         { title: "Listing", id: "view.listing" },
         "—",
-        { title: "Copy slug", run: function () { copyText(name, "slug"); } },
+        { title: "Copy name", run: function () { copyText(name, "name"); } },
         { title: "Copy path", run: function () { copyText((row && (row.locator || row.repo)) || "", "path"); } },
         "—",
         { title: "Remove " + name, danger: true, accel: "Del", run: function () { removeSlug(name); } }
@@ -2579,10 +3689,18 @@
     function programCtxItems(name) {
       return [
         { title: "Select program", run: function () { selectProgram(name); } },
+        { title: "Open in Ghidra", run: function () { setProgram(name); ensureGhidraProgram(name, { locator: currentLocator() }); } },
+        { title: "Analyze program", run: function () { setProgram(name); startImportPipeline(name); } },
         { title: "Listing", id: "view.listing" },
+        { title: "Match", id: "view.cross-match" },
+        { title: "Recover", id: "view.recovery" },
         { title: "Call Graph", id: "view.graph" },
         "—",
-        { title: "Copy program name", run: function () { copyText(name, "program name"); } }
+        { title: "Check in", id: "file.checkin" },
+        "—",
+        { title: "Copy program name", run: function () { copyText(name, "program name"); } },
+        "—",
+        { title: "Remove from project", danger: true, accel: "Del", run: function () { removeProgramFromProject(name); } }
       ].map(decorateCommandItem);
     }
 
@@ -2601,23 +3719,25 @@
     }
 
     function functionCtxItems(row) {
-      function runTool(actionId) {
+      function runTool(actionId, extras) {
         if (row) selectRow(row);
-        openActionStrip(actionId);
+        executeAction(actionId, extras || { addr: row && row.addr, name: row && row.name }, { skipConfirm: true });
       }
       return [
         { title: "Listing", id: "view.listing" },
         { title: "Call Graph", id: "view.graph" },
+        { title: "Match", id: "view.cross-match" },
+        { title: "Recover", id: "view.recovery" },
         { title: "Inspector", id: "view.inspect" },
         "—",
-        { title: "Decompile…", run: function () { runTool("mcp.decompile-function"); } },
-        { title: "Add comment…", run: function () { runTool("mcp.manage-comments"); } },
-        { title: "Create label…", run: function () { runTool("mcp.create-label"); } },
-        { title: "Cross-references…", run: function () { runTool("mcp.get-references"); } },
-        { title: "Data flow…", run: function () { runTool("mcp.analyze-data-flow"); } },
-        { title: "Bookmark…", run: function () { runTool("mcp.manage-bookmarks"); } },
-        { title: "Rename / manage function…", run: function () { runTool("mcp.manage-function"); } },
-        { title: "Match function…", run: function () { runTool("mcp.match-function"); } },
+        { title: "Decompile", run: function () { runTool("mcp.decompile-function"); } },
+        { title: "Add comment…", run: function () { if (row) selectRow(row); openActionStrip("mcp.manage-comments"); } },
+        { title: "Create label…", run: function () { if (row) selectRow(row); openActionStrip("mcp.create-label"); } },
+        { title: "Cross-references", run: function () { runTool("mcp.get-references"); } },
+        { title: "Data flow", run: function () { runTool("mcp.analyze-data-flow"); } },
+        { title: "Bookmark…", run: function () { if (row) selectRow(row); openActionStrip("mcp.manage-bookmarks"); } },
+        { title: "Rename / manage function…", run: function () { if (row) selectRow(row); openActionStrip("mcp.manage-function"); } },
+        { title: "Match function", run: function () { runTool("mcp.match-function"); } },
         "—",
         { title: "Run last action", id: "run.last" },
         { title: "Run Cross-place", id: "run.cross-place" },
@@ -2637,7 +3757,33 @@
       if (id === "file.open-url") { openProjectDialog("remote"); showToast("Open from URL…"); return; }
       if (id === "file.save") { saveProject(); return; }
       if (id === "file.save-as") { openSaveAsDialog(); showToast("Save As…"); return; }
-      if (id === "file.add-binaries") { triggerFileUpload(); showToast("Add binaries…"); return; }
+      if (id === "file.checkin") {
+        const kind = (dossier && dossier.kind) || (currentSession && currentSession.kind) || "";
+        const loc = currentLocator();
+        const isServer = kind === "shared-project" || String(loc).indexOf("ghidra://") === 0;
+        if (!isServer) {
+          showToast("Check in needs a Ghidra Server project, not a local .gpr.", "error");
+          return;
+        }
+        if (!program) {
+          showToast("Select a program to check in.", "error");
+          return;
+        }
+        if (dossier && dossier.reachable === false && !dossier.mirror_available) {
+          showToast("Lost connection to Ghidra Server.", "error");
+          return;
+        }
+        const programPath = (dossier && dossier.program_paths && dossier.program_paths[program]) || program;
+        executeAction("mcp.checkin-program", { program: programPath }, { skipConfirm: true });
+        showToast("Check in queued");
+        return;
+      }
+      if (id === "file.open-program") {
+        if (!program) { showToast("Select a program first", "error"); return; }
+        ensureGhidraProgram(program, { locator: currentLocator() });
+        return;
+      }
+      if (id === "file.add-binaries") { openAddToProjectDialog(); return; }
       if (id === "file.reload") { reloadProject(); return; }
       if (id === "file.close-tab") {
         if (!currentSession) return;
@@ -2645,7 +3791,7 @@
         if (dirty) {
           askConfirm({
             title: "Close " + (currentSession.title || "tab") + "?",
-            message: "This closes the project tab, not an editor buffer. File → Open reopens it. + only creates a draft.",
+            message: "This closes the project tab. File → Open reopens it. New tab only creates a draft.",
             confirmLabel: "Close tab",
             danger: true,
             onConfirm: function () { closeTab(currentSession.id); }
@@ -2657,6 +3803,8 @@
         return;
       }
       if (id === "file.remove-binary") {
+        if (program) { removeProgramFromProject(program); return; }
+        if (extra.program) { removeProgramFromProject(extra.program); return; }
         if (extra.slug) removeSlug(extra.slug);
         else if (slug && slug !== (currentSession && currentSession.projectSlug)) removeSlug(slug);
         return;
@@ -2675,6 +3823,8 @@
       if (id === "view.logical") { jumpTo("wb-logical"); return; }
       if (id === "view.inspect") { jumpTo("wb-inspect"); return; }
       if (id === "view.graph") { jumpTo("wb-graph"); return; }
+      if (id === "view.artifacts") { jumpTo("wb-artifacts"); return; }
+      if (id === "view.evidence") { jumpTo("wb-evidence"); return; }
       if (id === "view.overview") { jumpTo("wb-overview"); return; }
       if (id === "view.atlas") { jumpTo("wb-atlas"); return; }
       if (id === "view.pipeline") { jumpTo("wb-pipeline"); return; }
@@ -2698,17 +3848,33 @@
         showToast("analyze-program started on " + target);
         return;
       }
-      if (id === "analyze.bsim-ingest") { openActionStrip("corpus.bsim-ingest"); showToast("BSim ingest — review and Run"); return; }
-      if (id === "analyze.bsim-report") { openActionStrip("corpus.bsim-report"); showToast("BSim report — review and Run"); return; }
-      if (id === "analyze.bsim-create") { openActionStrip("corpus.bsim-createdatabase"); showToast("Create BSim database — review and Run"); return; }
-      if (id === "run.cross-place") { openActionStrip("corpus.cross-place"); showToast("Cross-place — review and Run"); return; }
+      if (id === "analyze.bsim-ingest") {
+        executeAction("corpus.bsim-ingest", {}, { skipConfirm: true });
+        showToast("BSim ingest started");
+        return;
+      }
+      if (id === "analyze.bsim-report") {
+        executeAction("corpus.bsim-report", catalogParamsFor("corpus.bsim-report", {}), { skipConfirm: true });
+        showToast("BSim report started");
+        return;
+      }
+      if (id === "analyze.bsim-create") {
+        executeAction("corpus.bsim-createdatabase", {}, { skipConfirm: true });
+        showToast("Create BSim database started");
+        return;
+      }
+      if (id === "run.cross-place") {
+        jumpTo("wb-match");
+        executeAction("corpus.cross-place", {}, { skipConfirm: true });
+        return;
+      }
       if (id === "run.last") {
         if (lastActionId) { openActionStrip(lastActionId); showToast("Last action " + lastActionId); }
         else showToast("No last action yet.", "error");
         return;
       }
-      if (id === "help.access") { setDialog("access"); showToast("Keyboard & five ways"); return; }
-      if (id === "help.classic-overview") { jumpTo("wb-overview"); showToast("Overview"); return; }
+      if (id === "help.access") { setDialog("access"); showToast("Shortcuts and menus"); return; }
+      if (id === "help.overview") { jumpTo("wb-overview"); return; }
       showToast("Unknown command " + id, "error");
     }
 
@@ -2770,6 +3936,9 @@
         else if (key === "i") { ev.preventDefault(); runCommand("file.add-binaries"); }
         else if (key === "e" && ev.shiftKey) { ev.preventDefault(); runCommand("view.explorer"); }
         else if (key === "x" && ev.shiftKey) { ev.preventDefault(); runCommand("run.cross-place"); }
+        else if (key === "a" && ev.shiftKey) { ev.preventDefault(); runCommand("analyze.program"); }
+        else if (key === "b" && ev.shiftKey) { ev.preventDefault(); runCommand("analyze.bsim-ingest"); }
+        else if (key === "w") { ev.preventDefault(); runCommand("file.close-tab"); }
       }
       window.addEventListener("keydown", onCmd);
       return function () { window.removeEventListener("keydown", onCmd); };
@@ -2777,18 +3946,54 @@
 
     async function selectJobInDock(jobId) {
       setSelectedJobId(jobId || "");
-      setJobsDockOpen(true);
+      openLogJobs();
     }
 
     async function cancelJob(jobId) {
       if (!jobId) return;
       try {
         await fetch(API.jobs + "/" + encodeURIComponent(jobId) + "/cancel", { method: "POST" });
-        showToast("Cancel requested for " + jobId, "success");
+        showToast("Cancel requested for " + jobId, "info");
       } catch (_err) {
         showToast("Could not cancel job.", "error");
       }
     }
+
+    const toolContext = useMemo(function () {
+      const tabSlugs = [];
+      const seen = new Set();
+      function addSlug(name) {
+        if (!name || seen.has(name)) return;
+        seen.add(name);
+        tabSlugs.push(name);
+      }
+      if (currentSession && currentSession.projectSlug && slug === currentSession.projectSlug) {
+        addSlug(currentSession.projectSlug);
+      }
+      sessionImportSlugs(currentSession).forEach(addSlug);
+      if (slug) addSlug(slug);
+      const tabRows = tabSlugs.map(function (name) {
+        return binaries.find(function (row) { return row.slug === name; });
+      }).filter(Boolean);
+      const projectNames = (dossier && dossier.ok ? (dossier.programs || []) : []).map(programName).filter(Boolean);
+      const activeRow = binaries.find(function (row) { return row.slug === slug; }) || tabRows[0] || {};
+      return {
+        slug: slug || (currentSession && currentSession.projectSlug) || "",
+        program: program || "",
+        repo: activeRow.repo || "",
+        addr: selected && selected.addr ? selected.addr : "",
+        name: selected && selected.name ? selected.name : "",
+        db: envDefaults.db || "",
+        work_dir: envDefaults.work_dir || "",
+        kb: envDefaults.kb || "",
+        recovered: recoveredRoot || "",
+        tabSlugs: tabSlugs,
+        tabRows: tabRows.length ? tabRows : binaries.slice(0, 32),
+        allBinaries: binaries,
+        programs: projectNames,
+        functions: rows
+      };
+    }, [binaries, slug, program, selected, rows, currentSession, dossier, envDefaults, recoveredRoot]);
 
     async function executeAction(actionId, paramOverrides, options) {
       const opts = options || {};
@@ -2821,7 +4026,7 @@
         return null;
       }
       if (batchTargets.length > 1) {
-        showToast("Starting " + (act.title || actionId) + " on " + batchTargets.length + " functions…", "success");
+        showToast("Starting " + (act.title || actionId) + " on " + batchTargets.length + " functions…", "info");
         let ok = 0;
         for (let i = 0; i < batchTargets.length; i += 1) {
           const row = batchTargets[i];
@@ -2832,7 +4037,7 @@
           );
           if (result) ok += 1;
         }
-        showToast("Queued " + ok + " of " + batchTargets.length + " — " + (act.title || actionId), ok ? "success" : "error");
+        showToast("Queued " + ok + " of " + batchTargets.length + " — " + (act.title || actionId), ok ? "info" : "error");
         return ok;
       }
       const row = opts.targetRow;
@@ -2846,9 +4051,9 @@
         work_dir: toolContext.work_dir || "",
         kb: toolContext.kb || ""
       };
-      if (!opts.quiet) showToast("Starting " + (act.title || actionId) + "…", "success");
+      if (!opts.quiet) showToast("Starting " + (act.title || actionId) + "…", "info");
       const body = Object.assign({ confirm: true, context: ctx }, params);
-      const res = await fetch("/api/v1/actions/" + actionId.replace(".", "/"), {
+      const res = await fetch("/api/v1/actions/" + actionId.replace(/\./g, "/"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body)
@@ -2863,9 +4068,9 @@
       pushRecentActionId(actionId);
       setRecentActionIds(readRecentActionIds());
       if (data.job && data.job.id) {
-        setJobsDockOpen(true);
+        openLogJobs();
         setSelectedJobId(data.job.id);
-        if (!opts.quiet) showToast("Job " + data.job.id + " — " + (act.title || actionId), "success");
+        if (!opts.quiet) showToast("Job " + data.job.id + " — " + (act.title || actionId), "info");
       } else if (data.argv && !opts.quiet) {
         showToast("Dry run: " + data.argv.join(" "), "success");
       }
@@ -2877,15 +4082,54 @@
       return data;
     }
 
-    function startImportPipeline(programName) {
+    useEffect(function () {
+      window.AgentDecompileUI = Object.assign(window.AgentDecompileUI || {}, {
+        getToolContext: function () { return toolContext; },
+        getEnvDefaults: function () { return envDefaults; },
+        getBinaries: function () { return binaries; },
+        getSiblings: function () { return (detail && detail.siblings) || []; },
+        runCatalogAction: function (actionId, params) {
+          if (!actionId) return null;
+          openActionStrip(actionId);
+          const filled = catalogParamsFor(actionId, params && Object.keys(params).length ? params : {});
+          return executeAction(actionId, filled, {});
+        },
+        showToast: showToast
+      });
+      window.KotorXidUI = window.AgentDecompileUI;
+    }, [toolContext, envDefaults, binaries, detail]);
+
+    function programAlreadyAnalyzed(data) {
+      if (!data) return false;
+      if (data.analysisComplete === true) return true;
+      if (data.results && data.results.length) return true;
+      if ((data.total || 0) > 0 && data.source === "ghidra-store") return true;
+      return false;
+    }
+
+    function startImportPipeline(programName, opts) {
       const target = String(programName || "").trim();
       if (!target) return;
+      const force = !!(opts && opts.force);
       setProgramProgress(function (prev) {
         const next = Object.assign({}, prev);
-        next[target] = { pct: 4, tool: "mcp.analyze-program", status: "queued" };
+        next[target] = { pct: 4, tool: "open", status: "queued" };
         return next;
       });
-      executeAction("mcp.analyze-program", { program: target }, { skipConfirm: true, quiet: true });
+      Promise.resolve(ensureGhidraProgram(target, { quiet: true, locator: currentLocator() })).then(function (data) {
+        if (!force && programAlreadyAnalyzed(data)) {
+          setProgramProgress(function (prev) {
+            const next = Object.assign({}, prev);
+            next[target] = { pct: 100, tool: "list-functions", status: "ok" };
+            return next;
+          });
+          return;
+        }
+        executeAction("mcp.analyze-program", {
+          program: target,
+          locator: currentLocator()
+        }, { skipConfirm: true, quiet: true });
+      });
     }
 
     function chainAfterAnalyze(job) {
@@ -2894,14 +4138,15 @@
       if (actionId !== "mcp.analyze-program" && actionId.indexOf("analyze-program") < 0) return;
       if (pipelineChainedRef.current[job.id]) return;
       pipelineChainedRef.current[job.id] = true;
-      const prog = String((job.params && (job.params.program || job.params.binary)) || program || "").trim();
-      executeAction("corpus.extract-stabs", {}, { skipConfirm: true, quiet: true });
-      executeAction("corpus.bsim-ingest", {}, { skipConfirm: true, quiet: true });
-      executeAction("corpus.cross-place", {}, { skipConfirm: true, quiet: true });
+      const prog = String((job.params && (job.params.program || job.params.programPath || job.params.binary)) || program || "").trim();
+      const loc = currentLocator();
+      const after = { program: prog, locator: loc };
+      executeAction("corpus.extract-stabs", after, { skipConfirm: true, quiet: true });
+      executeAction("corpus.bsim-ingest", after, { skipConfirm: true, quiet: true });
       if (prog) {
         setProgramProgress(function (prev) {
           const next = Object.assign({}, prev);
-          next[prog] = { pct: 100, tool: "apply-names", status: "ok" };
+          next[prog] = { pct: 70, tool: "extract-stabs", status: "running" };
           return next;
         });
         loadFuncs();
@@ -2936,73 +4181,135 @@
       selectJobInDock(jobId);
     }
 
+    async function applyProjectInspect(inspected) {
+      if (inspected && inspected.ok) {
+        setDossier(inspected);
+        setPreview(inspected);
+      }
+      return inspected;
+    }
+
+    function openAddToProjectDialog() {
+      setDialogError("");
+      setAddPath("");
+      setDialog("add-binary");
+      setMenu("");
+      showToast(currentLocator() ? "Add a binary into this project" : "Add creates a project, then imports into it");
+    }
+
+    async function submitAddToProject(ev) {
+      if (ev) ev.preventDefault();
+      const field = document.getElementById("wb-add-path");
+      const path = ((addPath || "").trim() || (field && field.value) || "").trim();
+      if (!path) {
+        failDialog("Paste a binary path, or choose a file.");
+        return null;
+      }
+      const data = await importPathIntoProject(path, path.split(/[/\\]/).pop() || "binary");
+      if (data && data.ok) closeDialog();
+      return data;
+    }
+
+    async function importPathIntoProject(filePath, preferredName, sourceProgram) {
+      const path = (filePath || "").trim();
+      if (!path) return null;
+      const baseName = (preferredName || path.split(/[/\\]/).pop() || "binary").trim();
+      let locator = currentLocator();
+      if (!locator) {
+        const opened = await createTabProject(baseName);
+        if (!opened || !opened.ok) {
+          showToast("Open a project first, then add binaries into it.", "error");
+          return null;
+        }
+        locator = (opened.inspected && opened.inspected.locator) || currentLocator();
+      }
+      if (!locator) {
+        showToast("The project tab has no locator yet.", "error");
+        return null;
+      }
+      showToast("Importing " + baseName + " into the project…");
+      const res = await fetch(API.programs, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          locator: locator,
+          path: path,
+          program: sourceProgram || "",
+          name: baseName,
+          analyze: false
+        })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        const message = data.error || "Could not import into the project.";
+        setIngestNote(message);
+        showToast(message, "error");
+        return data;
+      }
+      if (data.inspect) await applyProjectInspect(data.inspect);
+      else await loadPreview(locator);
+      const prog = data.program || baseName;
+      if (currentSession && currentSession.projectSlug) setSlug(currentSession.projectSlug);
+      if (prog) {
+        setProgram(prog);
+        patchActiveSession({ program: prog });
+        setSelected(null);
+        setDetail(null);
+      }
+      closeDialog();
+      setIngestNote("Imported " + prog + " into the project");
+      showToast("Imported " + prog + " into the project", "success");
+      if (prog) startImportPipeline(prog);
+      return data;
+    }
+
+    async function removeProgramFromProject(name) {
+      const target = (name || program || "").trim();
+      const locator = currentLocator();
+      if (!target || !locator) {
+        showToast("Select a program in this project first.", "error");
+        return;
+      }
+      askConfirm({
+        title: "Remove " + target + " from the project?",
+        message: "This deletes the program from the open Ghidra project.",
+        danger: true,
+        confirmLabel: "Remove from project",
+        onConfirm: function () { removeProgramConfirmed(locator, target); }
+      });
+    }
+
+    async function removeProgramConfirmed(locator, target) {
+      const res = await fetch(API.programs, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ locator: locator, program: target, confirm: true })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        showToast(data.error || "Could not remove that program.", "error");
+        return;
+      }
+      if (data.inspect) await applyProjectInspect(data.inspect);
+      else await loadPreview(locator);
+      if (program === target) {
+        const next = ((data.inspect && data.inspect.programs) || []).map(programName).filter(Boolean)[0] || "";
+        setProgram(next);
+        patchActiveSession({ program: next });
+        setSelected(null);
+        setDetail(null);
+        setRows([]);
+        setTotal(0);
+        if (next) ensureGhidraProgram(next, { quiet: true, locator: locator });
+      }
+      showToast("Removed " + target + " from the project", "success");
+    }
+
     async function openBinaryPath(filePath, preferredName) {
       const path = (filePath || "").trim();
       if (!path) return;
       const baseName = (preferredName || path.split(/[/\\]/).pop() || "binary").trim();
-      const slugNameWanted = slugFromDiskPath(path, baseName);
-      const res = await fetch(API.binaries, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          path: path,
-          slug: slugNameWanted,
-          role: role || "member",
-          label: label || ""
-        })
-      });
-      const data = await res.json();
-      reactJob("corpus.add-binary", data);
-      if (!data.ok || !data.binary) {
-        const message = data.error || "Could not register binary";
-        setIngestNote(message);
-        showToast(message, "error");
-        return null;
-      }
-      const slugName = data.binary.slug;
-      let session = sessions.find(function (item) { return item.id === activeSession; }) || currentSession;
-      if (tabHasRealProject(session)) {
-        await importIntoTab(slugName);
-        try {
-          const sessRes = await fetch(API.sessions, { cache: "no-store" });
-          const sessData = await sessRes.json();
-          session = (sessData.sessions || []).find(function (item) { return item.id === activeSession; }) || session;
-        } catch (_err) { /* ignore */ }
-        setSlug(slugName);
-        setProgram("");
-        patchActiveSession({ program: "" });
-        setSelected(null);
-        setDetail(null);
-        setIngestNote("Added " + baseName + " to " + ((session && session.title) || "project"));
-        closeDialog();
-      } else {
-        const opened = await createTabProject(baseName);
-        if (!opened || !opened.ok) {
-          setSlug(slugName);
-          setIngestNote("Registered " + baseName + " (project creation failed)");
-          await loadBinaries();
-          return data;
-        }
-        const list = opened.list.map(function (item) {
-          if (item.id !== opened.id) return item;
-          const imports = (item.imports || []).slice();
-          if (imports.indexOf(slugName) < 0) imports.push(slugName);
-          return Object.assign({}, item, { imports: imports });
-        });
-        await persistSessions(list, opened.id);
-        setSlug(slugName);
-        setProgram("");
-        setIngestNote("Created project and added " + baseName);
-        closeDialog();
-      }
-      await loadBinaries();
-      const names = ((data.binary && data.binary.programs) || []).map(programName).filter(Boolean);
-      const target = names[0] || baseName;
-      if (target) {
-        if (names[0]) selectProgram(names[0]);
-        startImportPipeline(target);
-      }
-      return data;
+      return importPathIntoProject(path, baseName);
     }
 
     async function selectImportBinary(row) {
@@ -3018,6 +4325,7 @@
     }
 
     async function uploadFiles(fileList) {
+      if (dialog === "add-binary") closeDialog();
       const files = Array.from(fileList || []);
       const rels = files.map(function (file) { return file.webkitRelativePath || file.name; });
       const gprs = files.filter(function (file) { return /\.gpr$/i.test(file.name); });
@@ -3060,63 +4368,31 @@
         setIngestNote(data.error || "Could not resolve that drop to a project on disk.");
         return;
       }
-      let tabReady = tabHasRealProject(currentSession);
       for (const file of files) {
         const body = new FormData();
         body.append("file", file, file.name);
-        if (newSlug) body.append("slug", newSlug);
         body.append("role", role || "member");
-        let session = sessions.find(function (item) { return item.id === activeSession; }) || currentSession;
-        if (tabReady) {
-          body.append("label", (session && (session.title || session.projectSlug)) || "import");
-        } else if (label) {
-          body.append("label", label);
-        }
         const res = await fetch(API.binaries, { method: "POST", body: body });
         const data = await res.json();
-        reactJob("corpus.add-binary", data);
-        if (!data.ok) {
+        if (!data.ok || !data.binary) {
           setIngestNote(data.error || "upload failed");
+          showToast(data.error || "Could not stage " + file.name, "error");
           continue;
         }
-        if (!data.binary) continue;
-        const slugName = data.binary.slug;
-        if (tabReady) {
-          await importIntoTab(slugName);
-          try {
-            const sessRes = await fetch(API.sessions, { cache: "no-store" });
-            const sessData = await sessRes.json();
-            session = (sessData.sessions || []).find(function (item) { return item.id === activeSession; }) || session;
-          } catch (_err) { /* ignore */ }
-          if (session && session.projectSlug) setSlug(slugName);
-          setIngestNote("Added " + file.name + " to " + ((session && session.title) || "project"));
-        } else {
-          const opened = await createTabProject(file.name);
-          if (!opened || !opened.ok) {
-            setSlug(slugName);
-            setIngestNote("Registered " + file.name + " (project creation failed)");
-            continue;
-          }
-          const list = opened.list.map(function (item) {
-            if (item.id !== opened.id) return item;
-            return Object.assign({}, item, {
-              imports: mergeImportSlugs(sessionImportSlugs(item), [slugName], item.projectSlug || "")
-            });
-          });
-          await persistSessions(list, opened.id);
-          setSlug(slugName);
-          setIngestNote("Created project and added " + file.name);
-          tabReady = true;
+        const staged = data.binary.locator || data.binary.repo || "";
+        if (!staged) {
+          showToast("Upload landed but has no path to import.", "error");
+          continue;
         }
+        await importPathIntoProject(staged, file.name);
       }
-      await loadBinaries();
     }
 
     async function removeSlug(target) {
       if (!target) return;
       askConfirm({
         title: "Remove " + target + "?",
-        message: "Remove this binary from the corpus store. This cannot be undone from the dashboard.",
+        message: "Remove this leftover corpus row. Prefer Remove on a program in the open project.",
         danger: true,
         confirmLabel: "Remove",
         onConfirm: function () { removeSlugConfirmed(target); }
@@ -3187,8 +4463,16 @@
         createProject();
         return;
       }
+      if (!spec.id) return;
       openActionStrip(spec.id);
-      executeAction(spec.id, {}, { danger: spec.danger, mutating: spec.mutating });
+      const act = actions.find(function (item) { return item.id === spec.id; });
+      const mutating = spec.mutating || (act && act.mutating);
+      const danger = spec.danger || (act && act.danger);
+      executeAction(
+        spec.id,
+        catalogParamsFor(spec.id, {}),
+        { skipConfirm: !mutating && !danger, danger: danger, mutating: mutating }
+      );
     }
 
     async function shutdownServer() {
@@ -3209,7 +4493,7 @@
     async function restartServer() {
       askConfirm({
         title: "Restart server?",
-        message: "Restart the AgentDecompile HTTP server. Open tabs will reconnect when it is back.",
+        message: "Restart the AgentDecompile HTTP server. Open tabs reconnect when it is back.",
         confirmLabel: "Restart",
         onConfirm: async function () {
           showToast("Restarting server…", "success");
@@ -3326,42 +4610,6 @@
       showToast("Logical #" + logicalId + " — see Logical identities");
     }
 
-    const toolContext = useMemo(function () {
-      const tabSlugs = [];
-      const seen = new Set();
-      function addSlug(name) {
-        if (!name || seen.has(name)) return;
-        seen.add(name);
-        tabSlugs.push(name);
-      }
-      if (currentSession && currentSession.projectSlug && slug === currentSession.projectSlug) {
-        addSlug(currentSession.projectSlug);
-      }
-      sessionImportSlugs(currentSession).forEach(addSlug);
-      if (slug) addSlug(slug);
-      const tabRows = tabSlugs.map(function (name) {
-        return binaries.find(function (row) { return row.slug === name; });
-      }).filter(Boolean);
-      const projectNames = (dossier && dossier.ok ? (dossier.programs || []) : []).map(programName).filter(Boolean);
-      const activeRow = binaries.find(function (row) { return row.slug === slug; }) || tabRows[0] || {};
-      return {
-        slug: slug || (currentSession && currentSession.projectSlug) || "",
-        program: program || "",
-        repo: activeRow.repo || "",
-        addr: selected && selected.addr ? selected.addr : "",
-        name: selected && selected.name ? selected.name : "",
-        db: envDefaults.db || "",
-        work_dir: envDefaults.work_dir || "",
-        kb: envDefaults.kb || "",
-        recovered: recoveredRoot || "",
-        tabSlugs: tabSlugs,
-        tabRows: tabRows.length ? tabRows : binaries.slice(0, 32),
-        allBinaries: binaries,
-        programs: projectNames,
-        functions: rows
-      };
-    }, [binaries, slug, program, selected, rows, currentSession, dossier, envDefaults, recoveredRoot]);
-
     const pendingAction = pendingActionId
       ? actions.find(function (item) { return item.id === pendingActionId; })
       : null;
@@ -3382,22 +4630,41 @@
         onClick=${function () { openActionStrip(actionId); }}>${label}</button>`;
     }
 
+    function runActionButtonRun(actionId, label, options) {
+      const known = actions.some(function (item) { return item.id === actionId; });
+      if (!known) return null;
+      return html`<button type="button" className="wb-btn wb-btn-mini"
+        onClick=${function () {
+          executeAction(actionId, catalogParamsFor(actionId, options), { skipConfirm: true });
+        }}>${label}</button>`;
+    }
+
+    function runLadderStep(step) {
+      if (!step || !step.action_id) return;
+      executeAction(step.action_id, {
+        slug: step.action_slug || slug || "",
+        program: step.action_program || program || ""
+      }, { skipConfirm: !step.action_enabled, quiet: false });
+    }
+
     function renderEditorBody() {
       const tab = centerTab || "decompile";
       if (tab === "graph") {
-        return html`<${Surface} id="wb-graph" title="Graph">
-          ${graphUrl
-            ? html`<${HtmlIsland} url=${graphUrl} refreshKey=${slug + ":" + (selected && selected.addr)} className="wb-graph-island" />`
-            : html`<div className="wb-empty wb-empty-surface">
-              <p>${program
-                ? (program + " is a Ghidra program. Call Graph needs a corpus function — pick an Import, extract inventory, then select a row in Functions.")
-                : "Select a function in Functions, or pick an Import that has inventory."}</p>
-              <p className="wb-hint">Graph is empty until an address is selected. This is not a failed decompile.</p>
-            </div>`}
+        return html`<${Surface} id="wb-graph" title="Call trees">
+          <p className="wb-hint">Incoming and outgoing calls for this function. This is not Ghidra Function Graph.</p>
+          <${CallGraphView} graph=${graph} onPick=${function (node) {
+            const hit = rows.find(function (row) { return row.addr === node.addr; });
+            selectRow(hit || node);
+          }} />
         </${Surface}>`;
       }
       if (tab === "wb-overview") {
-        return html`<${Surface} id="wb-overview" title="Overview" actions=${panelActions()}>
+        const ladder = (corpusStatus && corpusStatus.ladder) || {};
+        return html`<${Surface} id="wb-overview" title="Overview" actions=${panelActions(
+          html`<button type="button" className="wb-btn wb-btn-mini" onClick=${function () { loadCorpusStatus(); }}>Refresh facts</button>`
+        )}>
+          ${quickBar("home")}
+          ${quickBar("project")}
           <${TabRoster}
             programs=${projectNames}
             imports=${importItems}
@@ -3411,27 +4678,44 @@
               selectImportBinary(row);
               showToast("Import " + ((row && row.slug) || ""));
             }} />
-          <p className="wb-hint">${sessionOverviewSlugs.length ? ("Corpus slugs: " + sessionOverviewSlugs.join(", ")) : "No corpus slugs in this tab."}</p>
-          <${HtmlIsland} url=${overviewUrl} refreshKey=${sessionOverviewSlugs.join("|") + "|" + projectNames.join("|")} className="wb-island wb-overview-island" compact=${true} />
+          <${HealthStrip} probes=${corpusStatus && corpusStatus.probes} atlasUrl=${atlasHref(corpusStatus)} />
+          <${CorpusHeadline} headline=${corpusStatus && corpusStatus.headline} claim=${corpusStatus && corpusStatus.claimBoundary} />
+          <${StepLadder} title="Corpus ladder" steps=${ladder.corpus_steps} onRun=${runLadderStep} />
+          <${BinaryCompareTable} binaries=${ladder.binaries} onOpen=${function (b) {
+            if (b && b.slug) { setSlug(b.slug); setCenterTab("wb-pipeline"); }
+          }} />
         </${Surface}>`;
       }
       if (tab === "wb-atlas") {
         return html`<${Surface} id="wb-atlas" title="Atlas" actions=${panelActions(
-          html`<a className="wb-btn wb-btn-mini" href="/atlas" target="_blank" rel="noreferrer">Open full page</a>`
+          runActionButton("corpus.export-atlas-db", "Export atlas DB"),
+          html`<a className="wb-btn wb-btn-mini" href=${atlasHref(corpusStatus)} target="_blank" rel="noreferrer">Decomp Atlas :5173</a>`
         )}>
-          <${HtmlIsland} url="/atlas?embed=1" refreshKey="atlas" className="wb-island wb-atlas-island" compact=${true} />
+          ${quickBar("atlas")}
+          <${AtlasReact} onToast=${function (name) { showToast(name || "Atlas function"); }} />
         </${Surface}>`;
       }
       if (tab === "wb-report") {
         return html`<${Surface} id="wb-report" title="Report" actions=${panelActions(
-          html`<a className="wb-btn wb-btn-mini" href="/report" target="_blank" rel="noreferrer">Open full page</a>`
+          runActionButton("corpus.coverage-report", "Coverage report"),
+          runActionButton("corpus.export-run-report", "Export run report"),
+          html`<button type="button" className="wb-btn wb-btn-mini" onClick=${function () { loadCorpusStatus(); }}>Refresh facts</button>`
         )}>
-          <${HtmlIsland} url="/report?embed=1" refreshKey="report" className="wb-island wb-report" compact=${true} />
+          ${quickBar("report")}
+          <${ReportReact} report=${corpusStatus && corpusStatus.report} />
         </${Surface}>`;
       }
       if (tab === "wb-pipeline") {
-        return html`<${Surface} id="wb-pipeline" title="Pipeline" actions=${panelActions()}>
-          <${HtmlIsland} url=${panelUrl("steps")} refreshKey="steps" className="wb-island wb-pipeline-island" compact=${true} />
+        const ladder = (corpusStatus && corpusStatus.ladder) || {};
+        const active = (ladder.binaries || []).find(function (b) { return b.slug === slug; }) || (ladder.binaries || [])[0];
+        return html`<${Surface} id="wb-pipeline" title="Pipeline" actions=${panelActions(
+          runActionButton("corpus.run", "Run pipeline"),
+          runActionButton("corpus.stages", "Stages"),
+          html`<button type="button" className="wb-btn wb-btn-mini" onClick=${function () { loadCorpusStatus(); }}>Refresh facts</button>`
+        )}>
+          ${quickBar("pipeline")}
+          <${StepLadder} title="Corpus" steps=${ladder.corpus_steps} onRun=${runLadderStep} />
+          ${active ? html`<${StepLadder} title=${"Build " + active.slug} steps=${active.steps} onRun=${runLadderStep} />` : null}
         </${Surface}>`;
       }
       if (tab === "wb-jobs") {
@@ -3444,81 +4728,258 @@
         </${Surface}>`;
       }
       if (tab === "wb-match") {
-        return html`<${Surface} id="wb-match" title="Cross-match" actions=${panelActions(
-          html`<button type="button" id="wb-run-cross-place" className="wb-btn wb-btn-mini wb-btn-primary"
-            onClick=${function () { openActionStrip("corpus.cross-place"); }}>Run Cross-place</button>`
+        const siblings = (detail && detail.siblings) || [];
+        const pair = matchPairParams(toolContext, binaries, siblings);
+        const canPair = pair.ok;
+        const canFn = Boolean(selected && selected.addr && program);
+        const canId = hasCorpusContext(toolContext);
+        const matchRunReady = canId ? canPair : canFn;
+        function runIdentity(actionId) {
+          if (!canId) {
+            showToast("Pick a program or corpus binary in Explorer first", "error");
+            return;
+          }
+          if (actionId === "corpus.apply-stabs" && !toolContext.slug) {
+            showToast("Pick a corpus binary slug for STABS apply", "error");
+            return;
+          }
+          if (actionId === "corpus.match-pair") {
+            if (!pair.src) {
+              showToast("No repo path for the active binary", "error");
+              return;
+            }
+            if (!pair.dst) {
+              showToast("Need a second binary for pair match", "error");
+              return;
+            }
+          }
+          executeAction(
+            actionId,
+            identityActionParams(actionId, toolContext, binaries, siblings),
+            { skipConfirm: true }
+          );
+        }
+        return html`<${Surface} id="wb-match" title="Match" actions=${panelActions(
+          runActionButtonRun("corpus.bsim-ingest", "BSim ingest"),
+          runActionButtonRun("corpus.bsim-report", "BSim report"),
+          runActionButton("corpus.bsim-createdatabase", "Create BSim DB")
         )}>
-          <${HtmlIsland} url=${panelUrl("crossmatch")} refreshKey="crossmatch" className="wb-island wb-match-island" compact=${true} />
+          <${MatchWorkbench}
+            program=${program}
+            selected=${selected}
+            detail=${detail}
+            bsim=${bsimStatus}
+            canMatchPair=${matchRunReady}
+            canMatchFunction=${canFn}
+            canIdentity=${canId}
+            onRefresh=${function () { loadMatchStatus(); showToast("BSim status refreshed"); }}
+            onRunMatch=${function () {
+              if (canId) {
+                runIdentity("corpus.match-pair");
+                return;
+              }
+              if (!canFn) {
+                showToast("Select a function first", "error");
+                return;
+              }
+              executeAction("mcp.match-function", {
+                addr: selected.addr,
+                name: selected.name || "",
+                program: program || ""
+              }, { skipConfirm: true });
+            }}
+            onRunMatchFunction=${function () {
+              if (!canFn) {
+                showToast("Select a function first", "error");
+                return;
+              }
+              executeAction("mcp.match-function", {
+                addr: selected.addr,
+                name: selected.name || "",
+                program: program || ""
+              }, { skipConfirm: true });
+            }}
+            onApplyStabs=${function () { runIdentity("corpus.apply-stabs"); }}
+            onLogicalBuild=${function () { runIdentity("corpus.logical-build"); }}
+            onMergeParts=${function () { runIdentity("corpus.merge-parts"); }}
+            onPropagate=${function () { runIdentity("corpus.propagate-source"); }}
+            onRunCrossPlace=${function () {
+              executeAction("corpus.cross-place", { program: program || "", slug: slug || "" }, { skipConfirm: true });
+            }}
+            onExtractStabs=${function () {
+              executeAction("corpus.extract-stabs", { program: program || "", slug: slug || "" }, { skipConfirm: true });
+            }}
+            onPickSibling=${function (sib) {
+              if (sib && sib.slug) setSlug(sib.slug);
+            }} />
+          <${BinaryCompareTable} binaries=${(corpusStatus && corpusStatus.ladder && corpusStatus.ladder.binaries) || []}
+            onOpen=${function (b) { if (b && b.slug) setSlug(b.slug); }} />
         </${Surface}>`;
       }
       if (tab === "wb-recovery") {
-        return html`<${Surface} id="wb-recovery" title="Recovery" actions=${panelActions(
-          runActionButton("corpus.recover", "Run recovery")
+        return html`<${Surface} id="wb-recovery" title="Recover" actions=${panelActions(
+          runActionButtonRun("corpus.genproject", "Genproject"),
+          runActionButtonRun("recover.inspect", "Inspect recover")
         )}>
-          <${HtmlIsland} url=${panelUrl("recovery")} refreshKey="recovery" compact=${true} />
+          <${RecoverWorkbench}
+            program=${program}
+            selected=${selected}
+            recover=${recoverInfo}
+            recoveredRoot=${recoveredRoot}
+            onRefresh=${function () { loadRecoverStatus(); showToast("Recovery status refreshed"); }}
+            onDump=${function () {
+              if (!((recoverInfo && recoverInfo.leftoverCount) || 0)) {
+                showToast("No leftover functions. Ghidra bulk is the recover path.", "error");
+                return;
+              }
+              executeAction("corpus.genproject", {
+                program: program || "",
+                "leftover-only": true
+              }, { skipConfirm: true });
+            }}
+            onOneShot=${function () {
+              if (!((recoverInfo && recoverInfo.leftoverCount) || 0)) {
+                showToast("No leftover functions. Ghidra bulk is the recover path.", "error");
+                return;
+              }
+              executeAction("reconstruct.one-shot", {
+                program: program || ""
+              }, { skipConfirm: true });
+            }}
+            onGhidraBulk=${function () {
+              executeAction("corpus.ghidra-bulk", { program: program || "" }, { skipConfirm: true });
+            }}
+            onCrossPlace=${function () {
+              executeAction("corpus.cross-place", { program: program || "" }, { skipConfirm: true });
+            }}
+            onIngest=${function () {
+              executeAction("corpus.ingest-recovered", {}, { skipConfirm: true });
+            }}
+            onExportC=${function () {
+              const loc = (typeof currentLocator === "function" ? currentLocator() : "") || "";
+              const work = envDefaults.work_dir || "";
+              if (!work) {
+                showToast("Set AGENT_DECOMPILE_CORPUS_WORK_DIR on the server", "error");
+                return;
+              }
+              const dest = work.replace(/\/?$/, "/") + "export-c";
+              executeAction("corpus.export-c", {
+                "repo-path": loc,
+                "out-dir": dest,
+                program: program || ""
+              }, { skipConfirm: true });
+            }}
+            onDecompile=${function () {
+              if (!selected || !selected.addr) {
+                showToast("Select a function first", "error");
+                return;
+              }
+              if (selected.decomp === "c") {
+                showToast("This logical function already has real C. Ghidra bulk skips it.", "error");
+                return;
+              }
+              executeAction("mcp.decompile-function", {
+                addr: selected.addr,
+                name: selected.name || "",
+                program: program || ""
+              }, { skipConfirm: true });
+            }} />
         </${Surface}>`;
       }
       if (tab === "wb-stabs") {
+        const bins = (corpusStatus && corpusStatus.ladder && corpusStatus.ladder.binaries) || [];
         return html`<${Surface} id="wb-stabs" title="STABS" actions=${panelActions(
-          runActionButton("corpus.stabs-link", "Run STABS link")
+          runActionButton("corpus.extract-stabs", "Extract STABS"),
+          runActionButton("corpus.stabs-manifest", "STABS manifest")
         )}>
-          <${HtmlIsland} url=${panelUrl("stabs")} refreshKey="stabs" compact=${true} />
+          ${quickBar("stabs")}
+          <p className="wb-hint">Named counts come from the live corpus snapshot. Extract STABS writes the index the ladder reads.</p>
+          <${BinaryCompareTable} binaries=${bins} onOpen=${function (b) { if (b && b.slug) setSlug(b.slug); }} />
         </${Surface}>`;
       }
       if (tab === "wb-knowledge") {
-        return html`<${Surface} id="wb-knowledge" title="Knowledge" actions=${panelActions()}>
-          <${HtmlIsland} url=${panelUrl("knowledge")} refreshKey="knowledge" compact=${true} />
+        const steps = ((corpusStatus && corpusStatus.ladder && corpusStatus.ladder.corpus_steps) || []).filter(function (s) {
+          return s.key === "calibrate-global" || s.key === "identify";
+        });
+        return html`<${Surface} id="wb-knowledge" title="Knowledge" actions=${panelActions(
+          runActionButton("corpus.bsim-ingest", "BSim ingest"),
+          runActionButton("corpus.bsim-report", "BSim report")
+        )}>
+          <${StepLadder} title="Identity and knowledge merge" steps=${steps} onRun=${runLadderStep} />
         </${Surface}>`;
       }
       if (tab === "wb-roundtrip") {
-        return html`<${Surface} id="wb-roundtrip" title="Roundtrip" actions=${panelActions()}>
-          <${HtmlIsland} url=${panelUrl("roundtrip")} refreshKey="roundtrip" compact=${true} />
+        const steps = ((corpusStatus && corpusStatus.ladder && corpusStatus.ladder.corpus_steps) || []).filter(function (s) {
+          return s.key === "leftover-recover" || s.key === "verify-byte-accuracy" || s.key === "apply-cross-build";
+        });
+        return html`<${Surface} id="wb-roundtrip" title="Roundtrip" actions=${panelActions(
+          runActionButton("reconstruct.run", "Reconstruct run"),
+          runActionButton("corpus.verify-legacy-recovered", "Verify legacy"),
+          runActionButton("corpus.external-bridge", "External bridge")
+        )}>
+          <${CorpusHeadline} headline=${corpusStatus && corpusStatus.headline} claim="Compile and byte-accuracy stay separate columns." />
+          <${StepLadder} title="Compile and verify" steps=${steps} onRun=${runLadderStep} />
         </${Surface}>`;
       }
       if (tab === "wb-processes") {
-        return html`<${Surface} id="wb-processes" title="Process log" actions=${panelActions()}>
-          <${HtmlIsland} url=${panelUrl("processes")} refreshKey=${String(jobs.length)} compact=${true} />
+        return html`<${Surface} id="wb-processes" title="Process log" actions=${panelActions(
+          runActionButton("mcp.status", "MCP status"),
+          runActionButton("corpus.run", "Run pipeline")
+        )}>
+          <${HealthStrip} probes=${corpusStatus && corpusStatus.probes} atlasUrl=${atlasHref(corpusStatus)} />
+          <ul id="action-jobs" className="wb-job-list">
+            ${jobs.length ? jobs.map(function (job) {
+              return html`<li key=${job.id}><code>${job.id}</code> ${job.actionId || ""} ${job.status}</li>`;
+            }) : html`<li>No catalog jobs in this session.</li>`}
+          </ul>
         </${Surface}>`;
       }
       if (tab === "wb-mission") {
-        return html`<${Surface} id="wb-mission" title="Mission" actions=${panelActions()}>
-          <${HtmlIsland} url=${panelUrl("directives")} refreshKey="directives" compact=${true} />
+        return html`<${Surface} id="wb-mission" title="Mission" actions=${panelActions(
+          html`<button type="button" className="wb-btn wb-btn-mini" onClick=${function () { loadCorpusStatus(); }}>Refresh</button>`
+        )}>
+          <${MissionReact} mission=${corpusStatus && corpusStatus.mission} />
         </${Surface}>`;
       }
       if (tab === "wb-corpus") {
         return html`<${Surface} id="wb-corpus" title="Corpus" actions=${panelActions(
+          runActionButton("corpus.init", "Init corpus"),
+          runActionButton("corpus.program-inventory", "Program inventory"),
+          runActionButton("corpus.add-binary", "Add binary"),
+          runActionButton("corpus.remove-binary", "Remove binary"),
           html`<button type="button" className="wb-btn wb-btn-mini" data-cmd="file.add-binaries"
-            onClick=${function () { runCommand("file.add-binaries"); }}>Add binaries…</button>`
+            onClick=${function () { runCommand("file.add-binaries"); }}>Add to project…</button>`
         )}>
-          <${HtmlIsland} url=${panelUrl("binaries")} refreshKey="binaries" compact=${true} />
+          <${BinaryCompareTable} binaries=${(corpusStatus && corpusStatus.ladder && corpusStatus.ladder.binaries) || []}
+            onOpen=${function (b) { if (b && b.slug) { setSlug(b.slug); setCenterTab("wb-pipeline"); } }} />
         </${Surface}>`;
       }
       if (tab === "wb-fnbrowse") {
         return html`<${Surface} id="wb-fnbrowse" title="Functions" actions=${html`<div className="wb-surface-actions">
-          <${FuncPager} offset=${funcOffset} limit=${funcLimit} shown=${rows.length} total=${total}
-            onOffset=${setFuncOffset} onLimit=${function (n) { setFuncLimit(n); setFuncOffset(0); }} />
+          <${FuncPager} limit=${funcLimit} shown=${rows.length} total=${total}
+            onLimit=${function (n) { setFuncLimit(n); setFuncOffset(0); }} />
           <button type="button" className="wb-btn wb-btn-mini"
             onClick=${function () { loadFuncs(slug, query); showToast("Function list reloaded", "success"); }}>Refresh</button>
         </div>`}>
+          ${quickBar("function")}
+          ${quickBar("functions")}
           <div className="wb-fnb-head">
             <label className="wb-fnb-filter">
               <span className="sr-only">Find a function by name or address</span>
               <input id="wb-fnbrowse-q" type="search" placeholder="Find a function by name or address…"
                 value=${query} onInput=${function (ev) { onSearch(ev.target.value); }} autocomplete="off" />
             </label>
-            <span className="wb-hint">${slug
-              ? (program ? slug + " · Ghidra program " + program : slug)
-              : "No build selected — pick an Import in Explorer."}</span>
+            <span className="wb-hint">${program
+              ? "Ghidra program " + program
+              : (slug ? slug : "Pick a program in Explorer.")}</span>
           </div>
           ${rows.length ? html`<table id="wb-fnbrowse-table" className="wb-fnb-table">
             <thead>
               <tr>
-                <th scope="col">Address</th>
                 <th scope="col">Name</th>
-                <th scope="col">Size</th>
-                <th scope="col">Logical</th>
-                <th scope="col">Decompiled C</th>
-                <th scope="col">Validated</th>
+                <th scope="col">Location</th>
+                <th scope="col">Function Signature</th>
+                <th scope="col">Function Size</th>
               </tr>
             </thead>
             <tbody>
@@ -3529,44 +4990,81 @@
                     if (!on) selectRow(row);
                     openCtx(ev, functionCtxItems(row));
                   }}
-                  onClick=${function () { selectRow(row); }}>
-                  <td><code>${row.addr}</code></td>
+                  onClick=${function () { selectRow(row); }}
+                  onDoubleClick=${function () { selectRow(row); jumpTo("decompile"); }}>
                   <td>${row.name}</td>
+                  <td><code>${row.addr}</code></td>
+                  <td className="wb-sig">${row.signature || "—"}</td>
                   <td className="wb-num">${row.size || ""}</td>
-                  <td>${row.logicalId
-                    ? html`<button type="button" className="wb-text-action"
-                        onClick=${function (ev) { ev.stopPropagation(); openLogicalId(row.logicalId); }}
-                        >#${row.logicalId}</button>`
-                    : html`<span className="wb-hint">unbound</span>`}</td>
-                  <td><span className=${"wb-flag st-" + (row.decomp || "none")}>${row.decomp || "none"}</span></td>
-                  <td><span className=${"wb-flag st-" + (row.validate || "none")}>${row.validate || "none"}</span></td>
                 </tr>`;
               })}
             </tbody>
           </table>` : html`<div className="wb-empty wb-empty-surface">
             <p>${funcNote || "Select a program in Explorer to list its functions."}</p>
             <p className="wb-empty-actions">
-              <button type="button" className="wb-btn wb-btn-primary" data-cmd="analyze.bsim-ingest"
-                onClick=${function () { runCommand("analyze.bsim-ingest"); }}>Ingest repository into BSim</button>
-              <button type="button" className="wb-btn" data-cmd="analyze.bsim-report"
-                onClick=${function () { runCommand("analyze.bsim-report"); }}>Report BSim</button>
+              <button type="button" className="wb-btn wb-btn-primary" data-cmd="analyze.program"
+                onClick=${function () { runCommand("analyze.program"); }}>Analyze program</button>
+              <button type="button" className="wb-btn" data-cmd="file.open-program"
+                onClick=${function () { runCommand("file.open-program"); }}>Open in Ghidra</button>
+              <button type="button" className="wb-btn" data-cmd="analyze.bsim-ingest"
+                onClick=${function () { runCommand("analyze.bsim-ingest"); }}>Ingest into BSim</button>
             </p>
           </div>`}
-          ${rows.length ? html`<${FuncPager} offset=${funcOffset} limit=${funcLimit} shown=${rows.length}
-            total=${total} onOffset=${setFuncOffset}
+          ${rows.length ? html`<${FuncPager} limit=${funcLimit} shown=${rows.length}
+            total=${total}
             onLimit=${function (n) { setFuncLimit(n); setFuncOffset(0); }} />` : null}
         </${Surface}>`;
       }
+      if (tab === "wb-artifacts") {
+        return html`<${Surface} id="wb-artifacts" title="Artifacts" actions=${panelActions()}>
+          <${ArtifactsReact} path=${artifactPath} onOpen=${setArtifactPath} />
+        </${Surface}>`;
+      }
+      if (tab === "wb-evidence") {
+        return html`<${Surface} id="wb-evidence" title="Database" actions=${panelActions()}>
+          <${EvidenceReact} />
+        </${Surface}>`;
+      }
       if (tab === "wb-logical") {
-        return html`<${Surface} id="wb-logical" title="Logical identities" actions=${panelActions()}>
-          <p className="wb-hint">The same function across builds. Click a row to open it in Functions.</p>
-          <${HtmlIsland} url=${blockUrl("logical")} refreshKey=${"logical:" + slug} compact=${true} />
+        return html`<${Surface} id="wb-logical" title="Logical identities" actions=${panelActions(
+          runActionButton("corpus.logical-build", "Logical build"),
+          runActionButton("corpus.propagate-source", "Propagate source"),
+          runActionButton("corpus.cross-place", "Cross-place")
+        )}>
+          <p className="wb-hint">Same function across builds. Bound vs real C is the identity picture.</p>
+          <${BinaryCompareTable} binaries=${(corpusStatus && corpusStatus.ladder && corpusStatus.ladder.binaries) || []}
+            onOpen=${function (b) { if (b && b.slug) setSlug(b.slug); }} />
         </${Surface}>`;
       }
       if (tab === "wb-review") {
-        return html`<${Surface} id="wb-review" title="Review" actions=${panelActions()}>
-          <p className="wb-hint">Match rows that still need a human. Real C and byte-accuracy stay separate.</p>
-          <${HtmlIsland} url=${blockUrl("review")} refreshKey=${"review:" + slug} compact=${true} />
+        return html`<${Surface} id="wb-review" title="Review" actions=${panelActions(
+          runActionButton("corpus.reclassify-matches", "Reclassify"),
+          runActionButton("corpus.match-pair", "Re-run match"),
+          runActionButton("corpus.evaluate-pair", "Evaluate pair"),
+          html`<button type="button" className="wb-btn wb-btn-mini"
+            onClick=${function () { batchReviewPage("accept"); }}>Accept page</button>`,
+          html`<button type="button" className="wb-btn wb-btn-mini"
+            onClick=${function () { batchReviewPage("reject"); }}>Reject page</button>`
+        )}>
+          <p className="wb-hint">Review-tier match rows ranked by score. Accept or reject from the row or the toolbar.</p>
+          <${ReviewReact} review=${corpusStatus && corpusStatus.review} onDecide=${function (row, decision) {
+            if (!row) return;
+            fetch(API.matchDecide, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                decision: decision,
+                src_addr: row.src_addr,
+                dst_addr: row.dst_addr,
+                src_binary_id: row.src_binary_id,
+                dst_binary_id: row.dst_binary_id
+              })
+            }).then(function (res) { return res.json(); }).then(function (data) {
+              showToast((decision === "accept" ? "Accepted" : "Rejected") + " match", "info");
+              loadCorpusStatus();
+              if (!data || data.ok === false) showToast((data && data.error) || "Decide failed", "error");
+            }).catch(function (e) { showToast(String(e && e.message || e), "error"); });
+          }} />
         </${Surface}>`;
       }
       if (tab === "wb-tools") {
@@ -3593,7 +5091,7 @@
             <input type="search" id="wb-cmd-filter" placeholder=${"Filter " + actions.length + " commands…"}
               value=${commandFilter} onInput=${function (ev) { setCommandFilter(ev.target.value); }} />
           </label>
-          <p className="wb-hint">${matches.length} of ${actions.length} commands. Click one to load it into the run strip with the current selection.</p>
+          <p className="wb-hint">${matches.length} of ${actions.length} commands. Click a command to load it.</p>
           ${recentActionIds.length && !needle ? html`<section className="wb-cmd-group">
             <h3>Recent</h3>
             <ul className="wb-cmd-list">
@@ -3642,20 +5140,34 @@
           </div>
         </section>`;
       }
-      return html`<${Surface} id="wb-inspect" title="Listing">
-        <div id="wb-inspect-body">
-          ${selected ? html`<div>
-            <h3>${selected.name} <code>${selected.addr}</code></h3>
-            <p className="wb-hint">logical ${selected.logicalId || "unbound"}</p>
-            <div className="wb-fn-tools" role="toolbar" aria-label="Function tools">
-              <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { openActionStrip("mcp.decompile-function"); }}>Decompile</button>
-              <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { openActionStrip("mcp.manage-comments"); }}>Comment</button>
-              <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { openActionStrip("mcp.create-label"); }}>Label</button>
-              <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { openActionStrip("mcp.get-references"); }}>Xrefs</button>
-              <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { openActionStrip("mcp.analyze-data-flow"); }}>Data flow</button>
-              <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { openActionStrip("mcp.manage-bookmarks"); }}>Bookmark</button>
-              <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { openActionStrip("mcp.manage-function"); }}>Rename</button>
-              <button type="button" className="wb-btn wb-btn-mini" onClick=${function () { openActionStrip("mcp.match-function"); }}>Match</button>
+      const decompileText = (detail && detail.decompile && detail.decompile.text) || "";
+      const listingTitle = (selected && selected.name) || program || "Listing";
+      return html`<${Surface} id="wb-inspect" title=${"Listing: " + (program || "—")}>
+        <div id="wb-inspect-body" className=${"wb-workspace-split" + (decompileText ? "" : " wb-listing-only")}>
+          <div className="wb-listing-pane">
+          ${overview || selected || program ? html`<div>
+            <h3>Listing ${listingTitle} ${(selected && selected.addr) ? html`<code>${selected.addr}</code>` : null}</h3>
+            <p className="wb-hint">${(detail && detail.path) || (overview && overview.path) || ""}</p>
+            <div className="wb-fn-tools" role="toolbar" aria-label="Listing tools">
+              <button type="button" id="wb-analyze" className="wb-btn wb-btn-mini wb-btn-primary" data-cmd="analyze.program"
+                onClick=${function () {
+                  if (!program) { showToast("Select a program first", "error"); return; }
+                  startImportPipeline(program);
+                  showToast("analyze-program started on " + program);
+                }}>Analyze</button>
+              <button type="button" id="wb-listing-decompile" className="wb-btn wb-btn-mini"
+                onClick=${function () {
+                  if (!selected || !selected.addr) { showToast("Select a function first", "error"); return; }
+                  executeAction("mcp.decompile-function", {
+                    addr: selected.addr, name: selected.name || "", program: program || ""
+                  }, { skipConfirm: true });
+                }}>Decompile</button>
+              <button type="button" id="wb-listing-match" className="wb-btn wb-btn-mini"
+                onClick=${function () { jumpTo("wb-match"); }}>Match</button>
+              <button type="button" id="wb-listing-recover" className="wb-btn wb-btn-mini"
+                onClick=${function () { jumpTo("wb-recovery"); }}>Recover</button>
+              <button type="button" id="wb-listing-fields" className="wb-btn wb-btn-mini"
+                onClick=${function () { openActionStrip(selected ? "mcp.manage-function" : "mcp.decompile-function"); }}>Fields…</button>
             </div>
             ${(detail && detail.siblings && detail.siblings.length) ? html`<ul className="wb-siblings">
               ${detail.siblings.map(function (sib) {
@@ -3665,22 +5177,26 @@
                 </li>`;
               })}
             </ul>` : null}
-            <pre className="wb-preview">${(detail && detail.preview) || "No recovered C on disk."}</pre>
+            <pre className="wb-preview" id="wb-listing-preview">${(detail && detail.preview) || (program
+              ? ("Reading " + program + " from the Ghidra project on disk…")
+              : "Pick a program in Explorer.")}</pre>
           </div>` : html`<div className="wb-empty wb-empty-surface">
-            <p>${program
-              ? ("Listing " + program + ". Pick a function, or ingest the repository into BSim so the function list fills.")
-              : (hasProject
-                ? "Pick a program in Explorer. Functions and listing come from that program — same as IDA or Ghidra."
-                : "File → Open a Ghidra repository, then pick a program.")}</p>
-            <p className="wb-empty-actions">
-              <button type="button" className="wb-btn wb-btn-primary" data-cmd="analyze.bsim-ingest"
-                onClick=${function () { runCommand("analyze.bsim-ingest"); }}>Ingest repository into BSim</button>
-              <button type="button" className="wb-btn" data-cmd="view.browse"
-                onClick=${function () { runCommand("view.browse"); }}>Functions</button>
-            </p>
+            <p>${hasProject
+              ? "Pick a program in Explorer. Listing comes from that program."
+              : "File → Open a Ghidra repository, then pick a program."}</p>
           </div>`}
+          </div>
+          ${decompileText ? html`<div className="wb-decompile-pane">
+            <h3>Decompile: ${(selected && selected.name) || "function"}</h3>
+            <p className="wb-hint">${(detail.decompile && detail.decompile.source === "recovered")
+              ? "Recovered C for this function."
+              : "Decompiler pane."}</p>
+            <pre className="wb-preview" id="wb-decompile-preview">${decompileText}</pre>
+          </div>` : null}
           <div id="wb-reaction" className="wb-reaction">
-            ${reaction && (selected || String(reaction.id || "").indexOf("decompile") >= 0) ? html`<p><strong>${reaction.id}</strong> ${formatJobSummary(reaction.data)}</p>
+            ${reaction && /analyze|decompile|match-function|export-c|one-shot|recover/.test(String(reaction.id || ""))
+              && String(reaction.id || "").indexOf("add-binary") < 0
+              ? html`<p><strong>${actionTitle(reaction.id, actions)}</strong> ${formatJobSummary(reaction.data, actions)}</p>
               ${reaction.data && reaction.data.job && reaction.data.job.id
                 ? html`<button type="button" className="wb-text-action"
                     onClick=${function () { selectJobInDock(reaction.data.job.id); }}>View log in dock</button>`
@@ -3712,9 +5228,10 @@
           <button type="button" className="wb-server-btn" data-cmd="view.palette"
             onClick=${function () { setPaletteOpen(true); setPaletteQuery(""); }}
             title=${"Command palette (" + accelLabel("mod+K") + ")"}>${accelLabel("mod+K")}</button>
-          <span id="job-pulse">${running.length ? running.length + " running" : (jobs[0] ? jobs[0].status : "idle")}</span>
+          <span id="job-pulse">${running.length ? running.length + " running" : "idle"}</span>
         </p>
       </header>
+      <${RepoStatus} dossier=${dossier} user=${sharedUser} />
       <nav id="wb-menubar" className="wb-menubar" aria-label="Application">
         ${[
           ["file", "File", [
@@ -3722,11 +5239,13 @@
             ["New Tab", "file.new-tab"],
             ["Open…", "file.open"],
             ["Open from URL…", "file.open-url"],
-            ["Add binaries…", "file.add-binaries"],
+            ["Add to project…", "file.add-binaries"],
             ["—"],
             ["Reload from disk", "file.reload"],
             ["Save", "file.save"],
             ["Save As…", "file.save-as"],
+            ["Check in to Ghidra server", "file.checkin"],
+            ["Open selected program in Ghidra", "file.open-program"],
             ["—"],
             ["Close Tab", "file.close-tab"]
           ]],
@@ -3739,8 +5258,11 @@
             ["—"],
             ["Listing", "view.listing"],
             ["Functions", "view.browse"],
-            ["Logical identities", "view.logical"],
-            ["Call Graph", "view.graph"],
+            ["Call trees", "view.graph"],
+            ["Match", "view.cross-match"],
+            ["Recover", "view.recovery"],
+            ["Artifacts", "view.artifacts"],
+            ["Database", "view.evidence"],
             ["Inspector", "view.inspect"],
             ["—"],
             ["Overview", "view.overview"],
@@ -3748,20 +5270,19 @@
             ["Atlas", "view.atlas"],
             ["Jobs", "view.jobs"],
             ["—"],
-            ["Cross-match", "view.cross-match"],
             ["Run Cross-place", "run.cross-place"],
-            ["Recovery", "view.recovery"],
             ["STABS", "view.stabs"],
             ["Knowledge", "view.knowledge"],
+            ["Logical identities", "view.logical"],
             ["Review", "view.review"],
             ["Report", "view.report"],
             ["Corpus table", "view.corpus"],
             ["Commands", "view.tools"],
             ["—"],
-            ["Compact density", "view.density-compact"],
-            ["Comfortable density", "view.density-comfortable"],
-            ["Jobs dock on side (wide screens)", "view.jobs-rail"],
-            ["Jobs dock on bottom", "view.jobs-bottom"]
+            ["Use compact layout", "view.density-compact"],
+            ["Use roomy layout", "view.density-comfortable"],
+            ["Dock jobs on the side", "view.jobs-rail"],
+            ["Dock jobs at the bottom", "view.jobs-bottom"]
           ]],
           ["analyze", "Analyze", [
             ["Analyze program", "analyze.program"],
@@ -3770,14 +5291,13 @@
             ["Create BSim database", "analyze.bsim-create"]
           ]],
           ["server", "Server", [
-            ["Restart Server", null, restartServer],
-            ["Shutdown Server", null, shutdownServer]
+            ["Restart server", null, restartServer],
+            ["Shut down server", null, shutdownServer]
           ]],
           ["help", "Help", [
-            ["Keyboard & five ways…", "help.access"],
-            ["Swagger / all commands", null, function () { window.location.href = "/docs"; }],
-            ["Full corpus overview", null, function () { window.location.href = "/dashboard/overview-corpus"; }],
-            ["Classic overview (legacy)", "help.classic-overview"]
+            ["Shortcuts and menus…", "help.access"],
+            ["Open all commands", null, function () { window.location.href = "/docs"; }],
+            ["Overview", "help.overview"]
           ]]
         ].map(function (entry) {
           const id = entry[0];
@@ -3858,7 +5378,7 @@
                 if (dirty) {
                   askConfirm({
                     title: "Close " + (item.title || "tab") + "?",
-                    message: "This closes the project tab, not an editor buffer. File → Open reopens it.",
+                    message: "This closes the project tab. File → Open reopens it.",
                     confirmLabel: "Close tab",
                     danger: true,
                     onConfirm: function () { closeTab(item.id); }
@@ -3918,9 +5438,7 @@
         onChange=${function (ev) { if (ev.target.files && ev.target.files.length) uploadFiles(ev.target.files); }} />
       <input id="wb-bin-folder-global" type="file" webkitdirectory="true" hidden ref=${folderRef}
         onChange=${function (ev) { if (ev.target.files && ev.target.files.length) uploadFiles(ev.target.files); }} />
-      ${toast ? html`<div className=${"wb-toast" + (toastKind ? " kind-" + toastKind : "")} role="status">${toast}</div>` : null}
-
-      <${Modal} open=${dialog === "open"} title="Open Project" onClose=${closeDialog} error=${dialogError} footer=${html`
+      <${Modal} open=${dialog === "open"} title="Open project" onClose=${closeDialog} error=${dialogError} footer=${html`
         <button type="button" className="wb-btn" onClick=${closeDialog}>Cancel</button>
         <button type="button" className="wb-btn wb-btn-primary" id="wb-open-paste-go" onClick=${openPastedPath}>Open path</button>
       `}>
@@ -3931,7 +5449,7 @@
         </label>
         <div className="wb-dialog-tabs">
           <button type="button" className=${openTab === "local" ? "on" : ""} onClick=${function () { setOpenTab("local"); }}>This computer</button>
-          <button type="button" className=${openTab === "remote" ? "on" : ""} onClick=${function () { setOpenTab("remote"); }}>Remote URL</button>
+          <button type="button" className=${openTab === "remote" ? "on" : ""} onClick=${function () { setOpenTab("remote"); }}>Ghidra Server</button>
         </div>
         ${openTab === "local" ? html`<div>
           <div id="wb-drop" className="wb-drop wb-drop-compact" tabindex="0" ref=${dropRef}
@@ -3939,11 +5457,11 @@
             onDragOver=${function (ev) { ev.preventDefault(); ev.currentTarget.classList.add("on"); }}
             onDragLeave=${function (ev) { ev.currentTarget.classList.remove("on"); }}
             onDrop=${onDrop}>
-            Drop a .gpr, .rep folder, repos tree, or PE/ELF
+            Drop a .gpr, repos folder, or binary
           </div>
           <p className="wb-dialog-actions">
             <button type="button" className="wb-btn" onClick=${triggerFolderUpload}>Choose folder…</button>
-            <button type="button" className="wb-btn wb-btn-primary" onClick=${createProject}>New empty project</button>
+            <button type="button" className="wb-btn wb-btn-primary" onClick=${createProject}>Create empty project</button>
           </p>
           <div id="wb-browse" className="wb-browse">
             <p className="wb-browse-path">
@@ -3955,7 +5473,7 @@
                 return html`<li key=${entry.path} className=${"kind-" + styleKind(entry.kind)}>
                   <button type="button" className="wb-browse-item" data-kind=${entry.kind}
                     onClick=${function () {
-                      if (entry.kind === "binary") {
+                      if (entry.kind === "binary" || entry.kind === "packed-program") {
                         openBinaryPath(entry.path, entry.name);
                       } else if (entry.kind === "gpr" || entry.kind === "project-dir" || entry.kind === "shared-fs") {
                         openLocator(entry.path, entry.name);
@@ -3972,15 +5490,16 @@
           </div>
         </div>` : html`<form id="wb-shared-form" className="wb-bin-form" onSubmit=${registerShared}>
           <label>URL
-            <input id="wb-shared-url" placeholder="ghidra://127.0.0.1:13100/Repo/Game.exe"
+            <input id="wb-shared-url" placeholder="ghidra://127.0.0.1/Repo/Game.exe"
               value=${sharedUrl} onInput=${function (ev) { setSharedUrl(ev.target.value); }} />
           </label>
-          <p className="wb-hint">Or build from host, port, and repository:</p>
-          <label>Host<input id="wb-shared-host" value=${sharedHost} onInput=${function (ev) { setSharedHost(ev.target.value); }} /></label>
-          <label>Port<input id="wb-shared-port" value=${sharedPort} onInput=${function (ev) { setSharedPort(ev.target.value); }} /></label>
-          <label>Repository<input id="wb-shared-repo" value=${sharedRepo} onInput=${function (ev) { setSharedRepo(ev.target.value); }} /></label>
+          <p className="wb-hint">Ghidra Server uses RMI. The user is not part of the URL.</p>
+          <label>Server Name<input id="wb-shared-host" value=${sharedHost} onInput=${function (ev) { setSharedHost(ev.target.value); }} /></label>
+          <label>Port Number<input id="wb-shared-port" value=${sharedPort} onInput=${function (ev) { setSharedPort(ev.target.value); }} /></label>
+          <label>Repository Name<input id="wb-shared-repo" value=${sharedRepo} onInput=${function (ev) { setSharedRepo(ev.target.value); }} /></label>
+          <label>User<input id="wb-shared-user" value=${sharedUser} onInput=${function (ev) { setSharedUser(ev.target.value); }} /></label>
           <label>Program<input id="wb-shared-program" value=${sharedProgram} onInput=${function (ev) { setSharedProgram(ev.target.value); }} /></label>
-          <p className="wb-hint"><code>${builtSharedUrl() || "ghidra://host:port/repository"}</code></p>
+          <p className="wb-hint"><code>${builtSharedUrl() || "ghidra://host/repository"}</code></p>
           <button type="submit" id="wb-shared-add" className="wb-btn wb-btn-primary">Open</button>
         </form>`}
       </${Modal}>
@@ -3998,23 +5517,41 @@
             <select value=${saveAsTarget} onChange=${function (ev) { setSaveAsTarget(ev.target.value); }}>
               <option value="ghidra-project">Local Ghidra project (.gpr)</option>
               <option value="shared-fs">Shared server folder (filesystem layout)</option>
-              <option value="shared-project">HTTP / ghidra:// link with local checkout</option>
+              <option value="shared-project">Ghidra Server (ghidra://) with local checkout</option>
             </select>
           </label>
           ${saveAsTarget === "shared-project" ? html`<label>Server URL
-            <input id="wb-save-as-url" value=${saveAsUrl} placeholder="ghidra://host:13100/repo"
+            <input id="wb-save-as-url" value=${saveAsUrl} placeholder="ghidra://host/repo"
               onInput=${function (ev) { setSaveAsUrl(ev.target.value); }} />
           </label>` : html`<label>Folder <span className="wb-hint">optional</span>
             <input value=${saveAsDest} placeholder="defaults to work directory"
               onInput=${function (ev) { setSaveAsDest(ev.target.value); }} />
           </label>`}
-          <p className="wb-hint">Save writes project metadata on disk. Ghidra program databases are not copied unless you already have a local .gpr tree.</p>
+          <p className="wb-hint">Save writes project metadata on disk. Ghidra databases are not copied.</p>
         </form>
       </${Modal}>
 
-      <${Modal} open=${dialog === "access"} title="Keyboard & five ways" onClose=${closeDialog}
+      <${Modal} open=${dialog === "add-binary"} title="Add binary to this project" onClose=${closeDialog} error=${dialogError}
+        footer=${html`
+          <button type="button" className="wb-btn" onClick=${closeDialog}>Cancel</button>
+          <button type="button" className="wb-btn" onClick=${triggerFileUpload}>Choose file…</button>
+          <button type="submit" form="wb-add-binary-form" className="wb-btn wb-btn-primary">Add to project</button>
+        `}>
+        <form id="wb-add-binary-form" onSubmit=${submitAddToProject}>
+          <p className="wb-hint">${currentLocator()
+            ? "The file is imported into the open Ghidra project."
+            : "This tab has no project yet. Add creates one, then imports the binary."}</p>
+          <label>Binary path
+            <input id="wb-add-path" value=${addPath} placeholder="/path/to/game.exe"
+              onInput=${function (ev) { setAddPath(ev.target.value); }}
+              onKeyDown=${function (ev) { if (ev.key === "Enter") { ev.preventDefault(); submitAddToProject(ev); } }} />
+          </label>
+        </form>
+      </${Modal}>
+
+      <${Modal} open=${dialog === "access"} title="Shortcuts and menus" onClose=${closeDialog}
         footer=${html`<button type="button" className="wb-btn wb-btn-primary" onClick=${closeDialog}>Close</button>`}>
-        <p className="wb-hint">Every workbench verb is reachable five ways: menubar, ⌘K palette, right-click context menu, shortcut, and an in-place button.</p>
+        <p className="wb-hint">Use the menu, the command palette, a right-click, a shortcut, or a button.</p>
         <table className="wb-access-table">
           <thead><tr><th>Command</th><th>Menu</th><th>Palette</th><th>Context</th><th>Key</th></tr></thead>
           <tbody>
@@ -4031,12 +5568,12 @@
         </table>
       </${Modal}>
 
-      <div className="wb-app-shell">
-        <aside id="wb-sidebar" className="wb-sidebar"
+      <div className="wb-app-shell" style=${{ "--wb-side-w": sideW + "px" }}>
+        <aside id="wb-sidebar" className="wb-sidebar" style=${{ width: sideW + "px", flexBasis: sideW + "px" }}
           onContextMenu=${function (ev) {
             const items = [
               { id: "file.open", title: "Open…" },
-              { id: "file.add-binaries", title: "Add binaries…" },
+              { id: "file.add-binaries", title: "Add to project…" },
               "—",
               { id: "file.save", title: "Save" },
               { id: "file.save-as", title: "Save As…" },
@@ -4045,13 +5582,16 @@
             ].map(decorateCommandItem);
             openCtx(ev, items);
           }}>
-          <div id="wb-sources" className="wb-sidebar-section">
+          <div id="wb-sources" className="wb-sidebar-section" style=${{ flex: "0 0 " + explorerH + "px", height: explorerH + "px" }}>
             <header className="wb-sidebar-head">
               <h3>Explorer</h3>
+              <button type="button" className="wb-text-action" data-cmd="file.add-binaries"
+                title="Import a binary into this Ghidra project"
+                onClick=${function () { runCommand("file.add-binaries"); }}>Add to project</button>
             </header>
             <ul id="wb-binary-list" className="wb-source-tree">
               ${projectCard ? html`<li key=${projectCard.key}
-                className=${((activeProjectSlug && slug === activeProjectSlug && !program && !(projectCard.imports || []).some(function (item) { return item.row.slug === slug; })) ? "on " : "") + "kind-" + projectCard.kind + " wb-source-project"}>
+                className=${((activeProjectSlug && slug === activeProjectSlug && !program) ? "on " : "") + "kind-" + projectCard.kind + " wb-source-project"}>
                 <button type="button" className="wb-bin" data-slug=${(projectCard.row && projectCard.row.slug) || activeProjectSlug || projectCard.name}
                   onContextMenu=${function (ev) { openCtx(ev, projectCtxItems()); }}
                   onClick=${function () {
@@ -4065,62 +5605,53 @@
                   }}>
                   ${projectCard.name}
                 </button>
-                ${((projectCard.programs || []).length || (projectCard.imports || []).length) ? html`<ul className="wb-programs">
-                  ${(projectCard.imports || []).length ? html`<li className="wb-import-head">Imports · corpus store</li>` : null}
-                  ${(projectCard.imports || []).map(function (item) {
-                    const row = item.row || {};
-                    return html`<li key=${item.key} className=${"wb-import" + (slug === row.slug && !program ? " on" : "")}
-                      onContextMenu=${function (ev) { openCtx(ev, importCtxItems(row)); }}>
-                      <button type="button" className="wb-text-action"
-                        onClick=${function (ev) {
-                          ev.stopPropagation();
-                          selectImportBinary(row);
-                        }}>${item.name}</button>
-                      <button type="button" className="wb-text-action wb-remove"
-                        onClick=${function (ev) {
-                          ev.stopPropagation();
-                          removeSlug(row.slug);
-                        }}>Remove</button>
-                    </li>`;
-                  })}
-                  ${(projectCard.programs || []).length ? html`<li className="wb-program-head">Programs · Ghidra project</li>` : null}
+                ${((projectCard.programs || []).length) ? html`<ul className="wb-programs">
                   ${(projectCard.programs || []).map(function (name) {
                     const meter = programProgress[name] || null;
-                    const live = meter && meter.status && meter.status !== "ok";
+                    const live = meter && (meter.status === "queued" || meter.status === "running");
                     return html`<li key=${"prog-" + name} className=${"wb-program" + (program === name && slug === activeProjectSlug ? " on" : "") + (live ? " live" : "")}
                       onContextMenu=${function (ev) { openCtx(ev, programCtxItems(name)); }}>
                       <button type="button" className="wb-text-action"
+                        title=${name}
                         onClick=${function (ev) {
                           ev.stopPropagation();
                           selectProgram(name);
                           if (activeProjectSlug) setSlug(activeProjectSlug);
                           setSelected(null);
                           setDetail(null);
+                        }}
+                        onDoubleClick=${function (ev) {
+                          ev.stopPropagation();
+                          selectProgram(name);
+                          if (activeProjectSlug) setSlug(activeProjectSlug);
+                          ensureGhidraProgram(name, { locator: currentLocator() });
+                          jumpTo("decompile");
                         }}>${name}</button>
-                      ${meter ? html`<span className="wb-prog-pct" title=${meter.tool || ""}>${meter.pct}%</span>` : null}
-                      ${meter && live ? html`<span className="wb-prog-meter" aria-hidden="true"><i style=${{ transform: "scaleX(" + (Number(meter.pct) / 100) + ")" }}></i></span>` : null}
+                      <button type="button" className="wb-text-action wb-remove"
+                        title=${"Remove " + name + " from this project"}
+                        onClick=${function (ev) {
+                          ev.stopPropagation();
+                          removeProgramFromProject(name);
+                        }}>Remove</button>
+                      ${live ? html`<span className="wb-prog-pct" title=${meter.tool || ""}>${meter.pct}%</span>` : null}
+                      ${live ? html`<span className="wb-prog-meter" aria-hidden="true"><i style=${{ transform: "scaleX(" + (Number(meter.pct) / 100) + ")" }}></i></span>` : null}
                     </li>`;
                   })}
-                </ul>` : null}
+                </ul>` : html`<ul className="wb-programs">
+                  <li className="wb-empty">Add binaries into this project.</li>
+                </ul>`}
               </li>` : null}
-              ${!projectCard && importItems.length ? importItems.map(function (item) {
-                const row = item.row || {};
-                return html`<li key=${item.key} className=${(slug === row.slug ? "on " : "") + "kind-" + item.kind + " wb-source-import"}>
-                  <button type="button" className="wb-bin" data-slug=${row.slug}
-                    onClick=${function () { selectImportBinary(row); }}>${item.name}</button>
-                  <button type="button" className="wb-text-action wb-remove"
-                    onClick=${function () { removeSlug(row.slug); }}>Remove</button>
-                </li>`;
-              }) : null}
-              ${!projectCard && !importItems.length ? html`<li className="wb-empty">File → Open to load a project.</li>` : null}
+              ${!projectCard ? html`<li className="wb-empty">This tab is the project. File → Open a .gpr, a repos folder, or a ghidra:// URL.</li>` : null}
             </ul>
           </div>
+          <${SplitHandle} axis="y" label="Resize explorer"
+            onDrag=${function (ev) { beginResize(ev, explorerH, setExplorerH, "wb-explorer-h", "y", 80, 720, false); }} />
           <div id="wb-functions" className="wb-sidebar-section">
             <h3>Functions ${total ? "(" + total + ")" : ""} ${checkedAddrs.length ? html`<span className="wb-sel-chip">${checkedAddrs.length} selected <button type="button" className="wb-sel-clear" aria-label="Clear function selection" onClick=${function () { setCheckedAddrs([]); setCheckAnchor(""); }}>×</button></span>` : null}</h3>
             <span id="wb-func-meta" className="sr-only">${total || 0} functions${checkedAddrs.length ? ", " + checkedAddrs.length + " selected" : ""}</span>
-            ${total > rows.length || funcOffset ? html`<${FuncPager} compact=${true}
-              offset=${funcOffset} limit=${funcLimit} shown=${rows.length} total=${total}
-              onOffset=${setFuncOffset} onLimit=${setFuncLimit} />` : null}
+            ${html`<${FuncPager} compact=${true}
+              limit=${funcLimit} shown=${rows.length} total=${total}
+              onLimit=${function (n) { setFuncLimit(n); setFuncOffset(0); }} />`}
             <div id="wb-func-window" className="wb-func-window" tabindex="0"
               onContextMenu=${function (ev) {
                 openCtx(ev, [
@@ -4150,7 +5681,7 @@
                     aria-label=${"Select " + (row.name || row.addr)}
                     onClick=${function (ev) { onFuncCheck(ev, row); }}
                     onChange=${function () { /* controlled by onClick */ }} />
-                  <code>${row.addr}</code><span>${row.name}</span>
+                  <code title=${row.addr}>${row.addr}</code><span title=${row.name || ""}>${row.name}</span>
                 </div>`;
               })}
               ${!rows.length ? html`<p className="wb-hint">${funcNote || "Select a program to list functions."}</p>` : null}
@@ -4161,6 +5692,8 @@
             </p>
           </div>
         </aside>
+        <${SplitHandle} axis="x" label="Resize explorer"
+          onDrag=${function (ev) { beginResize(ev, sideW, setSideW, "wb-side-w", "x", 180, 900, false); }} />
 
       <div className="wb-editor"
         onContextMenu=${function (ev) {
@@ -4180,13 +5713,32 @@
         ${dossier && dossier.ok ? html`<div id="wb-project-bar" className="wb-editor-meta">
           <span className=${"wb-kind wb-kind-" + styleKind(dossier.kind)}>${kindTitle(dossier.kind)}</span>
           <code className="wb-project-path">${dossier.locator || ""}</code>
-          <span className="wb-hint">${dossier.program_count != null ? dossier.program_count + " programs" : ""}${tabImports.length ? " · " + tabImports.length + " import(s)" : ""}</span>
+          <span className="wb-hint">${[
+            dossier.program_count != null ? dossier.program_count + " programs" : "",
+            overview && overview.functionCount ? overview.functionCount + " functions" : ""
+          ].filter(Boolean).join(" · ")}</span>
         </div>` : null}
         <div className="wb-editor-body" onDragOver=${onIngestDragOver} onDragLeave=${onIngestDragLeave} onDrop=${onDrop}>
           ${renderEditorBody()}
         </div>
       </div>
       </div>
+      <${LogDock}
+        entries=${logEntries}
+        tab=${logTab}
+        onTab=${setLogTab}
+        open=${logOpen}
+        onToggle=${setLogOpen}
+        selectedId=${openLogId}
+        onSelect=${setOpenLogId}
+        jobs=${jobs}
+        selectedJobId=${selectedJobId}
+        jobDetail=${jobDetail}
+        onSelectJob=${selectJobInDock}
+        onCancel=${cancelJob}
+        actions=${actions}
+        height=${logH}
+        onResize=${function (ev) { beginResize(ev, logH, setLogH, "wb-log-h", "y", 72, 640, true); }} />
         <input id="wb-bin-slug" type="hidden" value=${newSlug} />
         <input id="wb-bin-role" type="hidden" value=${role} />
         <input id="wb-bin-label" type="hidden" value=${label} />
@@ -4194,34 +5746,17 @@
 
       <footer className="wb-status" id="wb-status">
         <span id="wb-status-source">${(currentSession && currentSession.title) || "No project"}</span>
-        <span id="wb-status-kind">${current.kind || (currentSession && kindTitle(currentSession.kind)) || ""}</span>
-        <span id="wb-status-program">${program
-          ? "Ghidra program: " + program
-          : (slug
-            ? ((currentSession && slug === currentSession.projectSlug)
-              ? "Project root: " + slug + " — pick an Import or a Program"
-              : "Corpus import: " + slug)
-            : "No source selected")}</span>
+        <span id="wb-status-program">${program || "No program"}</span>
         <span id="wb-status-selection">${selected
-          ? "fn " + (selected.name || selected.addr) + (checkedAddrs.length ? " · " + checkedAddrs.length + " checked" : "")
-          : (total ? total + " fn in store" + (checkedAddrs.length ? " · " + checkedAddrs.length + " checked" : "") : "no functions")}</span>
+          ? ((selected.name || selected.addr) + " " + (selected.addr || ""))
+          : (total ? total + " functions" : "No function")}</span>
+        <span id="job-status">${running.length ? running.length + " running" : "idle"}</span>
         ${statusError
           ? html`<span id="wb-status-error" className="wb-status-error" role="alert">${statusError}
               <button type="button" className="wb-status-dismiss" aria-label="Dismiss error"
                 onClick=${function () { setStatusError(""); }}>×</button></span>`
           : html`<span id="wb-last-action" className="wb-hint">${lastNote}</span>`}
-        <span className="wb-hint">A finished job is not a match.</span>
-        <a className="wb-link" href="/dashboard/overview-corpus">Full corpus overview</a>
       </footer>
-      <${JobsDock}
-        jobs=${jobs}
-        expanded=${jobsDockOpen}
-        pinned=${running.length > 0}
-        selectedId=${selectedJobId}
-        jobDetail=${jobDetail}
-        onToggle=${function () { setJobsDockOpen(function (v) { return !v; }); }}
-        onSelectJob=${selectJobInDock}
-        onCancel=${cancelJob} />
     </div>`;
   }
 

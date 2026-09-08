@@ -22,7 +22,8 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
 from mcp.server import Server, Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import BaseModel
@@ -390,6 +391,7 @@ class PythonMcpServer:
         self._running: bool = False
         self._shutdown_event: threading.Event = threading.Event()
         self._server_thread: threading.Thread | None = None
+        self._uvicorn_server: Any | None = None
         self._session_manager = StreamableHTTPSessionManager(
             app=self.mcp_server,
             json_response=True,
@@ -552,9 +554,15 @@ class PythonMcpServer:
                 "scopes_supported": [],
             }
 
-        @self.app.get("/", tags=["meta"])
-        async def api_info() -> dict[str, Any]:
-            """API index — links to interactive documentation and transport endpoints."""
+        @self.app.get("/", tags=["meta"], response_model=None)
+        async def api_info(request: Request) -> dict[str, Any] | RedirectResponse:
+            """API index — browsers with corpus env go straight to the workbench."""
+            accept = (request.headers.get("accept") or "").lower()
+            if "text/html" in accept and (
+                os.environ.get("AGENT_DECOMPILE_CORPUS_DB")
+                or os.environ.get("AGENT_DECOMPILE_CORPUS_WORK_DIR")
+            ):
+                return RedirectResponse("/dashboard", status_code=302)
             return {
                 "server": self.config.name,
                 "version": self.config.version,
@@ -827,8 +835,6 @@ class PythonMcpServer:
 
         # Optionally wrap with auth (experimental, off by default).
         mcp_app: Callable[[dict[str, Any], Any, Any], Awaitable[None]] = _mcp_asgi
-        if self.auth_config is not None:
-            mcp_app = AuthMiddleware(_mcp_asgi, self.auth_config)
 
         # Wrap the entire FastAPI app with an outer middleware that
         # intercepts MCP paths before Starlette's router sees them.
@@ -898,8 +904,8 @@ class PythonMcpServer:
                         return
                 await inner_app(scope, receive, send)
 
-        # Replace self.app so uvicorn serves the middleware-wrapped version.
-        self.app = _MCPRoutingMiddleware()  # type: ignore[assignment]
+        routing = _MCPRoutingMiddleware()
+        self.app = AuthMiddleware(routing, self.auth_config) if self.auth_config is not None else routing  # type: ignore[assignment]
 
     def set_project_manager(
         self,
@@ -1017,6 +1023,10 @@ class PythonMcpServer:
         logger.debug("diag.enter %s", "mcp_server/server.py:PythonMcpServer._is_port_available")
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                if os.name != "nt":
+                    # Match asyncio/uvicorn's POSIX bind behavior: recently
+                    # closed HTTP connections must not prevent a restart.
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind((host, int(port)))
                 return True
         except OSError:
@@ -1038,6 +1048,19 @@ class PythonMcpServer:
             uvicorn_kwargs["ssl_keyfile"] = self.config.tls_keyfile
         config = uvicorn.Config(**uvicorn_kwargs)
         server = uvicorn.Server(config)
+        self._uvicorn_server = server
+
+        from agentdecompile_recovery.corpus.dashboard.server_control import register_server_hooks
+
+        def _shutdown_http() -> None:
+            server.should_exit = True
+
+        def _restart_http() -> None:
+            from agentdecompile_recovery.corpus.dashboard.server_control import spawn_restart_then_shutdown
+
+            spawn_restart_then_shutdown()
+
+        register_server_hooks(shutdown=_shutdown_http, restart=_restart_http)
 
         try:
             # Run server until shutdown
@@ -1093,15 +1116,18 @@ class PythonMcpServer:
         self._cleanup_provider(self.resource_providers, "Resource providers")
 
         # Stop the server thread
-        if self._server_thread is not None and self._server_thread.is_alive():
-            # For uvicorn, we need to send shutdown signal
-            try:
-                import os
-                import signal
+        if self._uvicorn_server is not None:
+            self._uvicorn_server.should_exit = True
 
-                os.kill(os.getpid(), signal.SIGTERM)
-            except Exception:
-                pass
+        if self._server_thread is not None and self._server_thread.is_alive():
+            if self._uvicorn_server is None:
+                try:
+                    import os
+                    import signal
+
+                    os.kill(os.getpid(), signal.SIGTERM)
+                except Exception:
+                    pass
 
             self._server_thread.join(timeout=5.0)
 

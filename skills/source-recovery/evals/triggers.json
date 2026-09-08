@@ -1,0 +1,37 @@
+[
+  {
+    "query": "dump source for this binary",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "run reconstruct with objdiff",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "force rematch, don't reuse target/",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "--dump-source please",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "only list functions in Ghidra, no recovery",
+    "should_trigger": false,
+    "split": "validation"
+  },
+  {
+    "query": "style the workbench menubar",
+    "should_trigger": false,
+    "split": "train"
+  },
+  {
+    "query": "MCP timeout on tools/list",
+    "should_trigger": false,
+    "split": "train"
+  }
+]

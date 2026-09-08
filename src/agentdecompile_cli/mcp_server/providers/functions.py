@@ -56,6 +56,14 @@ class FunctionToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "Path to the program containing the functions."},
                         "namePattern": {"type": "string", "description": "Regex pattern used to filter function names."},
                         "pattern": {"type": "string", "description": "Alias for namePattern."},
+                        "callingConvention": {"type": "string"},
+                        "inline": {"type": "boolean"},
+                        "minSize": {"type": "integer", "minimum": 0},
+                        "maxSize": {"type": "integer", "minimum": 0},
+                        "addressMin": {"type": "string"},
+                        "addressMax": {"type": "string"},
+                        "signaturePattern": {"type": "string", "description": "Case-insensitive regex over full function signature."},
+                        "undefinedParameters": {"type": "boolean", "description": "Filter functions with at least one undefined parameter type."},
                         "includeExternals": {"type": "boolean", "default": True, "description": "Include external/imported functions."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset."},
                         "limit": {"type": "integer", "default": 100, "description": "Maximum functions to return."},
@@ -135,6 +143,39 @@ class FunctionToolProvider(ToolProvider):
         # Compile regex once; None if no pattern.
         pat = re.compile(pattern, re.IGNORECASE) if pattern else None
 
+        convention = self._get_str(args, "callingconvention")
+        signature = self._get_str(args, "signaturepattern")
+        signature_regex = re.compile(signature, re.IGNORECASE) if signature else None
+        min_size = self._get_int(args, "minsize", default=None)
+        max_size = self._get_int(args, "maxsize", default=None)
+        if min_size is not None and min_size < 0 or max_size is not None and max_size < 0:
+            raise ValueError("Function sizes cannot be negative")
+        if min_size is not None and max_size is not None and min_size > max_size:
+            raise ValueError("minSize cannot exceed maxSize")
+        lower = self._resolve_address(self._get_str(args, "addressmin"), program=program) if self._get_str(args, "addressmin") else None
+        upper = self._resolve_address(self._get_str(args, "addressmax"), program=program) if self._get_str(args, "addressmax") else None
+        if lower is not None and upper is not None and lower.compareTo(upper) > 0:
+            raise ValueError("addressMin cannot exceed addressMax")
+
+        def matches(row):
+            if convention and row.get("callingConvention") != convention:
+                return False
+            if "inline" in args and row.get("isInline", False) != self._get_bool(args, "inline"):
+                return False
+            if min_size is not None and row["size"] < min_size or max_size is not None and row["size"] > max_size:
+                return False
+            if signature_regex and not signature_regex.search(row.get("signature", "")):
+                return False
+            if "undefinedparameters" in args:
+                undefined = any(str(p.get("type", "")).startswith("undefined") for p in row.get("parameters", []))
+                if undefined != self._get_bool(args, "undefinedparameters"):
+                    return False
+            if lower is not None or upper is not None:
+                address = program.getAddressFactory().getAddress(row["address"])
+                if address is None or lower is not None and address.compareTo(lower) < 0 or upper is not None and address.compareTo(upper) > 0:
+                    return False
+            return True
+
         all_functions = collect_functions(program)
         all_matching = [
             {
@@ -144,9 +185,12 @@ class FunctionToolProvider(ToolProvider):
                 "isExternal": row["isExternal"],
                 "isThunk": row["isThunk"],
                 "parameterCount": row["parameterCount"],
+                "signature": row["signature"],
+                "callingConvention": row["callingConvention"],
+                "isInline": row.get("isInline", False),
             }
             for row in all_functions
-            if (include_ext or not row.get("isExternal")) and (not pat or pat.search(str(row.get("name", ""))))
+            if matches(row) and (include_ext or not row.get("isExternal")) and (not pat or pat.search(str(row.get("name", ""))))
         ]
 
         paginated, has_more = self._paginate_results(all_matching, offset, max_results)
@@ -188,6 +232,8 @@ class FunctionToolProvider(ToolProvider):
                 func_ids = [single.strip()]
 
         view: str = self._get_str(args, "mode", "view", "action", "operation", default="")
+        if view.lower() == "all":
+            view = ""
         max_results: int = self._get_int(args, "limit", "maxresults", default=100)
         timeout: int = self._get_int(args, "timeout", "decompiletimeout", default=60)
 

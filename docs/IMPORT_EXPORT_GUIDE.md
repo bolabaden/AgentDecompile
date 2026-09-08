@@ -11,7 +11,67 @@ flowchart TD
 
 This document explains how to import and export binary files and analysis data using AgentDecompile tools.
 
-This is a current usage guide. For the shortest examples, use `QUICKSTART_IMPORT_EXPORT.md`. For canonical tool signatures, use `../TOOLS_LIST.md`.
+Install and first start live in [README.md](../README.md). Day-to-day CLI context: [USAGE.md](../USAGE.md). Tool signatures: [TOOLS_LIST.md](../TOOLS_LIST.md). The old short page is a stub: [QUICKSTART_IMPORT_EXPORT.md](./QUICKSTART_IMPORT_EXPORT.md).
+
+## Quick start
+
+Public fixture: `tests/fixtures/test_x86_64`. Other examples use `/path/to/binary`.
+
+### Import a binary
+
+```bash
+uv run agentdecompile-cli import-binary /path/to/binary
+```
+
+Or the raw tool:
+
+```bash
+uv run agentdecompile-cli tool import-binary '{
+  "path": "/path/to/binary",
+  "analyzeAfterImport": true
+}'
+```
+
+### Export SARIF
+
+```bash
+uv run agentdecompile-cli tool export '{
+  "programPath": "/path/to/binary",
+  "outputPath": "./analysis.sarif",
+  "format": "sarif"
+}'
+```
+
+### Export a GZF archive
+
+```bash
+uv run agentdecompile-cli tool export '{
+  "programPath": "/path/to/binary",
+  "outputPath": "./analysis.gzf",
+  "format": "gzf"
+}'
+```
+
+### Export decompiled source
+
+```bash
+uv run agentdecompile-cli tool export '{
+  "programPath": "/path/to/binary",
+  "outputPath": "./decompiled.cpp",
+  "format": "cpp",
+  "createHeader": true,
+  "includeTypes": true,
+  "includeGlobals": true
+}'
+```
+
+### Read the static-analysis resource
+
+```bash
+uv run agentdecompile-cli resource static-analysis
+```
+
+That reads `ghidra://static-analysis-results` without exporting a file first.
 
 ## Overview
 
@@ -461,6 +521,6 @@ agentdecompile-cli tool export '{
 
 ## See Also
 
-- [TOOLS_LIST.md](../TOOLS_LIST.md) - Complete tool reference
-- [MCP_AGENTDECOMPILE_USAGE.md](./MCP_AGENTDECOMPILE_USAGE.md) - Full MCP documentation
+- [USAGE.md](../USAGE.md) — CLI and sessions
+- [TOOLS_LIST.md](../TOOLS_LIST.md) — tool parameters
 - [SARIF 2.1.0 Spec](https://docs.oasis-open.org/sarif/sarif/v2.1.0/csd02/sarif-v2.1.0-csd02.html)

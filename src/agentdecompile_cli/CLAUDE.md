@@ -1,6 +1,6 @@
 # CLAUDE.md - `agentdecompile_cli` Working Guide
 
-This guide is for contributors/agents working specifically in `src/agentdecompile_cli`.
+This guide is for contributors/agents working specifically in `src/agentdecompile_cli`. User how-to: [USAGE.md](../../USAGE.md). Repo rules: [AGENTS.md](../../AGENTS.md). Root pointer: [CLAUDE.md](../../CLAUDE.md).
 
 ```mermaid
 flowchart TD
@@ -153,7 +153,7 @@ If adding skill/workflow docs in the repo:
 
 - open-project: `analyzeAfterImport` is optional and defaults to true. `open` and `import-binary` always run incremental Ghidra auto-analysis when needed (blocking); other program-scoped tools wait until analysis completes for that program.
 - Load Ghidra from `GHIDRA_INSTALL_DIR` via a top-level repo `.env`; the path must match the real install folder name (for example `ghidra_12.0.4_PUBLIC`—a wrong or stale basename breaks LFG/driver).
-- Project-level Cursor skills live under .cursor/skills/ (SKILL.md + references/), not under docs/.
+- Project skills follow the full [agentskills.io](https://agentskills.io/llms.txt) set. VS Code/Copilot default path is `.agents/skills/<name>/SKILL.md` (also copied under `skills/`). Cursor/Claude loaders live in `.cursor/skills/` and `.claude/skills/`.
 - In prompts and docs use semantic tool names (rename-function, set-function-prototype) not the legacy manage-function name.
 - For proxy mode set AGENTDECOMPILE_PROJECT_PATH (and AGENTDECOMPILE_PROJECT_NAME) so the proxy sends X-AgentDecompile-Project-Path; use separate backends and proxy URLs when multiple projects run at once. The CLI persists mcp-session-id per normalized --server-url; without a session header the server may use one default session—send distinct session ids for multi-user or multi-client use. Keep server-side session state on the same logical key as the client-persisted id so it does not split across `default` and `sdk-session:…` buckets.
 - For tools that accept an optional program_path (e.g. checkout-status), resolve the domain file by that path (session + project_data) and use it for the operation; do not default to the active program only, so shared-only paths report versioned status correctly.
@@ -174,8 +174,8 @@ Tools that modify project data (e.g. `manage-symbols` rename, `manage-function` 
 
 ## 20) Tiered Reverse-Engineering Analysis
 
-Agents should **not default to Ghidra** for every task. Use the **tiered-re-analysis** skill ([.cursor/skills/tiered-re-analysis/SKILL.md](../../.cursor/skills/tiered-re-analysis/SKILL.md)) and knowledge base ([docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md](../../docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md)): Tier 0 shell/static tools → Tier 1 batch `ghidrecomp` → Tier 2 MCP read-only → Tier 3 decompile/mutations. Multi-agent RE agents (`.github/agents/re-*.agent.md`) follow this routing in Planner triage and Worker/Critic verification.
+Agents should **not default to Ghidra** for every task. Use the **tiered-re-analysis** skill ([skills/tiered-re-analysis/SKILL.md](../../skills/tiered-re-analysis/SKILL.md)) and knowledge base ([docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md](../../docs/solutions/architecture-patterns/tiered-re-analysis-knowledgebase.md)): Tier 0 shell/static tools → Tier 1 batch `ghidrecomp`/BSim → Tier 2 MCP read-only → Tier 3 decompile/mutations. Role skills: `skills/re-planner`, `re-worker`, `re-critic`, `re-aggregator` (Copilot wrappers in `.github/agents/re-*.agent.md`).
 
 ## 21) MCP Server Debugging and Self-Healing
 
-When investigating or fixing MCP server issues (timeouts, schema, GUI/coords, sandbox), use the **mcp-debugging** skill: open [.cursor/skills/mcp-debugging/SKILL.md](../../.cursor/skills/mcp-debugging/SKILL.md) or invoke `/mcp-debugging` in Agent chat. The skill references the meta-debug loop and the five CLIs (MCP Inspector, mcptools, mcp-debug, mcp-trace, FastMCP CLI). Detailed docs: [references/CLIS_AND_META_DEBUG.md](../../.cursor/skills/mcp-debugging/references/CLIS_AND_META_DEBUG.md), [references/WORKFLOWS.md](../../.cursor/skills/mcp-debugging/references/WORKFLOWS.md), [references/CLAUDE_MCP_DEBUG.md](../../.cursor/skills/mcp-debugging/references/CLAUDE_MCP_DEBUG.md).
+When investigating or fixing MCP server issues (timeouts, schema, GUI/coords, sandbox), use the **mcp-debugging** skill: [skills/mcp-debugging/SKILL.md](../../skills/mcp-debugging/SKILL.md). References: [CLIS_AND_META_DEBUG.md](../../skills/mcp-debugging/references/CLIS_AND_META_DEBUG.md), [WORKFLOWS.md](../../skills/mcp-debugging/references/WORKFLOWS.md), [CLAUDE_MCP_DEBUG.md](../../skills/mcp-debugging/references/CLAUDE_MCP_DEBUG.md).

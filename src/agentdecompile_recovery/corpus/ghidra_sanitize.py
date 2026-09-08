@@ -103,13 +103,10 @@ def flatten_templates(code: str) -> str:
 
 
 def sanitize_body(code: str) -> str:
-    code = flatten_templates(code)
-    code = fix_thiscall(code)
-    code = fix_field_names(code)
-    code = fix_bare_destructor(code)
-    code = flatten_names(code)
-    code = re.sub(r"^WARNING:.*$", "", code, flags=re.M)
-    return code
+    """Compile-path spelling via HighFacts + Clang. No GhidraBlob / ghidra_call."""
+    from .normalize_pipeline import NormalizeMode, normalize_decompiled
+
+    return normalize_decompiled(code, mode=NormalizeMode.COMPILE_ONLY).text
 
 
 def global_externs(body: str, known_globals: dict[str, str]) -> str:

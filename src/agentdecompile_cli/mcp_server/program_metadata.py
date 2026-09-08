@@ -396,18 +396,48 @@ _SKIP_CONTEXT_TOOLS: frozenset[str] = frozenset({
 })
 
 
+def collect_target_project_context(session_id: str, program_info: Any) -> dict[str, Any] | None:
+    """Bind evidence context to its resolved program, not the session's last open tab."""
+    context = collect_project_context(session_id) or {}
+    domain_file = _resolve_domain_file(program_info)
+    if domain_file is None:
+        return {"scope": "target-program", "projectPath": None, "activeProgram": str(getattr(program_info, "path", "") or getattr(program_info, "name", "")), "contextUnavailable": "Program has no domain file"}
+    # Never retain project identity/counts from a different session-active project.
+    for key in ("projectPath", "projectName", "repository", "serverHost", "serverPort", "mode", "programCount", "projectProgramCount", "checkoutSummary", "analysisComplete"):
+        context.pop(key, None)
+    context["scope"] = "target-program"
+    context["activeProgram"] = str(domain_file.getPathname())
+    complete = _analysis_complete_for_info(program_info)
+    if complete is not None:
+        context["analysisComplete"] = complete
+    try:
+        shared = domain_file.getSharedProjectURL(None)
+        if shared is not None:
+            from urllib.parse import urlsplit, unquote
+            url = urlsplit(str(shared))
+            context.update(mode="shared-server", serverHost=url.hostname, serverPort=url.port, repository=unquote(url.path.strip("/").split("/", 1)[0]), programUrl=str(shared))
+        else:
+            locator = domain_file.getProjectLocator()
+            if locator is not None:
+                context.update(mode="local-gpr", projectPath=str(locator.getMarkerFile().getAbsolutePath()), projectName=str(locator.getName()))
+    except Exception as exc:
+        context["contextUnavailable"] = "Target project locator unavailable: " + type(exc).__name__
+    return context
+
+
 def attach_project_context_to_payload(
     payload: dict[str, Any],
     session_id: str,
     *,
     tool_name_normalized: str = "",
+    target_program_info: Any = None,
 ) -> None:
     """Attach ``projectContext`` to an error or ad-hoc JSON payload when absent."""
     if tool_name_normalized in _SKIP_CONTEXT_TOOLS:
         return
     if "projectContext" in payload:
         return
-    ctx = collect_project_context(session_id)
+    ctx = collect_target_project_context(session_id, target_program_info) if target_program_info is not None else collect_project_context(session_id)
     if ctx is not None:
         payload["projectContext"] = ctx
 
@@ -417,6 +447,7 @@ def inject_project_context(
     session_id: str,
     *,
     tool_name_normalized: str = "",
+    target_program_info: Any = None,
 ) -> str:
     """Parse a JSON tool response, inject ``projectContext``, re-serialize.
 
@@ -446,6 +477,7 @@ def inject_project_context(
         data,
         session_id,
         tool_name_normalized=tool_name_normalized,
+        target_program_info=target_program_info,
     )
     if "projectContext" not in data:
         return response_text
@@ -473,6 +505,7 @@ _MUTATING_UI_HINT_TOOLS: frozenset[str] = frozenset(
 
 # Multi-mode tools: only attach UI hints / auto-checkin when payload action is mutating.
 _MUTATING_TOOL_ACTIONS: dict[str, frozenset[str]] = {
+    "managefunction": frozenset({"rename", "setprototype", "setcallingconvention", "setreturntype", "renamevariable", "setvariabletype", "changedatatypes", "delete", "create", "setproperties", "setstorage"}),
     "manageenums": frozenset(
         {
             "create",
@@ -510,11 +543,11 @@ def _is_successful_mutation_payload(payload: dict[str, Any]) -> bool:
     return True
 
 
-def build_ui_visibility(session_id: str, *, auto_checkin_enabled: bool) -> dict[str, Any]:
+def build_ui_visibility(session_id: str, *, auto_checkin_enabled: bool, target_shared: bool | None = None) -> dict[str, Any]:
     """Structured UI visibility metadata for mutating tool responses."""
     session: SessionContext = SESSION_CONTEXTS.get_or_create(session_id)
     handle = session.project_handle
-    is_shared = is_shared_server_handle(handle)
+    is_shared = is_shared_server_handle(handle) if target_shared is None else target_shared
     return {
         "liveInCodeBrowser": False,
         "codeBrowserSync": "reload-or-checkout",
@@ -524,10 +557,10 @@ def build_ui_visibility(session_id: str, *, auto_checkin_enabled: bool) -> dict[
     }
 
 
-def build_gui_hint(session_id: str, *, auto_checkin_enabled: bool) -> str:
+def build_gui_hint(session_id: str, *, auto_checkin_enabled: bool, target_shared: bool | None = None) -> str:
     """Human-readable hint for agents about GUI visibility after mutations."""
     session: SessionContext = SESSION_CONTEXTS.get_or_create(session_id)
-    is_shared = is_shared_server_handle(session.project_handle)
+    is_shared = is_shared_server_handle(session.project_handle) if target_shared is None else target_shared
     parts = [
         "Mutation applied in the headless MCP session (separate JVM from CodeBrowser).",
     ]
@@ -564,8 +597,10 @@ def attach_ui_hints_to_payload(
         return
     if not _is_successful_mutation_payload(payload):
         return
-    payload["uiVisibility"] = build_ui_visibility(session_id, auto_checkin_enabled=auto_checkin_enabled)
-    payload["guiHint"] = build_gui_hint(session_id, auto_checkin_enabled=auto_checkin_enabled)
+    context = payload.get("projectContext") or {}
+    target_shared = context.get("mode") == "shared-server" if context.get("scope") == "target-program" and context.get("mode") else None
+    payload["uiVisibility"] = build_ui_visibility(session_id, auto_checkin_enabled=auto_checkin_enabled, target_shared=target_shared)
+    payload["guiHint"] = build_gui_hint(session_id, auto_checkin_enabled=auto_checkin_enabled, target_shared=target_shared)
 
 
 def inject_ui_hints(

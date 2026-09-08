@@ -1,0 +1,37 @@
+[
+  {
+    "query": "the dashboard is unusable / boilerplate",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "dogfood /dashboard like IDA",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "Functions is empty after opening repos",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "playwright the workbench on 8768",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "change a CLI flag in kx_cli only",
+    "should_trigger": false,
+    "split": "validation"
+  },
+  {
+    "query": "write the BSim createdatabase wrapper tests",
+    "should_trigger": false,
+    "split": "train"
+  },
+  {
+    "query": "what's the weather",
+    "should_trigger": false,
+    "split": "train"
+  }
+]

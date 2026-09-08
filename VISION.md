@@ -236,7 +236,7 @@ These name investment themes, not a delivery checklist and not a privileged orde
 - **Structural legibility** — consistent trees and manifests for sections, install layouts, packages, plugins, and assets.  
 - **Evidence and provenance** — address- and path-keyed facts, conflict retention, citation in every agent-facing bundle.  
 - **Interactive analysis reliability** — session-stable tooling so agents see real program state.  
-- **Composable rhardcodesecovery** — candidate generation, repair, and optional hard verification as capabilities, not as the only story.  
+- **Composable recovery** — candidate generation, repair, and optional hard verification as capabilities, not as the only story.  
 - **Context assembly** — retrieval, budgeting, progressive disclosure, prompt-ready evidence packs.  
 - **Honest export** — layered outs with claim documentation; useful dumps even when verification is out of scope for the run.
 
@@ -295,6 +295,4 @@ The codebase succeeds when it is cited as the reference for **how to give agents
 
 Implementation details, module maps, open defect lists, and measured snapshots belong elsewhere. This file answers: **What was AgentDecompile meant to become, and what obligations does that place on everyone who touches it?**
 
----
-
-*End of VISION.md*
+Near-term map: [STRATEGY.md](STRATEGY.md). Operators: [README.md](README.md).

@@ -16,7 +16,14 @@ from urllib.parse import quote
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from .atlas_server import AtlasServerState, atlas_ui_html, handle_build_prompt, handle_load_project, handle_save_prompt
+from .atlas_server import (
+    AtlasServerState,
+    atlas_ui_fragment,
+    atlas_ui_html,
+    handle_build_prompt,
+    handle_load_project,
+    handle_save_prompt,
+)
 from .corpus.dashboard import create_dashboard_router
 from .corpus.dashboard.pages import (
     WORKSPACE_NAME,
@@ -47,16 +54,17 @@ PAGE_PATHS = {
     "overview": "/dashboard/overview",
     "atlas": "/atlas",
     "report": "/report",
+    "recovery": "/report",
     "docs": "/docs",
     "swagger": "/docs",
-    "functions": "/dashboard/functions",
-    "logical": "/dashboard/functions#logical",
-    "graph": "/dashboard/functions#graph",
-    "review": "/dashboard/functions#review",
-    "artifact": "/dashboard/artifact",
+    "functions": "/dashboard?window=wb-fnbrowse",
+    "logical": "/dashboard?window=wb-logical",
+    "graph": "/dashboard?window=wb-graph",
+    "review": "/dashboard?window=wb-review",
+    "artifact": "/dashboard?window=wb-artifacts",
     "healthz": "/dashboard/healthz",
-    "builds": "/dashboard/functions#builds",
-    "operations": "/dashboard#operations",
+    "builds": "/dashboard?window=wb-corpus",
+    "operations": "/dashboard?window=wb-processes",
     "actions": "/api/v1/actions",
 }
 
@@ -67,8 +75,29 @@ def _env_path(*keys: str) -> Path | None:
     for key in keys:
         raw = (os.environ.get(key) or "").strip()
         if raw:
-            return Path(raw)
+            return Path(raw).expanduser()
     return None
+
+
+def _discover_atlas_root() -> Path | None:
+    """Resolve Atlas project root from env or corpus work dir."""
+    explicit = _env_path("AGENT_DECOMPILE_ATLAS_PROJECT_ROOT")
+    if explicit is not None:
+        return explicit
+    work = _env_path("AGENT_DECOMPILE_CORPUS_WORK_DIR", "AGENT_DECOMPILE_CORPUS_ROOT")
+    if work is None:
+        return None
+    index_name = "decomp-function-index.json"
+    for rel_path in (
+        "output/reconstructed",
+        "output/export_cpp",
+        "atlas",
+        ".",
+    ):
+        candidate = work / rel_path
+        if (candidate / index_name).is_file():
+            return candidate
+    return work / "output" / "reconstructed"
 
 
 def _nav(active: str) -> str:
@@ -93,30 +122,21 @@ def _shell(title: str, active: str, body: str, *, page: str = "home") -> str:
 <meta charset="utf-8">
 <title>{html.escape(title)}</title>
 <link rel="stylesheet" href="/dashboard/static/dashboard.css">
-<style>
-  :root {{ color-scheme: light dark; }}
-  body {{ font-family: system-ui, sans-serif; margin: 0; color: #1a1a1a; background: #fafafa; }}
-  .bar {{ padding: 0.6rem 1rem; border-bottom: 1px solid #ddd; background: #fff; }}
-  .bar a {{ margin-right: 1rem; color: inherit; }}
-  .bar a.on {{ font-weight: 700; }}
-  main {{ padding: 1rem 1.25rem 2rem; max-width: 1100px; }}
-  h1 {{ font-size: 1.15rem; margin: 0 0 0.4rem; }}
-  .claim {{ border: 1px solid #c9a227; background: #fff8d8; padding: 0.6rem 0.8rem; margin: 0.8rem 0 1rem; }}
-  .kv {{ display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.8rem 0; }}
-  .kv div {{ border: 1px solid #ddd; background: #fff; padding: 0.5rem 0.75rem; min-width: 8rem; }}
-  .kv b {{ display: block; font-size: 1.2rem; }}
-  .kv span {{ color: #555; font-size: 0.8rem; }}
-  table {{ border-collapse: collapse; width: 100%; background: #fff; }}
-  th, td {{ text-align: left; padding: 0.35rem 0.55rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }}
-  .sub {{ color: #555; font-size: 0.85rem; }}
-  a {{ color: #134; }}
-  pre {{ white-space: pre-wrap; font-size: 0.85rem; background: #fff; border: 1px solid #eee; padding: 0.6rem; }}
-</style>
+<link rel="stylesheet" href="/dashboard/static/workbench.css">
 </head>
-<body>
+<body class="workbench-page">
 {_page_context(page=page_map.get(active, page))}
-{_nav(active)}
-<main>
+<header class="wb-toolbar">
+  <div class="wb-brand">
+    <span class="wb-mark" aria-hidden="true">AD</span>
+    <div>
+      <strong>AgentDecompile</strong>
+      <span class="wb-claim">Same chrome as the workbench. Classic pages stay reachable.</span>
+    </div>
+  </div>
+  <div class="wb-toolbar-actions">{_nav(active)}</div>
+</header>
+<main class="wb-stage wb-report">
 {body}
 </main>
 {_action_dock_html()}
@@ -244,9 +264,9 @@ def render_dashboard(*, store_path: Path | None, work_dir: Path | None) -> str:
             )
         tables += (
             '<p class="sub"><a href="/dashboard/functions">Functions</a> · '
-            '<a href="/dashboard/functions#logical">Logical identities</a> · '
-            '<a href="/dashboard/functions#graph">Call graph</a> · '
-            '<a href="/dashboard/functions#review">Review</a> · '
+            '<a href="/dashboard?window=wb-logical">Logical identities</a> · '
+            '<a href="/dashboard?window=wb-graph">Call graph</a> · '
+            '<a href="/dashboard?window=wb-review">Review</a> · '
             '<a href="/dashboard/artifact">Artifacts</a> · '
             '<a href="/report">Report</a></p>'
         )
@@ -329,7 +349,7 @@ def render_logical(*, store_path: Path | None, limit: int = 50) -> str:
     return _shell("Logical functions", "dashboard", body)
 
 
-def render_store_report(*, store_path: Path | None, work_dir: Path | None) -> str:
+def render_store_report(*, store_path: Path | None, work_dir: Path | None, embed: bool = False) -> str:
     receipts = _receipts(work_dir)
     parts = [f"<h1>Recovery report</h1><p class='claim'>{html.escape(CLAIM)}</p>"]
     run = receipts.get("corpus-run.json")
@@ -351,7 +371,10 @@ def render_store_report(*, store_path: Path | None, work_dir: Path | None) -> st
         )
     else:
         parts.append("<p class='sub'>No store and no HTML report file. This page is empty on purpose.</p>")
-    return _shell("Report", "report", "".join(parts))
+    inner = "".join(parts)
+    if embed:
+        return inner
+    return _shell("Report", "report", inner)
 
 
 def render_binary(*, store_path: Path | None, slug: str) -> tuple[str, int]:
@@ -626,7 +649,7 @@ _ATLAS: AtlasServerState | None = None
 
 def _atlas_state() -> AtlasServerState | None:
     global _ATLAS
-    root = _env_path("AGENT_DECOMPILE_ATLAS_PROJECT_ROOT")
+    root = _discover_atlas_root()
     if root is None:
         return None
     prompts = _env_path("AGENT_DECOMPILE_ATLAS_PROMPTS_DIR") or (root / "prompts")
@@ -644,6 +667,18 @@ def _atlas_state() -> AtlasServerState | None:
     elif platform and platform != "unknown":
         _ATLAS.platform = platform
     return _ATLAS
+
+
+def _atlas_unconfigured_message() -> str:
+    work = _env_path("AGENT_DECOMPILE_CORPUS_WORK_DIR", "AGENT_DECOMPILE_CORPUS_ROOT")
+    if work is None:
+        return "Set AGENT_DECOMPILE_ATLAS_PROJECT_ROOT or AGENT_DECOMPILE_CORPUS_WORK_DIR"
+    index = work / "output" / "reconstructed" / "decomp-function-index.json"
+    return (
+        f"Atlas needs decomp-function-index.json under your corpus work dir "
+        f"(expected {index}). Run the decompile indexer on a project tree, or set "
+        "AGENT_DECOMPILE_ATLAS_PROJECT_ROOT to a directory that already has one."
+    )
 
 
 def _json_pair(payload: dict[str, Any], status: int) -> JSONResponse:
@@ -665,6 +700,16 @@ def create_unified_router() -> APIRouter:
     def work_dir() -> Path | None:
         return _env_path("AGENT_DECOMPILE_CORPUS_WORK_DIR")
 
+    # Browse is not a second page any more; every legacy alias opens the matching
+    # workbench window on /dashboard instead.
+    def _window_redirect(request: Request, window: str) -> RedirectResponse:
+        parts = [f"window={window}"]
+        for key, value in request.query_params.multi_items():
+            if key in {"window", "partial"}:
+                continue
+            parts.append(f"{quote(str(key))}={quote(str(value))}")
+        return RedirectResponse("/dashboard?" + "&".join(parts), status_code=302)
+
     @router.get("/app")
     async def app_hub() -> RedirectResponse:
         return RedirectResponse("/dashboard", status_code=302)
@@ -674,31 +719,39 @@ def create_unified_router() -> APIRouter:
         return {"ok": True, "service": "agentdecompile-pages", "pages": PAGE_PATHS}
 
     @router.get("/functions", include_in_schema=False)
-    async def functions_alias(request: Request) -> HTMLResponse:
-        query = query_from_mapping(request.query_params)
-        body, status = render_functions_page(query)
-        if is_partial_query(query):
-            return HTMLResponse(body, status_code=status)
-        return _wrap_dashboard(body, status, f"Functions — {WORKSPACE_NAME}")
+    async def functions_alias(request: Request) -> RedirectResponse:
+        return _window_redirect(request, "wb-fnbrowse")
 
     @router.get("/logical", include_in_schema=False)
-    async def logical_alias() -> RedirectResponse:
-        return RedirectResponse("/dashboard/functions#logical", status_code=302)
+    async def logical_alias(request: Request) -> RedirectResponse:
+        return _window_redirect(request, "wb-logical")
 
     @router.get("/logical/{logical_id}", include_in_schema=False)
-    async def logical_one_alias(logical_id: int) -> HTMLResponse:
-        body, status = render_logical_page(str(logical_id))
-        return _wrap_dashboard(body, status, f"Logical function — {WORKSPACE_NAME}")
+    async def logical_one_alias(logical_id: int) -> RedirectResponse:
+        return RedirectResponse(
+            "/dashboard?window=wb-logical&logical_id=" + quote(str(logical_id), safe=""),
+            status_code=302,
+        )
 
     @router.get("/binary/{slug}", include_in_schema=False)
-    async def binary_alias(slug: str) -> HTMLResponse:
-        body, status = render_binary_page(slug)
-        return _wrap_dashboard(body, status, f"{slug} — {WORKSPACE_NAME}")
+    async def binary_alias(slug: str) -> RedirectResponse:
+        return RedirectResponse(
+            "/dashboard?window=wb-corpus&binary=" + quote(slug, safe=""),
+            status_code=302,
+        )
 
     @router.get("/function/{slug}/{addr}", include_in_schema=False)
-    async def function_alias(slug: str, addr: str, request: Request) -> HTMLResponse:
-        body, status = render_function_page(slug, addr, query_from_mapping(request.query_params))
-        return _wrap_dashboard(body, status, f"Function — {WORKSPACE_NAME}")
+    async def function_alias(slug: str, addr: str, request: Request) -> RedirectResponse:
+        parts = [
+            "window=wb-fnbrowse",
+            "binary=" + quote(slug, safe=""),
+            "addr=" + quote(addr, safe=""),
+        ]
+        for key, value in request.query_params.multi_items():
+            if key in {"window", "partial", "binary", "addr"}:
+                continue
+            parts.append(f"{quote(str(key))}={quote(str(value))}")
+        return RedirectResponse("/dashboard?" + "&".join(parts), status_code=302)
 
     @router.get("/graph", include_in_schema=False)
     async def graph_alias(request: Request) -> RedirectResponse:
@@ -716,34 +769,37 @@ def create_unified_router() -> APIRouter:
 
     @router.get("/review", include_in_schema=False)
     async def review_alias(request: Request) -> RedirectResponse:
-        qs = str(request.query_params)
-        target = "/dashboard/functions"
-        if qs:
-            target += f"?{qs}"
-        return RedirectResponse(f"{target}#review", status_code=302)
+        return _window_redirect(request, "wb-review")
 
     @router.get("/artifact", include_in_schema=False)
-    async def artifact_alias(request: Request) -> HTMLResponse:
-        body, status = dashboard_render_artifact(query_from_mapping(request.query_params))
-        return _wrap_dashboard(body, status, "Artifact")
+    async def artifact_alias(request: Request) -> JSONResponse:
+        from agentdecompile_recovery.corpus.dashboard.pages import artifact_json
+
+        payload, status = artifact_json(request.query_params.get("p") or "")
+        return JSONResponse(payload, status_code=status)
 
     @router.get("/builds", include_in_schema=False)
-    async def builds_alias() -> RedirectResponse:
-        return RedirectResponse("/dashboard/functions#builds", status_code=302)
+    async def builds_alias(request: Request) -> RedirectResponse:
+        return _window_redirect(request, "wb-corpus")
 
     @router.get("/recovery", include_in_schema=False)
     async def recovery_alias() -> RedirectResponse:
-        return RedirectResponse("/dashboard#recovery", status_code=302)
+        return RedirectResponse("/dashboard?window=wb-report", status_code=302)
 
-    @router.get("/atlas", response_class=HTMLResponse)
-    async def atlas() -> str:
-        return atlas_ui_html("/atlas/api")
+    @router.get("/operations", include_in_schema=False)
+    async def operations_alias() -> RedirectResponse:
+        return RedirectResponse("/dashboard?window=wb-processes", status_code=302)
+
+    @router.get("/atlas")
+    async def atlas(request: Request) -> RedirectResponse:
+        _ = request
+        return RedirectResponse("/dashboard?window=wb-atlas", status_code=302)
 
     @router.post("/atlas/api/loadProject")
     async def atlas_load() -> JSONResponse:
         state = _atlas_state()
         if state is None:
-            return _json_pair({"error": "Set AGENT_DECOMPILE_ATLAS_PROJECT_ROOT"}, 404)
+            return _json_pair({"error": _atlas_unconfigured_message()}, 404)
         payload, status = handle_load_project(state)
         return _json_pair(payload, status)
 
@@ -751,7 +807,7 @@ def create_unified_router() -> APIRouter:
     async def atlas_build(request: Request) -> JSONResponse:
         state = _atlas_state()
         if state is None:
-            return _json_pair({"error": "Set AGENT_DECOMPILE_ATLAS_PROJECT_ROOT"}, 404)
+            return _json_pair({"error": _atlas_unconfigured_message()}, 404)
         body = await request.json()
         payload, status = handle_build_prompt(state, str(body.get("functionId") or ""))
         return _json_pair(payload, status)
@@ -760,7 +816,7 @@ def create_unified_router() -> APIRouter:
     async def atlas_save(request: Request) -> JSONResponse:
         state = _atlas_state()
         if state is None:
-            return _json_pair({"error": "Set AGENT_DECOMPILE_ATLAS_PROJECT_ROOT"}, 404)
+            return _json_pair({"error": _atlas_unconfigured_message()}, 404)
         body = await request.json()
         payload, status = handle_save_prompt(
             state,
@@ -770,15 +826,10 @@ def create_unified_router() -> APIRouter:
         )
         return _json_pair(payload, status)
 
-    @router.get("/report", response_class=HTMLResponse)
-    async def report() -> HTMLResponse:
-        html_path = _env_path("AGENT_DECOMPILE_REPORT_HTML")
-        if html_path and html_path.is_file():
-            return HTMLResponse(html_path.read_text(encoding="utf-8"))
-        json_path = _env_path("AGENT_DECOMPILE_REPORT_JSON")
-        if json_path and json_path.is_file():
-            return HTMLResponse(html_report_text(read_json(json_path)))
-        return HTMLResponse(render_store_report(store_path=store_path(), work_dir=work_dir()))
+    @router.get("/report")
+    async def report(request: Request) -> RedirectResponse:
+        _ = request
+        return RedirectResponse("/dashboard?window=wb-report", status_code=302)
 
     return router
 
@@ -786,6 +837,25 @@ def create_unified_router() -> APIRouter:
 def mount_unified_pages(app: FastAPI) -> None:
     """Attach hub / dashboard / atlas / report to an existing FastAPI app."""
     app.include_router(create_unified_router())
+
+    @app.on_event("startup")
+    async def resume_workspace_work() -> None:
+        # Native sessions are ready by HTTP startup. Recovery owns its own file
+        # leases and never takes work away from another live server.
+        import logging
+        import threading
+
+        def recover() -> None:
+            try:
+                from .corpus.dashboard.preparation import recover_interrupted
+                recover_interrupted()
+                from .corpus.dashboard.react_api import _root, _load
+                for path in _root().glob("*.json"):
+                    _load(path)
+            except Exception:
+                logging.getLogger(__name__).exception("Workspace scheduling recovery failed")
+
+        threading.Thread(target=recover, name="workspace-recovery", daemon=True).start()
 
 
 def page_index() -> dict[str, str]:

@@ -11,12 +11,17 @@
   border-radius: 0;
 }
 
-/* Instrument: Listing is the document. View menu and palette still jump.
-   Same specificity as workbench.css tab rules; this file loads later. */
+/* Listing / Functions / Graph stay on the instrument strip. */
 .workbench-page .wb-corpus-nav,
 .workbench-page .wb-editor-tabs,
 .workbench-page .wb-editor #wb-corpus-nav {
-  display: none;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  min-height: var(--wb-ctrl-h);
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
 }
 
 /* Open More must not clip under overflow-x: auto (spec forces both axes). */
@@ -716,4 +721,311 @@ body.workbench-page.wb-density-compact .wb-editor-body .wb-surface {
   margin: var(--wb-space-1) 0 0;
   padding: 0 var(--wb-space-2);
   font-size: var(--wb-type-kicker);
+}
+
+.workbench-page .wb-repo-row {
+  margin: 0;
+  padding: 0.2rem var(--wb-space-3);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: var(--wb-type-kicker);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+
+.workbench-page .wb-repo-row.on {
+  color: var(--fg-body);
+}
+
+.workbench-page .wb-repo-row.off {
+  color: var(--danger, var(--fg-muted));
+}
+
+.workbench-page .wb-workspace-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: var(--wb-space-3);
+  align-items: stretch;
+  min-height: 22rem;
+}
+
+.workbench-page .wb-workspace-split.wb-listing-only {
+  display: flex;
+  flex-direction: column;
+  grid-template-columns: none;
+}
+
+.workbench-page .wb-listing-pane,
+.workbench-page .wb-decompile-pane,
+.workbench-page .wb-graph-pane {
+  min-width: 0;
+  min-height: 16rem;
+}
+
+.workbench-page .wb-decompile-pane .wb-preview {
+  min-height: 22rem;
+}
+
+.workbench-page .wb-tab.kind-ghidra-server,
+.workbench-page .wb-tab.kind-shared-http {
+  box-shadow: inset 0 -3px 0 var(--kind-shared-http);
+}
+
+.workbench-page .wb-tab.kind-gzf {
+  box-shadow: inset 0 -3px 0 var(--kind-gpr);
+}
+
+.workbench-page .wb-listing-pane {
+  flex: 1 1 auto;
+  min-height: 22rem;
+}
+
+.workbench-page .wb-listing-pane .wb-preview#wb-listing-preview {
+  min-height: 28rem;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.workbench-page .wb-re-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wb-space-3);
+  min-height: 18rem;
+  padding: var(--wb-space-3);
+}
+
+.workbench-page .wb-bsim-state {
+  margin: 0;
+  padding: var(--wb-space-3);
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.workbench-page .wb-bsim-state strong {
+  display: block;
+  margin: 0 0 var(--wb-space-1);
+  color: var(--fg-head);
+  font-size: var(--wb-type-kicker);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workbench-page .wb-bsim-state p {
+  margin: 0;
+}
+
+.workbench-page .wb-stabs-detail {
+  margin: 0;
+  padding: var(--wb-space-3) 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.workbench-page .wb-stabs-detail h3,
+.workbench-page .wb-re-pane h3 {
+  margin: 0 0 var(--wb-space-2);
+  color: var(--fg-head);
+  font-size: var(--wb-type-kicker);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workbench-page .wb-recover-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workbench-page .wb-recover-files li {
+  margin: 0 0 4px;
+}
+
+.workbench-page .wb-program-hero {
+  margin: 0 0 var(--wb-space-3);
+  padding: var(--wb-space-3);
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.workbench-page .wb-hero-n {
+  margin: 0 0 var(--wb-space-1);
+  color: var(--fg-max);
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.workbench-page .wb-hero-n .of,
+.workbench-page .wb-hero-n .st {
+  color: var(--fg-head);
+  font-size: 0.55em;
+  font-weight: 500;
+}
+
+.workbench-page .wb-bar {
+  height: 8px;
+  margin: var(--wb-space-2) 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-raised, #1a212e);
+}
+
+.workbench-page .wb-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent, #5ee79b);
+}
+
+.workbench-page .wb-mem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  max-height: 5.5rem;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  font-size: var(--wb-type-kicker);
+  font-variant-numeric: tabular-nums;
+}
+
+.workbench-page .wb-callgraph {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--wb-space-2);
+  min-height: 18rem;
+  padding: var(--wb-space-3);
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.workbench-page .wb-callgraph-empty {
+  display: flex;
+  align-items: center;
+  min-height: 12rem;
+}
+
+.workbench-page .wb-cg-col h3,
+.workbench-page .wb-cg-neighbors h3 {
+  margin: 0 0 var(--wb-space-2);
+  color: var(--fg-head);
+  font-size: var(--wb-type-kicker);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workbench-page .wb-cg-node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  min-height: 44px;
+  margin: 0 0 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workbench-page .wb-cg-node:hover,
+.workbench-page .wb-cg-node:focus-visible {
+  border-color: var(--accent);
+}
+
+.workbench-page .wb-cg-node.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--sel) 45%, var(--bg));
+}
+
+.workbench-page .wb-cg-node code {
+  font-variant-numeric: tabular-nums;
+}
+
+.workbench-page .wb-cg-node i {
+  color: var(--fg-head);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.workbench-page .wb-cg-neighbors {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1100px) {
+  .workbench-page .wb-workspace-split,
+  .workbench-page .wb-callgraph {
+    grid-template-columns: 1fr;
+  }
+}
+
+.workbench-page .wb-corpus-hero,
+.workbench-page .wb-ladder,
+.workbench-page .wb-mission-react {
+  margin: 0 0 var(--wb-space-3);
+}
+
+.workbench-page .wb-kicker,
+.workbench-page .wb-claim {
+  color: var(--fg-head);
+  font-size: var(--wb-type-kicker);
+  text-transform: uppercase;
+}
+
+.workbench-page .wb-corpus-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--wb-space-3);
+}
+
+.workbench-page .wb-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wb-space-1);
+  margin: 0 0 var(--wb-space-2);
+}
+
+.workbench-page .wb-health-chip {
+  border: 1px solid var(--border);
+  color: var(--fg-head);
+  padding: 0 var(--wb-space-2);
+  font-size: var(--wb-type-kicker);
+}
+
+.workbench-page .wb-health-chip.is-down {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.workbench-page .wb-ladder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.workbench-page .wb-step {
+  border-top: 1px solid var(--border);
+  padding: var(--wb-space-2) 0;
+}
+
+.workbench-page .wb-step-head {
+  display: grid;
+  grid-template-columns: 2ch minmax(0, 1fr) 10ch 14ch auto;
+  gap: var(--wb-space-2);
+  align-items: center;
+}
+
+.workbench-page .wb-step-no,
+.workbench-page .wb-step-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.workbench-page .wb-step-state {
+  color: var(--fg-head);
+}
+
+.workbench-page .wb-compare-table tbody tr {
+  cursor: pointer;
 }

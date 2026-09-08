@@ -1,0 +1,30 @@
+{
+  "skill_name": "re-aggregator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "merge the worker artifacts for this batch",
+      "expected_output": "Agent loads re-aggregator and follows skills/re-aggregator/SKILL.md (or .agents/skills).",
+      "assertions": [
+        "The run consults the re-aggregator skill body, not only the description",
+        "No leftover target/ or invented BSim corpus is treated as fresh proof"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "resolve the disagreement on WinMain",
+      "expected_output": "Same skill, different phrasing still activates and produces the skill's required artifact or next command.",
+      "assertions": [
+        "Activation is based on user intent, not an exact keyword match"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "triage a cold binary from scratch",
+      "expected_output": "Agent does not treat this as a re-aggregator task.",
+      "assertions": [
+        "re-aggregator is not the primary skill used"
+      ]
+    }
+  ]
+}

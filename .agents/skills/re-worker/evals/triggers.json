@@ -1,0 +1,32 @@
+[
+  {
+    "query": "analyze function at 0x401000",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "decompile WinMain and emit the artifact",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "what types does this function take",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "plan the whole binary first",
+    "should_trigger": false,
+    "split": "validation"
+  },
+  {
+    "query": "merge the batch consensus",
+    "should_trigger": false,
+    "split": "train"
+  },
+  {
+    "query": "start the MCP server",
+    "should_trigger": false,
+    "split": "train"
+  }
+]

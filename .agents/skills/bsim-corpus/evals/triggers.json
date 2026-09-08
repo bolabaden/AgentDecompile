@@ -1,0 +1,42 @@
+[
+  {
+    "query": "what's in the bsim_datadir",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "ingest the 24 odyssey programs",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "BSim found no matches \u2014 is the DB empty?",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "createdatabase for the K1/K2 repo",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "issue 169",
+    "should_trigger": true,
+    "split": "validation"
+  },
+  {
+    "query": "match this function with objdiff",
+    "should_trigger": false,
+    "split": "validation"
+  },
+  {
+    "query": "decompile one function in the open program",
+    "should_trigger": false,
+    "split": "train"
+  },
+  {
+    "query": "update Excel formulas",
+    "should_trigger": false,
+    "split": "train"
+  }
+]

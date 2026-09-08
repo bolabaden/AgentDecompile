@@ -1,0 +1,10 @@
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js';
+import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker.js?worker';
+import 'monaco-editor/esm/vs/editor/contrib/find/browser/findController.js';
+import 'monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js';
+import 'monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatching.js';
+import 'monaco-editor/esm/vs/basic-languages/cpp/cpp.contribution.js';
+(globalThis as typeof globalThis & {MonacoEnvironment: unknown}).MonacoEnvironment={getWorker:()=>new EditorWorker()};
+export {monaco};
+monaco.languages.register({id:'agentdecompile-asm'});
+monaco.languages.setMonarchTokensProvider('agentdecompile-asm',{ignoreCase:true,tokenizer:{root:[[/[;#].*$/,'comment'],[/\b(?:0x[0-9a-f]+|[0-9a-f]+h|\d+)\b/,'number'],[/\b(?:r(?:[0-9]|1[0-5])|[wx]\d+|[re]?(?:ax|bx|cx|dx|sp|bp|si|di|ip)|[xyz]mm\d+|lr|pc|sp|fp)\b/,'variable'],[/\b(?:mov|lea|ldr|str|push|pop|call|ret|jmp|j[a-z]+|cmp|test|add|sub|mul|div|and|orr?|xor|not|nop|b|bl|bx|cbz|cbnz)\b/,'keyword'],[/[\[\](),:+*=-]/,'delimiter']]}});

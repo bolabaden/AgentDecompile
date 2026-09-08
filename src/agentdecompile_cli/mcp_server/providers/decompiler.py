@@ -81,6 +81,7 @@ class DecompilerToolProvider(ToolProvider):
                             "description": "Compatibility batch input for one or more function identifiers.",
                         },
                         "timeout": {"type": "integer", "default": 60, "description": "Maximum time in seconds to wait for the decompiler to finish before aborting."},
+                        "showUnreachable": {"type": "boolean", "description": "Include unreachable code in this decompilation without changing shared decompiler settings."},
                         "includeCallees": {"type": "boolean", "default": False, "description": "Include callee function summaries."},
                         "includeStrings": {"type": "boolean", "default": False, "description": "Include referenced string literals when available."},
                         "includeXrefs": {"type": "boolean", "default": False, "description": "Include inbound cross-references to the function entry."},
@@ -118,6 +119,7 @@ class DecompilerToolProvider(ToolProvider):
                         include_callees=include_callees,
                         include_strings=include_strings,
                         include_xrefs=include_xrefs,
+                        show_unreachable=self._get_bool(args, "showunreachable") if "showunreachable" in args else None,
                     )
                 )
             except Exception as exc:
@@ -161,9 +163,10 @@ class DecompilerToolProvider(ToolProvider):
         include_callees: bool = False,
         include_strings: bool = False,
         include_xrefs: bool = False,
+        show_unreachable: bool | None = None,
     ) -> dict[str, Any]:
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider.decompile_function_payload")
-        response = self._decompile_with_ghidra_api(target_func, program, timeout)
+        response = self._decompile_with_ghidra_api(target_func, program, timeout, show_unreachable=show_unreachable)
         payload: dict[str, Any] = {}
         if response:
             try:
@@ -246,6 +249,8 @@ class DecompilerToolProvider(ToolProvider):
         target_func: GhidraFunction,
         program: GhidraProgram,
         timeout: int,
+        *,
+        show_unreachable: bool | None = None,
     ) -> list[types.TextContent]:
         """Decompile a function using Ghidra's DecompInterface."""
         logger.debug("diag.enter %s", "mcp_server/providers/decompiler.py:DecompilerToolProvider._decompile_with_ghidra_api")
@@ -253,9 +258,16 @@ class DecompilerToolProvider(ToolProvider):
             from ghidra.util.task import ConsoleTaskMonitor  # pyright: ignore[reportMissingModuleSource]
 
             monitor = ConsoleTaskMonitor()
-            session_decomp = getattr(self.program_info, "decompiler", None)
+            session_decomp = getattr(self.program_info, "decompiler", None) if show_unreachable is None else None
 
             with self._setup_decompiler(session_decomp, program) as lease:
+                if show_unreachable is not None:
+                    from ghidra.app.decompiler import DecompileOptions
+                    options = DecompileOptions()
+                    options.grabFromProgram(program)
+                    options.setEliminateUnreachable(not show_unreachable)
+                    if not lease.decompiler.setOptions(options):
+                        raise RuntimeError("Decompiler rejected unreachable-code option")
                 result = self._perform_decompilation(lease, target_func, timeout, monitor, session_decomp, program)
                 if isinstance(result, dict):
                     result = merge_decompile_dict_keys(result)

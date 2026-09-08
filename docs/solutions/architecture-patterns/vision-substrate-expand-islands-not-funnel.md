@@ -33,7 +33,7 @@ VISION reframes AgentDecompile around **binary-as-context**: seamless dismantler
 4. **Refuse funnel growth as substrate work**: do not expand `sourcegen` / `source_parity_synthesize` / frontdoor defaults to "make context better."
 5. **Ship docs in the same beat** as registry changes: advertised tool counts (`len(Tool)`, GUI-hidden set) and `TOOLS_LIST.md` entries for new tools.
 
-First slice (PR #171): `export-context` and `acquisition-query` on the default advertised surface (72 canonical / 68 advertised).
+First slice (PR #171): `export-context` and `acquisition-query` on the default advertised surface. Current default-`full` counts live in [README.md](../../../README.md) and the TOOLS_LIST preamble (compute from `registry.py`; do not copy a stale triple).
 
 ## Why This Matters
 

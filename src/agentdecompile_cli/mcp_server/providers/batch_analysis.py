@@ -29,6 +29,9 @@ class BatchAnalysisToolProvider(ToolProvider):
         "runbatchdecompile": "_handle_run_batch_decompile",
         "runbatchexportgzf": "_handle_run_batch_export_gzf",
         "runbatchbsimsignatures": "_handle_run_batch_bsim_signatures",
+        "bsimcreatedatabase": "_handle_bsim_createdatabase",
+        "bsimingest": "_handle_bsim_ingest",
+        "bsimreport": "_handle_bsim_report",
         "runbatchsastscan": "_handle_run_batch_sast_scan",
     }
 
@@ -212,6 +215,60 @@ class BatchAnalysisToolProvider(ToolProvider):
                     "required": ["binaryPath"],
                 },
             ),
+            types.Tool(
+                name=Tool.BSIM_CREATEDATABASE.value,
+                description=(
+                    "Create a Ghidra BSim database (wraps `bsim createdatabase`). "
+                    "Use before ingesting a repository. Does not start PostgreSQL."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bsimUrl": {"type": "string", "description": "postgresql://host/name or file:/dir/name"},
+                        "datadir": {"type": "string", "description": "BSimControl PostgreSQL data directory"},
+                        "name": {"type": "string", "description": "Database name when deriving the URL from datadir"},
+                        "template": {"type": "string", "description": "large_32 | medium_32 | medium_64 | medium_cpool | medium_nosize"},
+                        "owner": {"type": "string"},
+                        "description": {"type": "string"},
+                    },
+                },
+            ),
+            types.Tool(
+                name=Tool.BSIM_INGEST.value,
+                description=(
+                    "Generate and commit BSim signatures for every program in a Ghidra "
+                    "project or shared repository. Resumable per program via a receipt file."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repository": {"type": "string", "description": "Shared-fs folder, .gpr, or ghidra:// URL"},
+                        "bsimUrl": {"type": "string"},
+                        "datadir": {"type": "string"},
+                        "name": {"type": "string"},
+                        "ghidraUrl": {"type": "string", "description": "ghidra://host/repo prefix"},
+                        "programs": {"type": "array", "items": {"type": "string"}},
+                        "receipt": {"type": "string"},
+                        "force": {"type": "boolean"},
+                    },
+                    "required": ["repository"],
+                },
+            ),
+            types.Tool(
+                name=Tool.BSIM_REPORT.value,
+                description=(
+                    "Report what a BSim datadir or database holds. Distinguishes "
+                    "no database, empty database, and N executables by name and architecture."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "datadir": {"type": "string"},
+                        "bsimUrl": {"type": "string"},
+                        "name": {"type": "string"},
+                    },
+                },
+            ),
         ]
 
     async def _handle_run_batch_decompile(self, args: dict[str, Any]) -> list[types.TextContent]:
@@ -365,3 +422,54 @@ class BatchAnalysisToolProvider(ToolProvider):
             return create_error_response(exc)
         except OSError as exc:
             return create_error_response(exc)
+
+    async def _handle_bsim_createdatabase(self, args: dict[str, Any]) -> list[types.TextContent]:
+        from agentdecompile_recovery.corpus import bsim_ops as bo
+
+        url = self._get_str(args, "bsimUrl", "bsim_url") or ""
+        datadir = self._get_str(args, "datadir", "dataDir")
+        name = self._get_str(args, "name") or "bsim"
+        if not url:
+            url = bo.default_bsim_url(datadir=datadir, name=name)
+        payload = bo.createdatabase(
+            url,
+            template=self._get_str(args, "template") or bo.DEFAULT_TEMPLATE,
+            name=name,
+            owner=self._get_str(args, "owner") or "",
+            description=self._get_str(args, "description") or "",
+        )
+        if payload.get("ok"):
+            return create_success_response(payload)
+        return create_error_response(ValueError(payload.get("error") or "createdatabase failed"))
+
+    async def _handle_bsim_ingest(self, args: dict[str, Any]) -> list[types.TextContent]:
+        from agentdecompile_recovery.corpus import bsim_ops as bo
+
+        repository = self._require_str(args, "repository", "repo", "path", name="repository")
+        raw_programs = self._get_list(args, "programs", "program")
+        programs = [str(item) for item in raw_programs] if raw_programs else None
+        payload = bo.ingest(
+            repository,
+            bsim_url=self._get_str(args, "bsimUrl", "bsim_url") or "",
+            datadir=self._get_str(args, "datadir", "dataDir"),
+            name=self._get_str(args, "name") or "bsim",
+            programs=programs,
+            ghidra_url=self._get_str(args, "ghidraUrl", "ghidra_url") or "",
+            receipt=self._get_str(args, "receipt"),
+            force=self._get_bool(args, "force", default=False),
+        )
+        if payload.get("ok"):
+            return create_success_response(payload)
+        return create_error_response(ValueError(payload.get("error") or "ingest failed"))
+
+    async def _handle_bsim_report(self, args: dict[str, Any]) -> list[types.TextContent]:
+        from agentdecompile_recovery.corpus import bsim_ops as bo
+
+        payload = bo.report(
+            datadir=self._get_str(args, "datadir", "dataDir"),
+            bsim_url=self._get_str(args, "bsimUrl", "bsim_url") or "",
+            name=self._get_str(args, "name") or "bsim",
+        )
+        if payload.get("ok"):
+            return create_success_response(payload)
+        return create_error_response(ValueError(payload.get("error") or "report failed"))

@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from agentdecompile_recovery.corpus.contract import PIPELINE_STAGES
+from agentdecompile_recovery.corpus.contract import (
+    PIPELINE_STAGES,
+    STAGE_ALIASES,
+    resolve_stage,
+    stages_through,
+)
 from agentdecompile_recovery.corpus.canon import canonicalize, is_eh_clone
 from agentdecompile_recovery.corpus.cli import main as corpus_main
 from agentdecompile_recovery.corpus.ghidra_sanitize import sanitize_body
@@ -26,13 +31,27 @@ SHIM_C = "void copied(void) { __asm { nop } }\n"
 
 
 def test_source_cross_match_is_after_compile() -> None:
+    assert stages_through(None) == PIPELINE_STAGES
     stages = list(PIPELINE_STAGES)
-    assert stages.index("identify") < stages.index("generate-projects")
-    assert stages.index("recover-source") < stages.index("preparse")
-    assert stages.index("preparse") < stages.index("compile")
-    assert stages.index("compile") < stages.index("apply-cross-build")
-    assert stages.index("apply-cross-build") < stages.index("llm-cleanup")
-    assert stages.index("llm-cleanup") < stages.index("verify-byte-accuracy")
+    assert stages == [
+        "extract",
+        "identify",
+        "calibrate-global",
+        "assembly-floor",
+        "recover-source",
+        "apply-cross-build",
+        "leftover-recover",
+        "verify-byte-accuracy",
+    ]
+    assert stages_through("compile")[-1] == "recover-source"
+    assert resolve_stage("compile") == "recover-source"
+    assert resolve_stage("preparse") == "recover-source"
+    assert resolve_stage("generate-projects") == "assembly-floor"
+    assert resolve_stage("merge-knowledge") == "identify"
+    assert resolve_stage("llm-cleanup") == "leftover-recover"
+    with pytest.raises(ValueError, match="aliases"):
+        resolve_stage("not-a-stage")
+    assert "compile" in STAGE_ALIASES
 
 
 def test_placeholder_never_overwrites_stronger_name() -> None:

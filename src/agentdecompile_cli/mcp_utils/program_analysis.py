@@ -63,6 +63,8 @@ _ANALYSIS_GATE_EXEMPT_TOOLS: frozenset[str] = frozenset(
         "reconstruct",
         "status",
         "claimreport",
+        "manageworkflow",
+        "readworkspaceactivity",
         # Tier 0–1 external subprocess tools — no analyzed Ghidra program required.
         "runfiletriage",
         "runexternalrescan",
@@ -82,7 +84,12 @@ def analysis_gate_exempt_tool(norm_tool_name: str) -> bool:
 
 def _program_supports_analysis_observation(program: GhidraProgram) -> bool:
     """Return False for test doubles and other objects that are not Ghidra programs."""
-    return callable(getattr(program, "getAnalysisState", None))
+    # ProgramDB does not expose getAnalysisState in supported Ghidra releases.
+    # Its persisted analysis flag is read through GhidraProgramUtilities.
+    return callable(getattr(program, "getAnalysisState", None)) or all(
+        callable(getattr(program, method, None))
+        for method in ("getDomainFile", "getOptions", "getLanguageID")
+    )
 
 
 def _program_lock_key(program: GhidraProgram, program_path: str | None = None) -> str:
@@ -185,15 +192,20 @@ def program_needs_analysis(program: GhidraProgram, *, force: bool = False) -> bo
 
 
 def _program_analysis_still_running(program: GhidraProgram) -> bool:
+    try:
+        from ghidra.app.plugin.core.analysis import AutoAnalysisManager
+
+        return bool(AutoAnalysisManager.getAnalysisManager(program).isAnalyzing())
+    except Exception:
+        pass
     state_done = _analysis_state_done(program)
     if state_done is True:
         return False
     if state_done is False:
         return True
-    pending = _ghidra_utilities_pending(program)
-    if pending is None:
-        return state_done is not True
-    return pending
+    # A missing analysis receipt means work is needed, not that an analyzer
+    # is running. Waiting for that flag before starting analysis deadlocks.
+    return False
 
 
 def wait_for_program_analysis_idle(program: GhidraProgram, *, max_wait_sec: float = 600.0) -> None:

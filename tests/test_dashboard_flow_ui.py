@@ -31,19 +31,19 @@ def test_workbench_js_five_way_access() -> None:
     assert "function runCommand" in JS
     assert "WORKBENCH_COMMANDS" in JS
     assert "wb-ctx-menu" in JS
-    assert "Keyboard & five ways" in JS
+    assert "Shortcuts and menus" in JS
     assert "wb-last-action" in JS
     assert "file.open-url" in JS
     assert "onContextMenu" in JS
     assert 'data-cmd=' in JS
     assert "view.inspect" in JS
     assert "view.pipeline" in JS
-    assert "help.classic-overview" in JS
 
 
 def test_workbench_js_command_palette_and_dock() -> None:
     assert "function CommandPalette" in JS
-    assert "function JobsDock" in JS
+    assert "function LogDock" in JS
+    assert "wb-jobs-dock-body" in JS
     assert "function ConfirmDialog" in JS
     assert "function ActionStrip" in JS
     assert "readActionParams" in JS
@@ -72,8 +72,8 @@ def test_workbench_js_phase_b_spatial() -> None:
     assert "Recent actions" in JS
     assert "wb-density-compact" in JS
     assert "wb-jobs-rail" in JS
-    assert "Compact density" in JS
-    assert "Jobs dock on side" in JS
+    assert "Use compact layout" in JS
+    assert "Dock jobs on the side" in JS
 
 
 def test_workbench_js_editor_shell() -> None:
@@ -87,8 +87,7 @@ def test_workbench_js_editor_shell() -> None:
     assert "Drop a binary or project here." in JS
     assert "wb-open-paste" in JS
     assert "openProjectDialog(tab)" in JS
-    assert "wb-import-head" in JS
-    assert "wb-program-head" in JS
+    assert "wb-source-tree" in JS
     assert "function TabRoster" in JS
     assert "Close the project tab" in JS or "closes the project tab" in JS
     assert "Run Cross-place" in JS
@@ -144,19 +143,40 @@ def test_workbench_css_phase_c_batch() -> None:
     css = Path("src/agentdecompile_recovery/corpus/dashboard/static/workbench.css").read_text(
         encoding="utf-8"
     )
-    assert "wb-func-check" in css
+    sidebar = Path(
+        "src/agentdecompile_recovery/corpus/dashboard/static/workbench-sidebar.css"
+    ).read_text(encoding="utf-8")
+    assert "wb-func-check" in css or "wb-func-check" in sidebar
     assert "wb-sel-chip" in css
-    assert "1.35rem 7.5rem 1fr" in css
+    assert "1.25rem 10ch minmax(0, 1fr)" in sidebar
     assert "wb-editor" in css
     assert "wb-editor-tabs" in css
     assert "#214283" in css
 
 
 def test_workbench_js_palette_surface_navigation() -> None:
-    assert "Cross-match" in JS
+    assert '{ id: "wb-match", title: "Match"' in JS
+    assert '{ id: "wb-recovery", title: "Recover"' in JS
     assert "setMoreOpen(true)" in JS
     assert "wb-jobs-dock" in JS
     assert "View log in dock" in JS
+    assert "MatchWorkbench" in JS
+    assert "RecoverWorkbench" in JS
+    assert 'id="wb-analyze"' in JS
+
+
+def test_workbench_js_dump_source_uses_imports_pe() -> None:
+    assert "reconstruct.one-shot" in JS
+    assert "Dump source" in JS
+
+
+def test_workbench_js_listing_loads_store_before_ensure() -> None:
+    start = JS.find("function selectProgram")
+    chunk = JS[start : start + 900]
+    assert "loadWorkspace(" in chunk
+    assert "ensureGhidraProgram(" in chunk
+    assert chunk.find("loadWorkspace(") < chunk.find("ensureGhidraProgram(")
+    assert "quiet: true" in chunk
 
 
 def test_job_cancel_route_callable(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

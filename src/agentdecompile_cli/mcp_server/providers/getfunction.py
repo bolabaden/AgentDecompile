@@ -178,10 +178,13 @@ class GetFunctionToolProvider(ToolProvider):
                         "addressOrSymbol": {"type": "string", "description": "Alternative way to specify the function's starting address."},
                         "mode": {
                             "type": "string",
-                            "description": "What modification you want to make: 'rename' (function name), 'set_prototype', 'set_calling_convention', 'set_return_type', 'rename_variable', 'set_variable_type', 'change_datatypes', 'delete', or 'create'.",
+                            "description": "Read 'info' for current properties/storage and architecture choices; 'set_properties' changes namespace/flags/fixup/thunk; 'set_storage' sets explicit register/stack pieces; 'rename' changes function name, 'set_prototype', 'set_calling_convention', 'set_return_type', 'rename_variable', 'set_variable_type', 'change_datatypes', 'delete', or 'create'.",
                             "enum": [
                                 "rename",
                                 "set_prototype",
+                                "info",
+                                "set_properties",
+                                "set_storage",
                                 "set_calling_convention",
                                 "set_return_type",
                                 "rename_variable",
@@ -208,7 +211,16 @@ class GetFunctionToolProvider(ToolProvider):
                             "description": "If mode is 'set_prototype', the complete C-style signature you want to apply (e.g. 'int main(int argc, char** argv)').",
                         },
                         "callingConvention": {"type": "string", "description": "If mode is 'set_calling_convention', the new convention (e.g., '__stdcall', '__fastcall')."},
-                        "returnType": {"type": "string", "description": "If mode is 'set_return_type', the new return data type (e.g. 'int', 'void')."},
+                        "returnType": {"type": "string", "description": "Return data type for set_return_type or set_storage."},
+                        "namespace": {"type": "string", "description": "set_properties: qualified namespace, empty for global."},
+                        "inline": {"type": "boolean"},
+                        "noReturn": {"type": "boolean"},
+                        "varArgs": {"type": "boolean"},
+                        "callFixup": {"type": "string", "description": "set_properties: fixup name; empty clears."},
+                        "thunkTarget": {"type": "string", "description": "set_properties: target function address; empty clears."},
+                        "customStorage": {"type": "boolean", "description": "set_storage: enable explicit register/stack storage."},
+                        "returnStorage": {"type": "array", "items": {"type": "object", "properties": {"register": {"type": "string"}, "stackOffset": {"type": "integer"}, "size": {"type": "integer", "minimum": 1}}, "required": ["size"]}, "description": "Ordered storage pieces; each has register OR stackOffset and size. High significance first, matching Ghidra varnode order."},
+                        "parameterStorage": {"type": "array", "items": {"type": "object", "properties": {"ordinal": {"type": "integer", "minimum": 0}, "dataType": {"type": "string"}, "storage": {"type": "array", "items": {"type": "object"}}}, "required": ["ordinal", "storage"]}, "description": "Existing parameter ordinals with storage pieces and optional dataType."},
                         "address": {"type": "string", "description": "If mode is 'create', the memory address where the new function should start."},
                     },
                     "required": [],
@@ -363,6 +375,9 @@ class GetFunctionToolProvider(ToolProvider):
             args,
             action,
             {
+                "info": "_handle_guide_function",
+                "setproperties": "_handle_guide_function",
+                "setstorage": "_handle_guide_function",
                 "rename": "_handle_rename",
                 "setprototype": "_handle_set_prototype",
                 "setcallingconvention": "_handle_set_calling_convention",
@@ -379,6 +394,18 @@ class GetFunctionToolProvider(ToolProvider):
             func=func,
             func_id=func_id,
         )
+
+    async def _handle_guide_function(self, args, program, func, func_id):
+        from .guide_function import function_properties, update_function
+        mode = n(self._get_str(args, "mode"))
+        before = function_properties(program, func)
+        if mode == "info":
+            return create_success_response({"action": "info", **before})
+        if not args.get(FORCE_APPLY_CONFLICT_ID_KEY):
+            return self._store_variable_conflict(args, "Change function properties/storage. Current values:\n" + json.dumps({k: v for k, v in before.items() if not k.startswith("available")}, indent=2) + "\nRequested values:\n" + json.dumps(args, default=str))
+        self._run_program_transaction(program, mode, lambda: update_function(program, func, args, mode))
+        self._notify_versioned_checkout_after_program_edit(program)
+        return create_success_response({"success": True, "action": mode, **function_properties(program, func)})
 
     async def _handle_mode_alias(self, args: dict[str, Any], mode: str) -> list[types.TextContent]:
         forwarded_args = dict(args)

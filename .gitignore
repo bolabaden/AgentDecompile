@@ -338,7 +338,8 @@ tmp/
 tmp/vendor_exhaustive_appendix.md
 TOOLS_LIST_GENERATED.md
 uv.lock
-vendor/
+vendor/*
+!vendor/ghidra
 volumes/
 agentdecompile*/
 !src/agentdecompile_cli/

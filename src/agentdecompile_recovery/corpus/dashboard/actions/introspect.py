@@ -7,6 +7,7 @@ reconstruct, and advertised MCP verb has a row.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 
 from agentdecompile_recovery.corpus.dashboard.actions.catalog import (
     ADDR_KEYS,
@@ -18,7 +19,13 @@ from agentdecompile_recovery.corpus.dashboard.actions.catalog import (
 _SKIP_DESTS = frozenset({"help", "version"})
 _LONG_CORPUS = frozenset({
     "run", "ghidra-bulk", "cross-place", "workspace", "compile-link",
+    "calibrate-global",
     "ingest-recovered", "genproject", "extract-stabs", "apply-stabs",
+    "export-atlas-db", "seed-validation", "harvest-shards", "verify-legacy-recovered",
+    "permuter-harness", "recover-named-ghidra", "program-inventory", "export-bytes",
+    "export-c", "export-types", "bsim-eval", "bsim-createdatabase", "bsim-ingest",
+    "bsim-report", "propagate-corpus", "external-bridge",
+    "collect-source", "rebuild-ledger", "compile-unit",
 })
 _LONG_RECOVER = frozenset({
     "recover", "recover-windows", "source-parity-synthesize",
@@ -33,6 +40,7 @@ _DANGER_FLAGS = frozenset({"force", "apply", "watch", "llm-cleanup"})
 _CONTEXT = {
     "program": "program",
     "repo": "repo",
+    "repository": "repo",
     "repo-path": "repo",
     "path": "repo",
     "binary": "repo",
@@ -137,6 +145,8 @@ def specs_from_argparse(
     rows: list[ActionSpec] = []
     for command, sub in _subparsers(parser).items():
         fields = _fields(sub)
+        if group == "corpus" and command == "export-run-report":
+            fields = tuple(replace(field, from_context="report_file", help="JSON report file; defaults to the current workspace's recovery-report.json.") if field.name == "out" else field for field in fields)
         mutating = _danger(command, fields)
         rows.append(
             ActionSpec(
@@ -260,25 +270,45 @@ def mcp_specs() -> list[ActionSpec]:
         Tool,
         get_tool_metadata,
         get_tool_params,
+        normalize_identifier,
     )
+    from agentdecompile_cli.mcp_server.tool_providers import ToolProviderManager
 
+    manager = ToolProviderManager()
+    manager.register_all_providers()
+    schemas = {tool.name: tool.inputSchema for tool in manager.list_tools()}
     out: list[ActionSpec] = []
     for name in ADVERTISED_TOOLS:
         params = get_tool_params(name)
         meta = get_tool_metadata(name)
         writes = bool(meta and meta.writes_state)
         long_running = name.startswith("run-batch-") or name in {
-            "reconstruct", "analyze-program", "run-decomp-match", "decompile-function",
+            "reconstruct", "analyze-program", "import-binary", "run-decomp-match", "decompile-function",
         }
-        fields = tuple(
-            FieldSpec(
-                name=param,
-                kind=_mcp_kind(param),
-                required=param in {"programPath", "functionIdentifier", "code"} and name != "status",
+        schema = schemas.get(name, {})
+        properties = schema.get('properties', {})
+        by_norm = {normalize_identifier(key): value for key, value in properties.items()}
+        names = {normalize_identifier(param): param for param in params}
+        for key in properties:
+            names.setdefault(normalize_identifier(key), key)
+        required = {normalize_identifier(key) for key in schema.get('required', [])}
+        field_rows = []
+        for norm, param in names.items():
+            prop = by_norm.get(norm, {})
+            json_type = prop.get('type')
+            if not isinstance(json_type, str):
+                json_type = None
+            kind = {'boolean': 'bool', 'integer': 'int', 'number': 'float',
+                    'array': 'array', 'object': 'object', 'string': 'str'}.get(json_type, _mcp_kind(param))
+            field_rows.append(FieldSpec(
+                name=param, kind=kind,
+                required=norm in required or (param in {'functionIdentifier', 'code'} and name != 'status'),
                 from_context=_mcp_context(param),
-            )
-            for param in params
-        )
+                choices=tuple(str(value) for value in prop.get('enum', [])),
+                default=prop.get('default'), help=prop.get('description', ''),
+                schema=prop,
+            ))
+        fields = tuple(field_rows)
         tool = Tool.from_string(name)
         danger = writes or name in {"execute-script", "svr-admin", "delete-project-binary"}
         out.append(

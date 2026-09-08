@@ -43,6 +43,8 @@ def handle_load_project(state: AtlasServerState) -> tuple[dict[str, Any], int]:
         return {"error": f"decomp function index not found at {index_path}"}, 404
 
     state.corpus = DecompFunctionCorpus.from_dump(dump)
+    if not state.platform or state.platform == "unknown":
+        state.platform = dump.platform
 
     if state.map_file_path is not None:
         try:
@@ -130,7 +132,7 @@ def make_request_handler(state: AtlasServerState) -> type[BaseHTTPRequestHandler
 
     class AtlasRequestHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler naming contract.
-            body = _ATLAS_UI_HTML.encode("utf-8")
+            body = atlas_ui_html("/api").encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -166,94 +168,148 @@ def make_request_handler(state: AtlasServerState) -> type[BaseHTTPRequestHandler
     return AtlasRequestHandler
 
 
+def atlas_ui_fragment(api_root: str = "/api") -> str:
+    """Atlas controls only — embeddable in the workbench stage."""
+    root = api_root.rstrip("/") or "/api"
+    return _ATLAS_UI_FRAGMENT.replace("__API_ROOT__", root)
+
+
+def atlas_ui_html(api_root: str = "/api") -> str:
+    """Full Atlas page using the workbench chrome."""
+    root = api_root.rstrip("/") or "/api"
+    return _ATLAS_UI_HTML.replace("__API_ROOT__", root).replace("__ATLAS_BODY__", atlas_ui_fragment(root))
+
+
+_ATLAS_UI_FRAGMENT = """
+<div class="wb-atlas" data-atlas-root="__API_ROOT__">
+  <ul id="function-list" class="wb-atlas-list"></ul>
+  <div class="wb-atlas-main">
+    <div>
+      <strong id="current-name">Select a function</strong>
+      <button type="button" id="build-btn" class="wb-btn" disabled>Build prompt</button>
+      <button type="button" id="save-btn" class="wb-btn" disabled>Save prompt</button>
+    </div>
+    <textarea id="prompt-text" placeholder="Prompt will appear here after Build prompt."></textarea>
+    <div id="status" class="wb-hint"></div>
+  </div>
+</div>
+<script>
+(function () {
+  const root = document.querySelector("[data-atlas-root]") && document.querySelector("[data-atlas-root]").getAttribute("data-atlas-root") || "__API_ROOT__";
+  let currentFunction = null;
+  let currentAsm = "";
+  function setStatus(text) {
+    const node = document.getElementById("status");
+    if (node) node.textContent = text;
+  }
+  async function api(path, body) {
+    const res = await fetch(root + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  }
+  async function loadProject() {
+    setStatus("Loading project...");
+    const { data } = await api("/loadProject", {});
+    const list = document.getElementById("function-list");
+    if (!list) return;
+    list.innerHTML = "";
+    for (const fn of data.functions) {
+      const li = document.createElement("li");
+      li.textContent = fn.name + (fn.cCode ? " (decompiled)" : "");
+      if (fn.cCode) li.className = "decompiled";
+      li.onclick = function () { selectFunction(fn, li); };
+      list.appendChild(li);
+    }
+    setStatus("Loaded " + data.functions.length + " functions.");
+  }
+  function selectFunction(fn, li) {
+    currentFunction = fn;
+    currentAsm = fn.asmCode;
+    document.querySelectorAll(".wb-atlas-list li").forEach(function (node) { node.classList.remove("on"); });
+    if (li) li.classList.add("on");
+    document.getElementById("current-name").textContent = fn.name;
+    document.getElementById("build-btn").disabled = false;
+    document.getElementById("prompt-text").value = "";
+  }
+  const buildBtn = document.getElementById("build-btn");
+  const saveBtn = document.getElementById("save-btn");
+  if (buildBtn) buildBtn.onclick = async function () {
+    if (!currentFunction) return;
+    setStatus("Building prompt...");
+    const { prompt } = await api("/buildPrompt", { functionId: currentFunction.id });
+    document.getElementById("prompt-text").value = prompt;
+    if (saveBtn) saveBtn.disabled = false;
+    setStatus("Prompt built.");
+  };
+  if (saveBtn) saveBtn.onclick = async function () {
+    if (!currentFunction) return;
+    setStatus("Saving prompt...");
+    const promptContent = document.getElementById("prompt-text").value;
+    const { path } = await api("/savePrompt", {
+      functionName: currentFunction.name,
+      promptContent: promptContent,
+      asm: currentAsm
+    });
+    setStatus("Saved to " + path);
+  };
+  loadProject().catch(function (err) {
+    setStatus(err.message || String(err));
+    var list = document.getElementById("function-list");
+    if (list) {
+      list.textContent = "";
+      var li = document.createElement("li");
+      li.className = "wb-hint";
+      li.textContent = err.message || String(err);
+      list.appendChild(li);
+    }
+    if (buildBtn) buildBtn.disabled = true;
+    if (saveBtn) saveBtn.disabled = true;
+  });
+})();
+</script>
+"""
+
+
 _ATLAS_UI_HTML = """<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Decomp Atlas</title>
-<style>
-  body { font-family: system-ui, sans-serif; margin: 0; display: flex; height: 100vh; color: #1a1a1a; }
-  #sidebar { width: 320px; border-right: 1px solid #ddd; overflow-y: auto; padding: 0.5rem; }
-  #main { flex: 1; padding: 1rem; display: flex; flex-direction: column; }
-  li { list-style: none; padding: 0.35rem 0.5rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
-  li:hover { background: #f0f0f0; }
-  li.decompiled { color: #0a7c33; }
-  ul { padding: 0; margin: 0; }
-  textarea { flex: 1; font-family: ui-monospace, monospace; font-size: 0.85rem; margin-top: 0.5rem; }
-  button { margin-right: 0.5rem; }
-  #status { color: #666; font-size: 0.85rem; margin-top: 0.5rem; }
-</style>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23121a28'/%3E%3Cpath d='M8 8h16v4H8zm0 6h10v12H8z' fill='%237cc8ff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/dashboard/static/dashboard.css">
+<link rel="stylesheet" href="/dashboard/static/workbench.css">
 </head>
-<body>
-<div id="sidebar"><ul id="function-list"></ul></div>
-<div id="main">
-  <div>
-    <strong id="current-name">Select a function</strong>
-    <button id="build-btn" disabled>Build prompt</button>
-    <button id="save-btn" disabled>Save prompt</button>
+<body class="workbench-page">
+<div id="page-context" hidden data-page="atlas" data-atlas-api="__API_ROOT__"></div>
+<header class="wb-toolbar">
+  <div class="wb-brand">
+    <span class="wb-mark" aria-hidden="true">AD</span>
+    <div>
+      <strong>AgentDecompile</strong>
+      <span class="wb-claim">Atlas prompt authoring on the same 8080 chrome.</span>
+    </div>
   </div>
-  <textarea id="prompt-text" placeholder="Prompt will appear here after Build prompt."></textarea>
-  <div id="status"></div>
+  <div class="wb-toolbar-actions">
+    <a class="wb-link" href="/dashboard?tool=prompt">Workbench</a>
+    <a class="wb-link" href="/docs">Swagger</a>
+    <a class="wb-link" href="/report">Report</a>
+  </div>
+</header>
+<main class="wb-stage">__ATLAS_BODY__</main>
+<div id="action-dock" hidden>
+  <div class="action-dock-bar">
+    <button type="button" class="action-toggle" aria-expanded="false">Jobs</button>
+    <span id="job-pulse" class="chip">no jobs</span>
+  </div>
+  <div class="action-dock-panel" hidden>
+    <div class="action-contextual" id="action-contextual"></div>
+    <form id="action-form" hidden></form>
+    <div id="action-jobs" class="action-jobs"></div>
+  </div>
 </div>
-<script>
-let currentFunction = null;
-let currentAsm = "";
-
-function setStatus(text) { document.getElementById("status").textContent = text; }
-
-async function api(path, body) {
-  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  return data;
-}
-
-async function loadProject() {
-  setStatus("Loading project...");
-  const { data } = await api("/api/loadProject", {});
-  const list = document.getElementById("function-list");
-  list.innerHTML = "";
-  for (const fn of data.functions) {
-    const li = document.createElement("li");
-    li.textContent = fn.name + (fn.cCode ? " (decompiled)" : "");
-    if (fn.cCode) li.className = "decompiled";
-    li.onclick = () => selectFunction(fn);
-    list.appendChild(li);
-  }
-  setStatus(`Loaded ${data.functions.length} functions.`);
-}
-
-function selectFunction(fn) {
-  currentFunction = fn;
-  currentAsm = fn.asmCode;
-  document.getElementById("current-name").textContent = fn.name;
-  document.getElementById("build-btn").disabled = false;
-  document.getElementById("prompt-text").value = "";
-}
-
-document.getElementById("build-btn").onclick = async () => {
-  if (!currentFunction) return;
-  setStatus("Building prompt...");
-  const { prompt } = await api("/api/buildPrompt", { functionId: currentFunction.id });
-  document.getElementById("prompt-text").value = prompt;
-  document.getElementById("save-btn").disabled = false;
-  setStatus("Prompt built.");
-};
-
-document.getElementById("save-btn").onclick = async () => {
-  if (!currentFunction) return;
-  setStatus("Saving prompt...");
-  const promptContent = document.getElementById("prompt-text").value;
-  const { path } = await api("/api/savePrompt", {
-    functionName: currentFunction.name,
-    promptContent,
-    asm: currentAsm,
-  });
-  setStatus(`Saved to ${path}`);
-};
-
-loadProject().catch((err) => setStatus("Error: " + err.message));
-</script>
+<script src="/dashboard/static/dashboard.js" defer></script>
+<script src="/dashboard/static/actions.js" defer></script>
 </body>
 </html>
 """

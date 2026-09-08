@@ -51,6 +51,7 @@ from agentdecompile_recovery.corpus.dashboard.panels.common import (  # noqa: E4
     procs_by_cwd,
     query_db,
     rel,
+    table_exists,
 )
 
 TITLE = "Pipeline steps"
@@ -84,14 +85,25 @@ DRM_SQL_LIST = ", ".join("?" for _ in DRM_EXCLUDED)
 # /proc cmdlines, which costs a directory walk of /proc and no disk I/O.
 STEP_PROCESS_MARKERS = {
     "extract": ("kx/extract.py", "scripts/extract_all.sh"),
-    "identity": ("kx/match.py", "kx/logical.py"),
-    "knowledge": ("ingest_ghidra_knowledge", "bsim_all"),
-    "decompile": ("kx/export_c.py", "export_c_all.sh", "kx/decompile.py",
-                  "kx/export_packages.py"),
-    "realc": ("permuter", "mizuchi", "experiment_real_c.py"),
-    "apply": ("kx/propagate.py", "kx/name_precedence.py", "kx/merge.py"),
-    "compile": ("compile-msvc71.sh", "compile_tally.py", "kx/ghidra_bulk.py"),
-    "verify": ("verify_built.py", "exact_universal.py"),
+    "identify": ("kx/match.py", "kx/logical.py"),
+    "calibrate-global": ("calibrate-global", "export-types", "build-types-header"),
+    "assembly-floor": ("kx/export_packages.py", "corpus.workspace", "compile-link"),
+    "recover-source": ("kx/ghidra_bulk.py", "ghidra_bulk"),
+    "apply-cross-build": ("kx/propagate.py", "cross_place"),
+    "leftover-recover": ("permuter", "genproject", "reconstruct"),
+    "verify-byte-accuracy": ("objdiff-check", "verify_built.py"),
+}
+
+# Catalog action ids bound to each pipeline gate (see introspect / corpus.cli).
+STEP_ACTION_DEFAULTS = {
+    "extract": "corpus.extract-stabs",
+    "identify": "corpus.match-pair",
+    "calibrate-global": "corpus.calibrate-global",
+    "assembly-floor": "corpus.workspace",
+    "recover-source": "corpus.ghidra-bulk",
+    "apply-cross-build": "corpus.cross-place",
+    "leftover-recover": "corpus.genproject",
+    "verify-byte-accuracy": "corpus.objdiff-check",
 }
 
 # Anchor of the per-binary list inside this panel. Roll-up counts that name a
@@ -128,6 +140,8 @@ def _art(path: Path) -> str:
 
 
 def _mtime(path: Path):
+    if path is None:
+        return None
     try:
         return path.stat().st_mtime
     except OSError:
@@ -150,7 +164,7 @@ def _src(path: Path) -> str:
 
 
 def _srcs(paths) -> str:
-    return '<div class="srcs">' + "".join(_src(p) for p in paths) + "</div>"
+    return '<div class="srcs">' + "".join(_src(p) for p in paths if p is not None) + "</div>"
 
 
 def _bar(part, whole, state: str) -> str:
@@ -170,6 +184,134 @@ def _pill(state: str) -> str:
              "unmeasured": "?"}.get(state, "○")
     return (f'<span class="pill st-{esc(state.replace(" ", "-"))}">'
             f'{glyph} {esc(state)}</span>')
+
+
+def _step_base(step_key: str) -> str:
+    return step_key.split("@", 1)[0]
+
+
+def _pick_corpus_action(base: str, step: dict, f: dict) -> tuple[str | None, bool]:
+    """Return (catalog action id, enabled) for one corpus roll-up gate."""
+    state = step.get("state", "")
+    if state == "done":
+        return STEP_ACTION_DEFAULTS.get(base), False
+
+    bins = f["binaries"]
+    total_bins = len(bins)
+    funcs = sum(b["func_count"] for b in bins)
+    with_funcs = sum(1 for b in bins if b["func_count"] > 0)
+    bound = sum(f["bound"].get(b["id"], 0) for b in bins)
+    carried = sum(f["named_carried"].get(b["id"], 0) for b in bins)
+    cus = sum(f["stabs"].values())
+    ingest = [f["ingest"].get(b["program"]) for b in bins]
+    complete = sum(1 for x in ingest if x and x[2])
+    pkgs = [p for name, p in f["packages"].items() if name in f["by_slug"]]
+    n_pkgs = len(pkgs)
+    built = sum(1 for p in pkgs if p["built"])
+    _bodies, real_c = f["recovered_all"]
+    queued = f["queued"]
+
+    if base == "extract":
+        aid = "corpus.init" if with_funcs == 0 else "corpus.extract-stabs"
+        return aid, total_bins > 0 and with_funcs < total_bins
+    if base == "identify":
+        if cus > 0 and bound < funcs:
+            aid = "corpus.apply-stabs"
+        elif bound < funcs:
+            aid = "corpus.match-pair"
+        else:
+            aid = "corpus.logical-build"
+        return aid, with_funcs > 0
+    if base == "calibrate-global":
+        return "corpus.calibrate-global", with_funcs > 0
+    if base == "assembly-floor":
+        return "corpus.workspace", with_funcs > 0 and n_pkgs < total_bins
+    if base == "recover-source":
+        return "corpus.ghidra-bulk", with_funcs > 0
+    if base == "apply-cross-build":
+        return "corpus.cross-place", bound > 0 and carried < funcs
+    if base == "leftover-recover":
+        return "corpus.genproject", bool(
+            (n_pkgs > 0 or queued) and queued and (real_c or 0) < queued)
+    if base == "verify-byte-accuracy":
+        return "corpus.objdiff-check", built > 0
+    return None, False
+
+
+def _pick_binary_action(base: str, step: dict, f: dict, b: dict) -> tuple[str | None, bool]:
+    """Return (catalog action id, enabled) for one build's gate."""
+    state = step.get("state", "")
+    if state == "done":
+        return STEP_ACTION_DEFAULTS.get(base), False
+
+    bid = b["id"]
+    total = b["func_count"]
+    bound = f["bound"].get(bid, 0)
+    carried = f["named_carried"].get(bid, 0)
+    stabs_units = f["stabs"].get(b["slug"])
+    ing = f["ingest"].get(b["program"])
+    pkg = f["packages"].get(b["slug"])
+    _bodies, real_c = f["recovered"].get(bid, (0, 0))
+    built = bool(pkg and pkg["built"])
+
+    if base == "extract":
+        aid = "corpus.init" if not total else "corpus.extract-stabs"
+        return aid, not total
+    if base == "identify":
+        if stabs_units and bound < total:
+            aid = "corpus.apply-stabs"
+        elif bound < total:
+            aid = "corpus.match-pair"
+        else:
+            aid = "corpus.logical-build"
+        return aid, total > 0
+    if base == "calibrate-global":
+        return "corpus.calibrate-global", total > 0
+    if base == "assembly-floor":
+        return "corpus.workspace", total > 0 and not pkg
+    if base == "recover-source":
+        return "corpus.ghidra-bulk", total > 0
+    if base == "apply-cross-build":
+        return "corpus.cross-place", bound > 0 and carried < total
+    if base == "leftover-recover":
+        return "corpus.genproject", total > 0 and real_c < total
+    if base == "verify-byte-accuracy":
+        return "corpus.objdiff-check", built
+    return None, False
+
+
+def _attach_actions(steps: list[dict], f: dict, b: dict | None = None) -> None:
+    for step in steps:
+        base = _step_base(step["key"])
+        if b is None:
+            aid, ok = _pick_corpus_action(base, step, f)
+        else:
+            aid, ok = _pick_binary_action(base, step, f, b)
+            step["action_slug"] = b["slug"]
+            step["action_program"] = b["program"]
+        step["action_id"] = aid
+        step["action_enabled"] = ok
+
+
+def _run_link(step: dict) -> str:
+    action_id = step.get("action_id")
+    if not action_id:
+        return ""
+    enabled = bool(step.get("action_enabled"))
+    attrs = [f'data-action-id="{esc(action_id)}"']
+    slug = step.get("action_slug")
+    program = step.get("action_program")
+    if slug:
+        attrs.append(f'data-action-slug="{esc(slug)}"')
+    if program:
+        attrs.append(f'data-action-program="{esc(program)}"')
+    attr_s = " ".join(attrs)
+    tip = f"Run {action_id}" + ("" if enabled else " — waiting on an earlier gate")
+    if enabled:
+        return (f'<a class="step-run" href="/dashboard#run" {attr_s} '
+                f'title="{esc(tip)}">Run</a>')
+    return (f'<span class="step-run disabled" aria-disabled="true" {attr_s} '
+            f'title="{esc(tip)}">Run</span>')
 
 
 def _running_steps() -> set:
@@ -230,8 +372,13 @@ def _package_build_state(pkg: Path) -> tuple[bool, str]:
 # --------------------------------------------------------------------------
 
 
-def _rows(sql: str, params: tuple = (), db: Path | None = None):
-    rows, err = query_db(sql, params, db=db)
+def _rows(sql: str, params: tuple = (), db: Path | None = None, *, optional: str | None = None):
+    """Run one query. When *optional* names a table, a missing table is not an error."""
+    target = db if db is not None else DB_PATH
+    if optional and target is not None and not table_exists(optional, db=target):
+        return [], None
+    ignore = optional is not None
+    rows, err = query_db(sql, params, db=db, ignore_missing=ignore)
     return (rows or []), err
 
 
@@ -268,13 +415,15 @@ def _collect_facts() -> dict:
     rows, err = _rows(
         "SELECT i.binary_id, COUNT(DISTINCT i.addr) FROM identity i "
         "JOIN logical_name n ON n.logical_id = i.logical_id "
-        "WHERE n.tier <= 4 GROUP BY i.binary_id")
+        "WHERE n.tier <= 4 GROUP BY i.binary_id",
+        optional="logical_name")
     if err:
         f["errors"].append(err)
     f["named_carried"] = {r[0]: r[1] for r in rows if r[0] in keep}
 
     rows, err = _rows("SELECT tier, COALESCE(tier_name, '?'), COUNT(*) "
-                      "FROM logical_name GROUP BY tier, tier_name ORDER BY tier")
+                      "FROM logical_name GROUP BY tier, tier_name ORDER BY tier",
+                      optional="logical_name")
     f["tiers"] = rows
     if err:
         f["errors"].append(err)
@@ -285,12 +434,14 @@ def _collect_facts() -> dict:
     # real_c is the column kx/realc.py writes; it is never summed with
     # byte_exact, which is a different property of a different artifact.
     rows, err = _rows("SELECT binary_id, COUNT(*), COUNT(*) "
-                      "FROM recovered_function WHERE real_c=1 GROUP BY binary_id")
+                      "FROM recovered_function WHERE real_c=1 GROUP BY binary_id",
+                      optional="recovered_function")
     if err:
         f["errors"].append(err)
     f["recovered"] = {r[0]: (r[1] or 0, r[2] or 0) for r in rows}
     logical_rows, logical_err = _rows(
-        "SELECT COUNT(*), COUNT(DISTINCT logical_id) FROM recovered_function WHERE real_c=1"
+        "SELECT COUNT(*), COUNT(DISTINCT logical_id) FROM recovered_function WHERE real_c=1",
+        optional="recovered_function",
     )
     if logical_err:
         f["errors"].append(logical_err)
@@ -299,7 +450,7 @@ def _collect_facts() -> dict:
     f["recovered_unplaced"] = f["recovered"].pop(None, (0, 0))
 
     rows, err = _rows("SELECT program, functions_done, functions_total, complete "
-                      "FROM ingest_status", db=KNOWLEDGE_DB)
+                      "FROM ingest_status", db=KNOWLEDGE_DB, optional="ingest_status")
     if err:
         f["errors"].append(err)
     f["ingest"] = {r[0]: (r[1] or 0, r[2] or 0, r[3] or 0) for r in rows}
@@ -411,12 +562,12 @@ def _corpus_steps(f: dict, live: set) -> list[dict]:
     })
 
     steps.append({
-        "key": "identity", "label": "2", "title": "Bind functions to one identity",
+        "key": "identify", "label": "2", "title": "Bind functions to one identity",
         "why": "Decide which concrete functions in different builds are the same "
                "function, so one recovery can be tested in every matching build.",
         "done": bound, "total": funcs, "unit": "functions bound",
         "done_href": _funcs(bound=1), "total_href": _funcs(),
-        "state": _state_for(bound, funcs, "identity" in live, bool(bound)),
+        "state": _state_for(bound, funcs, "identify" in live, bool(bound)),
         "notes": [
             _note(f"{count_link(f['logicals'], _funcs(bound=1), title='opens the concrete functions bound into these groups')} "
                   "logical functions; "
@@ -437,14 +588,14 @@ def _corpus_steps(f: dict, live: set) -> list[dict]:
     complete = sum(1 for x in ingest if x and x[2])
     cached = sum(x[0] for x in ingest if x)
     steps.append({
-        "key": "knowledge", "label": "3",
-        "title": "Merge Ghidra knowledge from every fork",
+        "key": "calibrate-global", "label": "3",
+        "title": "Global calibration",
         "why": "Pull each fork's per-function Ghidra data — decompiled C, "
                "disassembly, calling convention, relocations — into one indexed "
                "store instead of 500,000 individual reads on a shared disk.",
         "done": complete, "total": total_bins, "unit": "builds cached",
         "done_href": PERBIN_ANCHOR, "total_href": PERBIN_ANCHOR,
-        "state": _state_for(complete, total_bins, "knowledge" in live, bool(cached)),
+        "state": _state_for(complete, total_bins, "calibrate-global" in live, bool(cached)),
         "notes": [
             _note(f"{count_link(cached, _funcs(), title='opens the function list; the knowledge store has no per-function filter of its own')} "
                   "function records cached, covering "
@@ -460,12 +611,12 @@ def _corpus_steps(f: dict, live: set) -> list[dict]:
     man_named = sum(int(m.get("named") or 0) for m in f["manifest"].values())
     n_pkgs = len(pkgs)
     steps.append({
-        "key": "decompile", "label": "4", "title": "Generate a C/C++ project per build",
+        "key": "assembly-floor", "label": "4", "title": "Link floor",
         "why": "Turn each build into a project tree with headers, sources and a "
                "build file, so there is something to compile at all.",
         "done": n_pkgs, "total": total_bins, "unit": "packages",
         "done_href": _art(EXPORT_CPP), "total_href": PERBIN_ANCHOR,
-        "state": _state_for(n_pkgs, total_bins, "decompile" in live, bool(n_pkgs)),
+        "state": _state_for(n_pkgs, total_bins, "assembly-floor" in live, bool(n_pkgs)),
         "notes": [
             # The generator rewrites this directory in place, so the manifest is
             # absent for the length of a run. Zeros read from an absent file are
@@ -486,13 +637,13 @@ def _corpus_steps(f: dict, live: set) -> list[dict]:
     })
 
     steps.append({
-        "key": "realc", "label": "5", "title": "Recover readable source",
+        "key": "recover-source", "label": "5", "title": "Recover compiling C",
         "why": "Write C that compiles to the original bytes with no __asm, no "
                "naked, no _emit. This is the only number here that cannot be "
                "produced by re-emitting bytes we already had.",
         "done": real_c, "total": queued, "unit": "logical functions",
         "done_href": _funcs(real_c=1), "total_href": _art(QUEUE_SUMMARY),
-        "state": _state_for(real_c, queued, "realc" in live, bool(bodies)),
+        "state": _state_for(real_c, queued, "recover-source" in live, bool(bodies)),
         "notes": [
             _note(f"{count_link(real_c or None, _funcs(real_c=1) if real_c else None)} "
                   "logical functions have verified readable source. Denominator is the recovery "
@@ -518,12 +669,12 @@ def _corpus_steps(f: dict, live: set) -> list[dict]:
         f'<td class="num">{fpct(r[2], total_named)}</td></tr>'
         for r in tiers)
     steps.append({
-        "key": "apply", "label": "N-2", "title": "Cross-match and apply knowledge",
+        "key": "apply-cross-build", "label": "6", "title": "Cross-place compiling C",
         "why": "Every binary carries the best available name and the merged Ghidra "
                "data from every fork.",
         "done": carried, "total": funcs, "unit": "function instances named",
         "done_href": _funcs(named=1), "total_href": _funcs(),
-        "state": _state_for(carried, funcs, "apply" in live, bool(carried)),
+        "state": _state_for(carried, funcs, "apply-cross-build" in live, bool(carried)),
         "notes": [
             _note(f"{count_link(real_named, _funcs(named=1))} of "
                   f"{count_link(total_named, _funcs(bound=1))} logical functions carry a "
@@ -560,12 +711,12 @@ def _corpus_steps(f: dict, live: set) -> list[dict]:
             "byte-emitter's own project, whose bodies are machine code in a C wrapper. "
             "It is not this step."))
     steps.append({
-        "key": "compile", "label": "N-1", "title": "Compile the generated project",
+        "key": "leftover-recover", "label": "7", "title": "Leftover recover",
         "why": "A project that does not build has not been verified, whatever any "
                "other number says.",
         "done": len(built), "total": n_pkgs, "unit": "packages built",
         "done_href": _art(EXPORT_CPP), "total_href": _art(EXPORT_CPP),
-        "state": _state_for(len(built), n_pkgs, "compile" in live, bool(built)),
+        "state": _state_for(len(built), n_pkgs, "leftover-recover" in live, bool(built)),
         "notes": compile_notes,
         "detail": ('<div class="tablewrap"><table><thead><tr><th>Package</th>'
                    '<th>Build</th><th>Evidence on disk</th></tr></thead>'
@@ -586,7 +737,7 @@ def _corpus_steps(f: dict, live: set) -> list[dict]:
               "exist on disk."),
     ]
     steps.append({
-        "key": "verify", "label": "N", "title": "Verify byte-accuracy of the build",
+        "key": "verify-byte-accuracy", "label": "8", "title": "Objdiff audit",
         "why": "Compare the libraries the build produced against the shipped "
                "binary, byte for byte. This is the only step that proves the "
                "source is correct.",
@@ -647,7 +798,7 @@ def _binary_steps(f: dict, b: dict) -> list[dict]:
 
     bound = f["bound"].get(bid, 0)
     steps.append({
-        "key": f"identity@{slug}", "label": "2",
+        "key": f"identify@{slug}", "label": "2",
         "title": "Bind functions to one identity",
         "why": "Decide which of this build's functions are the same function in "
                "the other 21 builds, so one recovery pays off many times.",
@@ -669,8 +820,8 @@ def _binary_steps(f: dict, b: dict) -> list[dict]:
     ing = f["ingest"].get(b["program"])
     done_k, total_k = (ing[0], ing[1]) if ing else (None, None)
     steps.append({
-        "key": f"knowledge@{slug}", "label": "3",
-        "title": "Merge Ghidra knowledge from every fork",
+        "key": f"calibrate-global@{slug}", "label": "3",
+        "title": "Global calibration",
         "why": "Pull this build's per-function Ghidra data into the shared store "
                "so a function page costs one indexed read, not a project open.",
         "done": done_k, "total": total_k or total, "unit": "functions cached",
@@ -694,8 +845,8 @@ def _binary_steps(f: dict, b: dict) -> list[dict]:
     man = f["manifest"].get(slug) or {}
     pkg_funcs = int(man.get("functions") or 0) or None
     steps.append({
-        "key": f"decompile@{slug}", "label": "4",
-        "title": "Generate a C/C++ project per build",
+        "key": f"assembly-floor@{slug}", "label": "4",
+        "title": "Link floor",
         "why": "Turn this build into a project tree with headers, sources and a "
                "build file, so there is something to compile at all.",
         "done": 1 if pkg else 0, "total": 1, "unit": "package",
@@ -721,8 +872,8 @@ def _binary_steps(f: dict, b: dict) -> list[dict]:
 
     bodies, real_c = f["recovered"].get(bid, (0, 0))
     steps.append({
-        "key": f"realc@{slug}", "label": "5",
-        "title": "Recover readable source",
+        "key": f"recover-source@{slug}", "label": "5",
+        "title": "Recover compiling C",
         "why": "Write C that compiles to this build's original bytes with no "
                "__asm, no naked, no _emit.",
         "done": real_c, "total": total, "unit": "functions with real C",
@@ -743,8 +894,8 @@ def _binary_steps(f: dict, b: dict) -> list[dict]:
 
     carried = f["named_carried"].get(bid, 0)
     steps.append({
-        "key": f"apply@{slug}", "label": "N-2",
-        "title": "Cross-match and apply knowledge",
+        "key": f"apply-cross-build@{slug}", "label": "6",
+        "title": "Cross-place compiling C",
         "why": "This build carries the best available name and the merged Ghidra "
                "data from every other fork.",
         "done": carried, "total": total, "unit": "functions named",
@@ -763,8 +914,8 @@ def _binary_steps(f: dict, b: dict) -> list[dict]:
 
     built = bool(pkg and pkg["built"])
     steps.append({
-        "key": f"compile@{slug}", "label": "N-1",
-        "title": "Compile the generated project",
+        "key": f"leftover-recover@{slug}", "label": "7",
+        "title": "Leftover recover",
         "why": "A project that does not build has not been verified, whatever any "
                "other number says.",
         "done": 1 if built else 0, "total": 1 if pkg else 0, "unit": "package built",
@@ -796,8 +947,8 @@ def _binary_steps(f: dict, b: dict) -> list[dict]:
             "inside a C wrapper, so matching proves packaging, not recovered source. "
             "byte_exact and real C are different properties and are never added together."))
     steps.append({
-        "key": f"verify@{slug}", "label": "N",
-        "title": "Verify byte-accuracy of the build",
+        "key": f"verify-byte-accuracy@{slug}", "label": "8",
+        "title": "Objdiff audit",
         "why": "Compare the libraries this build produced against the shipped "
                "binary, byte for byte. This is the only step that proves the "
                "source is correct.",
@@ -814,7 +965,10 @@ def _binary_steps(f: dict, b: dict) -> list[dict]:
 
 def collect() -> list[dict]:
     """Corpus roll-up steps. Kept for callers that want the data, not the HTML."""
-    return _corpus_steps(facts(), _running_steps())
+    f = facts()
+    steps = _corpus_steps(f, _running_steps())
+    _attach_actions(steps, f)
+    return steps
 
 
 # --------------------------------------------------------------------------
@@ -876,6 +1030,7 @@ def _render_step(index: int, step: dict, force_closed: bool = False) -> str:
         f'<span class="stepno">{esc(step.get("label", index))}</span>'
         f'<span class="stepname">{esc(step.get("title", ""))}</span>'
         f"{_pill(state)}"
+        f"{_run_link(step)}"
         f'<span class="stepcount">{_count_html(step)}</span>'
         f'{_bar(step.get("done"), step.get("total"), state)}'
         f"</summary>"
@@ -912,6 +1067,7 @@ def _ladder_head(steps: list[dict], subject: str) -> str:
 
 def _binary_ladder_body(f: dict, b: dict) -> str:
     steps = _binary_steps(f, b)
+    _attach_actions(steps, f, b)
     rendered = "".join(_render_step(i + 1, s, force_closed=True)
                        for i, s in enumerate(steps))
     return _ladder_head(steps, "this build") + rendered
@@ -920,6 +1076,7 @@ def _binary_ladder_body(f: dict, b: dict) -> str:
 def _binary_details(f: dict, b: dict) -> str:
     """One build's ladder, collapsed. 22 open ladders is not a page."""
     steps = _binary_steps(f, b)
+    _attach_actions(steps, f, b)
     complete, overall, blocked = _summarise(steps)
     state = (blocked or {}).get("state", "done")
     slug = b["slug"]
@@ -953,28 +1110,119 @@ def render_for_binary(slug: str) -> str:
             f'{_binary_ladder_body(f, b)}</div>')
 
 
-def render() -> str:
+def _schema_note(f: dict) -> str:
+    """One line when optional tables or artifact dirs are not populated yet."""
+    hints = []
+    if not table_exists("logical_name"):
+        hints.append("logical_name")
+    if not table_exists("recovered_function"):
+        hints.append("recovered_function")
+    if KNOWLEDGE_DB is not None and not table_exists("ingest_status", db=KNOWLEDGE_DB):
+        hints.append("ingest_status")
+    if f.get("packages_error"):
+        hints.append(rel(EXPORT_CPP))
+    parts = []
+    if hints:
+        parts.append(
+            f'<p class="note">Optional corpus tables or outputs not populated yet: '
+            f'{", ".join(f"<code>{esc(h)}</code>" for h in hints)}. '
+            "Steps below show honest not-started state instead of SQL errors.</p>"
+        )
+    for err in f.get("errors") or []:
+        parts.append(f'<p class="miss">{esc(err)}</p>')
+    return "".join(parts)
+
+
+def render(*, compact: bool = False) -> str:
     started = time.time()
     f = facts()
     steps = _corpus_steps(f, _running_steps())
+    _attach_actions(steps, f)
     head = _ladder_head(steps, "the corpus")
     rollup = "".join(_render_step(i + 1, s) for i, s in enumerate(steps))
 
-    ladders = "".join(_binary_details(f, b) for b in f["binaries"])
-    perbin = (
-        f'<div class="perbinary" id="{PERBIN_ANCHOR.lstrip("#")}">'
-        f'<p class="note"><b>{fnum(len(f["binaries"]))} builds, '
-        f'{fnum(len(f["binaries"]))} ladders.</b> The roll-up above is these same '
-        "steps added together; the build is the unit that actually has a state. "
-        "Open one to see that build\'s own eight steps and its own numbers. The "
-        "two DRM-encrypted binaries are excluded corpus-wide.</p>"
-        f"{ladders}</div>")
+    perbin = ""
+    if not compact:
+        ladders = "".join(_binary_details(f, b) for b in f["binaries"])
+        perbin = (
+            f'<details class="perbinary" id="{PERBIN_ANCHOR.lstrip("#")}">'
+            f'<summary class="note"><b>{fnum(len(f["binaries"]))} per-build ladders</b> '
+            "— same eight gates measured per binary. Expand to open one build.</summary>"
+            f"{ladders}</details>")
 
-    errs = "".join(f'<p class="miss">{esc(e)}</p>' for e in f.get("errors") or [])
-    foot = (f'<p class="annot">ladders computed in {time.time() - started:.2f}s '
-            f'from one snapshot taken {esc(ago(f["at"]))}, out of the artifacts '
-            "linked on each step</p>")
-    return f'<div class="ladder">{head}{errs}{rollup}{perbin}{foot}</div>'
+    note = _schema_note(f)
+    foot = ""
+    if not compact:
+        foot = (f'<p class="annot">ladders computed in {time.time() - started:.2f}s '
+                f'from one snapshot taken {esc(ago(f["at"]))}, out of the artifacts '
+                "linked on each step</p>")
+    css = ' class="ladder ladder-compact"' if compact else ' class="ladder"'
+    return f"<div{css}>{head}{note}{rollup}{perbin}{foot}</div>"
+
+
+def render_compact() -> str:
+    """Corpus roll-up only — for the workbench embed."""
+    return render(compact=True)
+
+
+def _json_step(step: dict) -> dict:
+    step = dict(step)
+    stage = str(step.get("key") or "").split("@")[0]
+    if stage in {"calibrate-global", "assembly-floor", "apply-cross-build", "leftover-recover"}:
+        descriptions = {
+            "calibrate-global": ("Global calibration", "Compare candidate compilers, flags, ABIs and layouts against known-source functions. Cached Ghidra facts are context, not calibration results."),
+            "assembly-floor": ("Assembly floor", "Generate a complete project with assembly fallbacks, then record a successful link. Package directories alone do not prove linking."),
+            "apply-cross-build": ("Cross-place compiling C", "Apply source through logical identity and compile it for each destination. Shared names alone do not prove source placement."),
+            "leftover-recover": ("Targeted semantic recovery", "Use bounded compile-and-diff attempts for unresolved functions after global calibration and cheaper repairs. Build artifacts alone do not measure these attempts."),
+        }
+        step["title"], step["why"] = descriptions[stage]
+        step.update(done=None, total=None, state="unmeasured", unit="", next="Inspect or run this stage to obtain its specific evidence.")
+    elif stage == "recover-source":
+        step.update(title="Recover readable C", why="Recover assembly-free C/C++ candidates. These records do not establish compilation or byte identity.", next="Compile the readable candidates, then independently verify their output.")
+    return {
+        "key": step.get("key"),
+        "label": step.get("label"),
+        "title": step.get("title"),
+        "why": step.get("why"),
+        "done": step.get("done"),
+        "total": step.get("total"),
+        "unit": step.get("unit") or "",
+        "state": step.get("state") or "unmeasured",
+        "next": step.get("next") or "",
+        "action_id": step.get("action_id") or "",
+        "action_enabled": bool(step.get("action_enabled")),
+        "action_slug": step.get("action_slug") or "",
+        "action_program": step.get("action_program") or "",
+    }
+
+
+def as_payload() -> dict:
+    """Same ladder facts the HTML panel uses, without HTML notes."""
+    f = facts()
+    live = _running_steps()
+    corpus = _corpus_steps(f, live)
+    _attach_actions(corpus, f)
+    binaries = []
+    for b in f["binaries"]:
+        steps = _binary_steps(f, b)
+        _attach_actions(steps, f, b)
+        rec = f["recovered"].get(b["id"]) or (0, 0)
+        binaries.append({
+            "slug": b["slug"],
+            "game": b.get("game") or "",
+            "platform": b.get("platform") or "",
+            "func_count": b.get("func_count") or 0,
+            "named_count": b.get("named_count") or 0,
+            "bound": f["bound"].get(b["id"], 0),
+            "real_c": rec[0] if rec else 0,
+            "steps": [_json_step(s) for s in steps],
+        })
+    return {
+        "at": f.get("at"),
+        "errors": list(f.get("errors") or []),
+        "corpus_steps": [_json_step(s) for s in corpus],
+        "binaries": binaries,
+    }
 
 
 if __name__ == "__main__":  # manual check: python scripts/panels/steps.py

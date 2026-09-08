@@ -30,6 +30,7 @@ from agentdecompile_recovery.corpus.dashboard.common import (  # noqa: F401
     query_db,
     rel,
     table,
+    table_exists,
     tag,
     tail_lines,
     tcp_up,

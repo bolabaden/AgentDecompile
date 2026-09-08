@@ -190,7 +190,9 @@ def count_link(n, href, unit: str | None = None, title: str | None = None) -> st
     return f'<a class="cnt" href="{esc(href)}"{attr}>{text}</a>{tail}'
 
 
-def rel(path: Path) -> str:
+def rel(path: Path | None) -> str:
+    if path is None:
+        return "unset"
     root = live_root() or ROOT
     if root is None:
         return str(path)
@@ -282,16 +284,39 @@ def tag(text: str, kind: str = "") -> str:
     return f'<span class="tag {kind}">{esc(text)}</span>'
 
 
-def query_db(sql: str, params: tuple = (), db: Path | None = None):
+def table_exists(name: str, db: Path | None = None) -> bool:
+    """True when *name* is a table in the target database."""
+    rows, err = query_db(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (name,),
+        db=db,
+        ignore_missing=False,
+    )
+    return bool(rows) and err is None
+
+
+def query_db(
+    sql: str,
+    params: tuple = (),
+    db: Path | None = None,
+    *,
+    ignore_missing: bool = False,
+):
     """Run a read-only query. Returns (rows, error). Never raises.
 
     Panels must query with an indexed WHERE or an aggregate over a small table,
     never `SELECT *` over `func`. Per-binary counts come from `binary.func_count`.
+
+    When ``ignore_missing`` is true, a missing database file or absent table
+    returns ``([], None)`` instead of an error — for optional schema the
+    pipeline has not populated yet.
     """
     target = db if db is not None else live_db()
     if target is None:
         return [], "AGENT_DECOMPILE_CORPUS_DB is unset"
     if not target.exists():
+        if ignore_missing:
+            return [], None
         return [], f"not available yet ({rel(target)} missing)"
     try:
         con = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=10)
@@ -300,6 +325,9 @@ def query_db(sql: str, params: tuple = (), db: Path | None = None):
         con.close()
         return rows, None
     except sqlite3.Error as exc:
+        message = str(exc)
+        if ignore_missing and "no such table" in message.lower():
+            return [], None
         return [], f"query failed: {exc}"
 
 
@@ -348,3 +376,17 @@ def tail_lines(path: Path, nlines: int = 25, nbytes: int = 1 << 20) -> list[str]
         return [ln.rstrip() for ln in text.splitlines() if ln.strip()][-nlines:]
     except OSError:
         return []
+
+
+def page_window(offset=0, limit='all') -> tuple[int, int | None]:
+    """Start index and optional cap. None cap means every remaining row."""
+    start = max(0, int(offset or 0))
+    if limit in (None, '', 'all', 'All'):
+        return 0, None
+    try:
+        count = int(limit)
+    except (TypeError, ValueError):
+        return 0, None
+    if count <= 0:
+        return 0, None
+    return start, count

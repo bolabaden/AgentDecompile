@@ -27,6 +27,7 @@ import multiprocessing
 import os
 import re
 import time
+import threading
 
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -61,6 +62,8 @@ from agentdecompile_cli.mcp_server.session_context import (  # pyright: ignore[r
 from agentdecompile_cli.registry import (  # pyright: ignore[reportMissingImports]
     ADVERTISED_TOOL_PARAMS,
     get_advertised_tools_for_list,
+    get_effective_max_analysis_tier,
+    get_tool_analysis_tier,
     TOOL_ALIASES,
     TOOL_PARAM_ALIASES,
     Tool,
@@ -173,6 +176,8 @@ _AUTO_CHECKIN_TRIGGER_TOOLS: frozenset[str] = frozenset(
 _NO_AUTO_SELECT_TOOLS: frozenset[str] = frozenset(
     {
         "openproject",
+        "manageworkflow",
+        "readworkspaceactivity",
         "open",
         "importbinary",
         "listprojectfiles",
@@ -903,6 +908,8 @@ class ToolProvider:
                     if norm_args.get(target) is None:
                         norm_args[target] = value
 
+        # Freeze the resolved target before a handler can yield or open another program.
+        response_program_info = self.program_info if norm_args.get("programpath") else None
         try:
             result = await handler(norm_args)
             logger.debug("tool=%s completed", canonical_tool)
@@ -917,6 +924,7 @@ class ToolProvider:
                         result[0].text,
                         sid,
                         tool_name_normalized=norm_name,
+                        target_program_info=response_program_info,
                     )
                     injected_text = inject_ui_hints(
                         injected_text,
@@ -1736,7 +1744,9 @@ class ToolProviderManager:
         self.providers: list[ToolProvider] = []
         self._tool_map: dict[str, ToolProvider] = {}  # normalized tool name → provider; filled by _register()
         self.program_info: ProgramInfo | None = None
-        self.ghidra_project: Any | None = None  # GhidraProject from PyGhidraContext
+        self._project_handles_lock = threading.RLock()
+        self._owned_gpr_projects: dict[str, Any] = {}
+        self._ghidra_project: Any | None = None  # GhidraProject from PyGhidraContext
         # Stable subdir under %TEMP%/agentdecompile_shared/ for shared checkout (avoid PID reuse lock collisions).
         self.shared_server_workspace_subdir: str | None = None
         # True after connect-shared successfully bound GhidraProject to shared checkout tree (skip rebind on repeat open).
@@ -1744,6 +1754,68 @@ class ToolProviderManager:
         # Set by launcher so connect-shared can replace context.project when swapping the active Ghidra project.
         self.pyghidra_context_ref: Any = None
         self._on_program_info_changed: Callable[[ProgramInfo], None] | None = None
+
+    @staticmethod
+    def _canonical_gpr(path: str | Path) -> str:
+        return os.path.normcase(str(Path(path).expanduser().resolve()))
+
+    @staticmethod
+    def _project_gpr(project: Any) -> str | None:
+        try:
+            native = project.getProject()
+            if native is None or native.isClosed():
+                return None
+            locator = native.getProjectLocator()
+            return ToolProviderManager._canonical_gpr(Path(str(locator.getLocation())) / f"{locator.getName()}.gpr")
+        except Exception:
+            return None
+
+    @property
+    def ghidra_project(self) -> Any | None:
+        handle = SESSION_CONTEXTS.get_project_handle(get_current_mcp_session_id())
+        if handle and str(handle.get('mode') or '').replace('-', '').lower() == 'localgpr':
+            path = handle.get('path')
+            if path:
+                key = self._canonical_gpr(path)
+                with self._project_handles_lock:
+                    project = self._owned_gpr_projects.get(key)
+                    return project if project is not None and self._project_gpr(project) == key else None
+        return self._ghidra_project
+
+    @ghidra_project.setter
+    def ghidra_project(self, project: Any | None) -> None:
+        # Switching the active project must not orphan the still-open native
+        # owner of its file lock or close programs referenced by another tab.
+        with self._project_handles_lock:
+            if project is not None:
+                path = self._project_gpr(project)
+                if path:
+                    self._owned_gpr_projects[path] = project
+            self._ghidra_project = project
+
+    def owned_gpr_project(self, path: str | Path, opener: Callable[[], Any]) -> Any:
+        """Reuse this process's native owner, or acquire the project once.
+
+        This lock covers lookup plus native open so independent sessions cannot
+        both create a GhidraProject manager for the same canonical path. Handles
+        remain retained until their explicit lifecycle owner closes them; an
+        already-closed shared-project handle is evicted before reopening.
+        """
+        key = self._canonical_gpr(path)
+        with self._project_handles_lock:
+            existing = self._owned_gpr_projects.get(key)
+            if existing is not None and self._project_gpr(existing) == key:
+                return existing
+            self._owned_gpr_projects.pop(key, None)
+            project = opener()
+            actual = self._project_gpr(project)
+            if actual != key:
+                # Never cache a handle under an unrelated requested locator.
+                if actual:
+                    self._owned_gpr_projects[actual] = project
+                raise ValueError(f"Opened project locator does not match {path}")
+            self._owned_gpr_projects[key] = project
+            return project
 
     def set_ghidra_project(self, project: Any) -> None:
         """Store the GhidraProject reference so providers can use it for checkout."""
@@ -1786,6 +1858,7 @@ class ToolProviderManager:
             ScriptToolProvider,
             StaticAnalysisToolProvider,
             RecoveryToolProvider,
+            WorkflowToolProvider,
             SearchEverythingToolProvider,
             StringToolProvider,
             StructureToolProvider,
@@ -1820,6 +1893,7 @@ class ToolProviderManager:
             ScriptToolProvider,
             StaticAnalysisToolProvider,
             RecoveryToolProvider,
+            WorkflowToolProvider,
             SearchEverythingToolProvider,
             StringToolProvider,
             StructureToolProvider,
@@ -2005,23 +2079,23 @@ class ToolProviderManager:
         logger.debug("diag.enter %s", "mcp_server/tool_providers.py:ToolProviderManager._find_domain_file_by_name")
         stack: list[Any] = [folder]
         visited = 0
+        found = None
         while stack and visited < max_results:
             current = stack.pop()
             visited += 1
             try:
                 for domain_file in current.getFiles() or []:
                     if str(domain_file.getName()) == file_name:
-                        return domain_file
+                        if found is not None and str(found.getPathname()) != str(domain_file.getPathname()):
+                            return None
+                        found = domain_file
                 for subfolder in current.getFolders() or []:
                     stack.append(subfolder)
             except Exception as ex:
-                logger.debug(
-                    "pyghidra_domain_tree_skip visited=%s exc_type=%s",
-                    visited,
-                    type(ex).__name__,
-                )
-                continue
-        return None
+                logger.debug("pyghidra_domain_tree_skip visited=%s exc_type=%s", visited, type(ex).__name__)
+                return None
+        # A partial scan cannot establish that a short name is unambiguous.
+        return found if not stack else None
 
     def _activate_local_program_by_path(
         self,
@@ -2056,7 +2130,7 @@ class ToolProviderManager:
 
         if domain_file is None:
             file_name = Path(normalized).name
-            if file_name:
+            if file_name and '/' not in normalized.replace('\\', '/'):
                 try:
                     root = project_data.getRootFolder()
                     domain_file = self._find_domain_file_by_name(root, file_name)
@@ -2271,8 +2345,8 @@ class ToolProviderManager:
         session = SESSION_CONTEXTS.get_or_create(session_id)
 
         # 1. Already-open program in session (pick first with a live .program)
-        for key, info in (session.open_programs or {}).items():
-            if info is not None and info.program is not None:
+        for key, info in list((session.open_programs or {}).items()):
+            if info is not None and info.program is not None and SESSION_CONTEXTS.get_program_info(session_id, key) is info:
                 SESSION_CONTEXTS.set_active_program_info(session_id, key, info)
                 self.set_program_info(info)
                 logger.info(
@@ -2364,7 +2438,7 @@ class ToolProviderManager:
 
         advertised_tools: list[types.Tool] = []
         for canonical_name in get_advertised_tools_for_list():
-            canonical_params: list[str] = ADVERTISED_TOOL_PARAMS.get(canonical_name, [])
+            canonical_params: list[str] = list(ADVERTISED_TOOL_PARAMS.get(canonical_name, []))
 
             normalized_name: str = n(canonical_name)
             provider_tool: types.Tool | None = by_norm.get(normalized_name)
@@ -2377,12 +2451,30 @@ class ToolProviderManager:
             for key, value in properties.items():
                 props_by_norm[n(key)] = value
 
+            # Provider-owned capabilities may grow ahead of the registry's aliases.
+            # Retain canonical spellings while exposing every actual provider field.
+            aliases = TOOL_PARAM_ALIASES.get(normalized_name, {})
+            canonical_norms = {n(param) for param in canonical_params}
+            for provider_param in properties:
+                normalized_param = n(provider_param)
+                if normalized_param in canonical_norms:
+                    continue
+                if normalized_param in _SELECTOR_PARAM_ALIASES and canonical_norms.intersection(_SELECTOR_PARAM_ALIASES):
+                    continue
+                canonical_params.append(provider_param)
+                canonical_norms.add(normalized_param)
+
             # Build properties from canonical param list; use provider schema when present, else infer from param name
             advertised_properties: dict[str, Any] = {}
             for param in canonical_params:
                 snake_param = to_snake_case(param)
                 normalized_param = n(param)
                 provider_param_schema = props_by_norm.get(normalized_param)
+                if provider_param_schema is None:
+                    for alias, targets in aliases.items():
+                        if normalized_param in targets and alias in props_by_norm:
+                            provider_param_schema = props_by_norm[alias]
+                            break
                 if provider_param_schema is None and normalized_param in _SELECTOR_PARAM_ALIASES:
                     for selector_alias in _SELECTOR_PARAM_ALIASES:
                         provider_param_schema = props_by_norm.get(selector_alias)
@@ -2406,7 +2498,10 @@ class ToolProviderManager:
             advertised_required: list[str] = []
             for param in canonical_params:
                 normalized_param = n(param)
-                is_required = normalized_param in required_norm
+                is_required = normalized_param in required_norm or any(
+                    alias in required_norm and normalized_param in targets
+                    for alias, targets in aliases.items()
+                )
                 if not is_required and normalized_param == "mode":
                     is_required = any(selector_alias in required_norm for selector_alias in _SELECTOR_PARAM_ALIASES)
                 if normalized_param in _optional_program_norm:
@@ -2464,6 +2559,32 @@ class ToolProviderManager:
                     ],
                 ),
             )
+
+        auto_prereq_invocation: bool = bool((arguments or {}).get("__auto_prereq_invocation"))
+        max_analysis_tier: int | None = get_effective_max_analysis_tier()
+        if max_analysis_tier is not None and not auto_prereq_invocation:
+            tool_tier: int = get_tool_analysis_tier(resolved_name)
+            if tool_tier > max_analysis_tier:
+                return create_error_response(
+                    ActionableError(
+                        (
+                            f"Tool '{resolved_name}' requires analysis tier {tool_tier}, "
+                            f"but max_analysis_tier is {max_analysis_tier}."
+                        ),
+                        context={
+                            "tool": resolved_name,
+                            "toolAnalysisTier": tool_tier,
+                            "maxAnalysisTier": max_analysis_tier,
+                            "state": "max-analysis-tier-exceeded",
+                        },
+                        next_steps=[
+                            f"Use a tool with analysis tier {max_analysis_tier} or lower (see tools/list).",
+                            "Raise the limit with AGENTDECOMPILE_MAX_ANALYSIS_TIER=3 or header X-AgentDecompile-Max-Analysis-Tier: 3.",
+                        ],
+                    ),
+                    tool_name_normalized=n(resolved_name),
+                )
+
         # Security: do not log full session id (log redacted hint only)
         _sid_hint = redact_session_id(session_id)
         logger.info(
@@ -2552,7 +2673,9 @@ class ToolProviderManager:
             # Do not fall back to the session active program when the client named a specific path.
             effective_program_info = requested_program_info
         else:
-            effective_program_info = session_program_info or self.program_info
+            # A project-bound session must never borrow the manager's program
+            # from another project/session when its own selection is empty.
+            effective_program_info = session_program_info or (self.program_info if not SESSION_CONTEXTS.get_project_handle(session_id) else None)
 
         # Auto-select: when no program is active and no programPath was requested, try to
         # auto-select from project binaries / domain files so tools don't fail with "No program loaded".
@@ -2620,7 +2743,7 @@ class ToolProviderManager:
                 ),
             )
 
-        if effective_program_info is not None and provider.program_info is not effective_program_info:
+        if provider.program_info is not effective_program_info:
             try:
                 provider.set_program_info(effective_program_info)
             except Exception as e:

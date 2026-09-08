@@ -153,6 +153,10 @@
     });
   }
 
+  function normFieldName(name) {
+    return String(name || "").toLowerCase().replace(/_/g, "-");
+  }
+
   function fieldControl(field, value) {
     const id = "af-" + field.name;
     const wrap = document.createElement("label");
@@ -161,7 +165,26 @@
     const caption = document.createElement("span");
     caption.textContent = field.name + (field.required ? " (required)" : "");
     wrap.appendChild(caption);
+    const ctx = contextPayload();
+    const name = normFieldName(field.name);
     let input;
+
+    function appendOptions(select, items, picked) {
+      if (!field.required) {
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "—";
+        select.appendChild(blank);
+      }
+      items.forEach(function (item) {
+        const option = document.createElement("option");
+        option.value = item.value;
+        option.textContent = item.label || item.value;
+        if (String(picked) === String(item.value)) option.selected = true;
+        select.appendChild(option);
+      });
+    }
+
     if (field.kind === "bool") {
       input = document.createElement("input");
       input.type = "checkbox";
@@ -172,17 +195,61 @@
       input.value = value == null ? "" : String(value);
     } else if (field.choices && field.choices.length) {
       input = document.createElement("select");
-      const blank = document.createElement("option");
-      blank.value = "";
-      blank.textContent = "—";
-      input.appendChild(blank);
-      field.choices.forEach(function (choice) {
+      appendOptions(input, field.choices.map(function (choice) {
+        return { value: choice, label: choice };
+      }), value);
+    } else if (field.from_context === "slug" || name === "id" || name === "slug" || name === "binary-id") {
+      input = document.createElement("select");
+      const slugs = binaries.map(function (row) { return row.slug; }).filter(Boolean);
+      appendOptions(input, slugs.map(function (slug) { return { value: slug, label: slug }; }), value || ctx.slug);
+    } else if (field.from_context === "addr" || name === "addr" || name === "address") {
+      input = document.createElement("input");
+      input.type = "text";
+      input.value = value == null ? (ctx.addr || "") : String(value);
+      input.placeholder = "0x… or pick from function list";
+    } else if (field.from_context === "db" || name === "db" || name === "corpus") {
+      input = document.createElement("input");
+      input.type = "text";
+      input.setAttribute("list", id + "-list");
+      input.value = value == null ? (ctx.db || defaults.db || "") : String(value);
+      const list = document.createElement("datalist");
+      list.id = id + "-list";
+      [ctx.db, defaults.db, (defaults.work_dir || "") + "/corpus.sqlite"].filter(Boolean).forEach(function (path) {
         const option = document.createElement("option");
-        option.value = choice;
-        option.textContent = choice;
-        if (String(value) === choice) option.selected = true;
-        input.appendChild(option);
+        option.value = path;
+        list.appendChild(option);
       });
+      wrap.appendChild(list);
+    } else if (field.from_context === "work_dir" || name.indexOf("dir") >= 0 || name === "out" || name === "workspace") {
+      input = document.createElement("input");
+      input.type = "text";
+      input.setAttribute("list", id + "-list");
+      input.value = value == null ? (ctx.work_dir || defaults.work_dir || "") : String(value);
+      const list = document.createElement("datalist");
+      list.id = id + "-list";
+      [defaults.work_dir, defaults.work_dir ? defaults.work_dir + "/extract/stabs" : "", defaults.work_dir ? defaults.work_dir + "/target" : ""].filter(Boolean).forEach(function (path) {
+        const option = document.createElement("option");
+        option.value = path;
+        list.appendChild(option);
+      });
+      wrap.appendChild(list);
+    } else if (field.from_context === "program" || name === "program" || name === "program-path" || name === "repo") {
+      input = document.createElement("select");
+      const programs = binaries.map(function (row) { return row.program || row.repo || row.slug; }).filter(Boolean);
+      appendOptions(input, programs.map(function (item) { return { value: item, label: item }; }), value || ctx.program);
+    } else if (name === "binary" || (field.kind === "path" && (name === "path" || name === "repo-path"))) {
+      input = document.createElement("input");
+      input.type = "text";
+      input.setAttribute("list", id + "-list");
+      input.value = value == null ? (ctx.repo || "") : String(value);
+      const list = document.createElement("datalist");
+      list.id = id + "-list";
+      binaries.map(function (row) { return row.repo; }).filter(Boolean).forEach(function (path) {
+        const option = document.createElement("option");
+        option.value = path;
+        list.appendChild(option);
+      });
+      wrap.appendChild(list);
     } else {
       input = document.createElement("input");
       input.type = field.kind === "int" || field.kind === "float" ? "number" : "text";

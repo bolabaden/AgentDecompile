@@ -6,7 +6,9 @@ means a curated project -- years of manual naming, typing and commenting -- is
 invisible to the recovery loop, which re-derives everything from raw bytes on
 every run and emits `undefined4 sub_12abe0(...)` as a result.
 
-Reading is deliberately one-way. Nothing in this package writes to a project.
+Program tables stay read-only. The item filesystem (``~index.dat``, ``.prp``,
+``.gbf`` trees, packed ``.gzf``) is read and written so a server repository
+directory can be opened like a local ``.gpr`` with no Ghidra server.
 
 Layering (each depends only on the ones above it):
 
@@ -19,6 +21,7 @@ Layering (each depends only on the ones above it):
     program        typed accessors (symbols, comments, functions, memory)
     project        .gpr/.rep layout walking
     packed         .gzf front-end (same core: a .gbf inside a ZIP)
+    store          item-filesystem read/write (index, property files, copy)
 
 Format constants and layouts are derived from Ghidra's own Java sources
 (Apache-2.0), read from the shipped `*-src.zip` files in a local install. Each
@@ -35,6 +38,7 @@ from .packed import (
     is_packed_file,
     open_packed_database,
     read_packed_header,
+    write_packed_file,
 )
 from .program import (
     CommentSet,
@@ -60,6 +64,19 @@ from .project import (
     open_project_program,
     resolve_project_root,
 )
+from .store import (
+    copy_program_item,
+    find_store_program,
+    list_store_programs,
+    materialize_local_project,
+    materialize_server_repo,
+    next_storage_name,
+    rebuild_index,
+    remove_program_item,
+    store_roots,
+    write_index_dat,
+    write_property_file,
+)
 
 __all__ = [
     "BufferFile",
@@ -81,14 +98,26 @@ __all__ = [
     "Symbol",
     "SymbolType",
     "census_names",
+    "copy_program_item",
     "extract_database",
     "find_program",
+    "find_store_program",
+    "next_storage_name",
     "is_packed_file",
+    "list_store_programs",
+    "materialize_local_project",
+    "materialize_server_repo",
     "iter_program_entries",
     "list_programs",
     "open_packed_database",
     "open_program",
     "open_project_program",
     "read_packed_header",
+    "rebuild_index",
+    "remove_program_item",
     "resolve_project_root",
+    "store_roots",
+    "write_index_dat",
+    "write_packed_file",
+    "write_property_file",
 ]

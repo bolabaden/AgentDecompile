@@ -1,0 +1,32 @@
+[
+  {
+    "query": "merge the worker artifacts for this batch",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "resolve the disagreement on WinMain",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "are we converged on this binary",
+    "should_trigger": true,
+    "split": "train"
+  },
+  {
+    "query": "triage a cold binary from scratch",
+    "should_trigger": false,
+    "split": "validation"
+  },
+  {
+    "query": "debug MCP Inspector",
+    "should_trigger": false,
+    "split": "train"
+  },
+  {
+    "query": "dump source with reconstruct",
+    "should_trigger": false,
+    "split": "train"
+  }
+]

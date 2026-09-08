@@ -1,111 +1,73 @@
 ---
 name: AgentDecompile
-last_updated: 2026-08-30
+last_updated: 2026-09-08
 charter: VISION.md
-active_living_plan: docs/plans/2026-08-30-corpus-semantic-pipeline-living-plan.md
+active_living_plan: docs/plans/2026-09-08-0156-feat-recovery-pipeline-ladder-plan.md
 ---
 
 # AgentDecompile Strategy
 
-Charter and motif live in [VISION.md](VISION.md). This file is the near-term investment map under that charter — not a second north star.
+Charter lives in [VISION.md](VISION.md). Operators start at [README.md](README.md). This file is the investment bet under that charter, not a second north star.
 
-## Problem
+## Target problem
 
-Compiled and packaged software arrives as opaque artifacts. Agents and reverse engineers need that reality as **rich, citeable context** — layouts, sections, resources, analysis state, and (when wanted) rebuildable candidates — without hallucinated identity or a single forced recovery ritual.
+A Ghidra project holds dozens of builds of the same codebase. Each build has its own addresses, but the functions, labels, and types are the same logical objects. Without cross-build identity and a propagation path, every recovery pass repeats work and metadata edits on one binary never reach the others. The crux is telling honest source from a wrapper that only compiles because it still contains the original bytes.
 
-## Approach
+## Our approach
 
-**Substrate first.** Acquire and dismantle delivery formats into navigable trees and provenance-anchored evidence; expose interactive Ghidra/MCP primitives and optional hard oracles (compile, objdiff) that agents compose. Matching recovery is a **powerful recipe** on top of that substrate, not the product identity.
+Link the builds, recover on the easiest one, and propagate. Bind every function to a `logical_id` from evidence that survives a rebase, not from a virtual address. Prefer one signature family that hits every registered build: debug/STABS names and compilation unit, then strings/constants/imports and decompiled shape, then BSim, then a unique byte window only when those fail. Copying a nearby instruction blob from one exe into another is the last-resort signal, not the matcher. Do not re-run Ghidra analysis on a program that already has it. Solve compiler, ABI, and global layout once before per-function spend. Scaffold with a linking assembly floor, bulk-replace with compiling Ghidra C, place that C on siblings, spend agent compute only on leftovers, then audit bytes last. Export the identity as a Phasor-shaped hook pack. One catalog on 8080.
 
-```mermaid
-flowchart TD
-  raw[Opaque artifacts] --> dismantle[Dismantle and acquire]
-  dismantle --> evidence[Provenance-anchored evidence]
-  evidence --> agent[Human or agent composes]
-  agent --> analysis[Interactive analysis]
-  agent --> verify[Optional compile and objdiff]
-  analysis --> evidence
-  verify --> evidence
-  evidence --> outs[Tiered outs: trees, facts, advisory, verified]
-```
+## Who it's for
 
-One product name: **AgentDecompile**. Recovery runs from this repo only — not from the archived donor tree ([UPSTREAM_DONOR_ARCHIVE.md](docs/UPSTREAM_DONOR_ARCHIVE.md)).
+**Primary:** An operator, or an agent acting as one, finishing byte-accurate, assembly-free source for every program in a multi-build Ghidra corpus, with labels and structures kept in sync across builds.
 
-## Users
+**Secondary:** Someone who only needs citeable facts or a navigable tree and stops before the recovery bar.
 
-**Primary:** Agents and operators who need binary/package fluency — open installers and images like source trees, follow provenance, and optionally chase rebuildable parity.
+## Key metrics
 
-**Secondary:** Matching-decompilation operators on PE/ELF/Mach-O targets who want compile+objdiff honesty when they choose that bar.
+- **Verified readable C:** distinct logical functions with objdiff 0 (coverage or isolated audit receipts). Can regress on audit. Not the same as `real_c`.
+- **Compiling Ghidra C share:** functions whose decompiled C is assembly-free and compiles (`ghidra-bulk` tally, `real_c=1`). Leading indicator, not proof.
+- **Cross-placed compiling C:** compiling functions placed on sibling builds via `logical_id` (`cross-place` receipts).
+- **Identity coverage:** inventoried functions bound to a logical function (`identity` table). Must stay high before propagation claims.
+- **Portable resolve:** share of those `logical_id`s that resolve on every registered build from one signature family, not a per-build VA. Can regress when a rebuild changes the window.
+- **Loop completion:** catalog jobs from `/dashboard` end with named files on disk, not hang or silence.
 
-## Metrics
+## Tracks
 
-| Metric | What we measure |
-|--------|-----------------|
-| Context yield | Authoritative, agent-usable structure/facts produced from opaque input |
-| Provenance coverage | Share of emitted symbols/facts with intact origin citations |
-| Dismantle fidelity | Navigability of section / package / install / resource layouts |
-| Partial usefulness | Incomplete runs still leave actionable trees and honest claims |
-| Verified function parity | Share of inventoried functions at objdiff 0 when that bar is in play; ladder **1% → 5% → 20%** |
-| False-claim rate | Promoted artifacts failing stronger audit later — should go down |
-| Agent loop completion | Cycles end in a named useful outcome — not hang or silence |
-| Stage wall-time | Cold-run stage seconds when running recovery recipes — without skipping inventory or reusing stale receipts as fresh |
+### One operator surface (8080)
 
-## Work tracks
+Workbench + kotorxid corpus pages + Atlas + report + `/api/v1/actions` on the MCP HTTP server. Deprecate leftover dashboard ports when in-tree server runs with corpus env.
 
-### Acquisition and dismantling
+_Why it serves the approach:_ Agents and humans must share one catalog and one progress view or they will diverge on what "done" means.
 
-Unpackers, section/resource trees, package/install layouts, fingerprint-keyed acquisition bundles — first-class capabilities. MCP peers in this substrate slice: `export-context`, `acquisition-query`. `acquire` remains CLI/recovery until a follow-up elevates it.
+### Corpus recovery pipeline
 
-### Context fusion
+Extract facts → `logical_id` → global calibration → scaffolding (assembly floor) → readable C (`ghidra-bulk`) → propagation (`cross-place`) → targeted AI on leftovers → parity (objdiff) last. Skip a step when its receipt or Ghidra state already exists. Parallelize analysis, evidence extract, bulk C, and matching. Serialize `logical_id` writes, mutations to one Ghidra project, and isolated compiler/objdiff environments.
 
-Merge notes, partial source, Ghidra exports, and project knowledge by address with conflict retention; propose ≠ apply ([CONTEXT_FUSION.md](docs/CONTEXT_FUSION.md)).
+_Why it serves the approach:_ Recover once on the easy build and share the win. Do not reverse twenty versions independently.
 
-### Ghidra MCP reliability
+### Ghidra shared state
 
-Session-stable PyGhidra MCP/CLI with real analysis gates so agents and humans share program state. Prefer primitives on the curated surface; mega-routers optional.
+One store, BSim, prompt evidence from this tree's venv CLI, session-stable `ensure-program`. Label/type edits flow through identity, not per-address copies. Ghidra Server is RMI over SSL, not HTTP.
 
-### Matching recovery (recipe track)
+_Why it serves the approach:_ Cross-match metadata only works if Ghidra state and recovery receipts share the same program binding.
 
-The **main recovery pipeline** is corpus-wide semantic decompilation
-([docs/CORPUS_PIPELINE.md](docs/CORPUS_PIPELINE.md), CLI
-`agentdecompile-corpus`). Stages in order: extract, identify, merge
-knowledge, generate projects, recover source, preparse, compile, apply
-cross-build knowledge (compiling C only), optional LLM cleanup, verify
-byte accuracy. Adding another binary is
-`agentdecompile-corpus add-binary` plus an optional `--donor` STABS/DWARF
-layout source.
+### Portable identity / hook-pack export
 
-Priorities: (1) one debug-stem project links to a complete executable,
-(2) cross-match compiling C onto the other binaries, (3) independent
-byte-accuracy, (4) graphs/UI/docs.
+`corpus.export-hookpack` writes a Phasor-shaped pack: logical site names, the preferred signature family, and per-build addrs only as a cache. KotorPhasor (or a clone for another corpus) resolves by unique `expected_bytes` when the recorded VA is missing or stale. Game names stay in data packs, not the resolver.
 
-`agentdecompile-reconstruct <binary>` remains the single-binary one-shot
-(enrich-before-decompile by default). It does not replace the corpus
-pipeline when more than one build is in scope. Per-function compile+objdiff
-is still how a function is *proven*; it is not how a dashboard label
-completes a corpus.
+_Why it serves the approach:_ The matcher already refuses raw addresses. A hook host that still keys on `0x005D45D0` per exe repeats the hunt the corpus just finished.
 
-### Multi-format export
+## Priority ladder (do not reorder)
 
-Asm, C/C++, higher-level views, hex packages — each tagged verified or advisory; layered dumps with claims documentation.
+1. **Identity:** extract facts, then bind `logical_id` (debug names, compilation unit, strings/constants/imports and decompiled shape, BSim, then unique byte window). Do not re-analyze a program that already has Ghidra analysis unless the previous analysis is incomplete or corrupted.
+2. **Global calibration:** compiler versions, flags, ABIs, and global struct layouts before per-function recovery.
+3. **Scaffolding:** donor workspace: one file per function, exact inline asm if no C, must link.
+4. **Readable C:** `ghidra-bulk` replaces asm when C compiles; keep asm on failure.
+5. **Propagation:** only after compile succeeds; sibling `.c` via `logical_id`.
+6. **Targeted AI:** leftovers only, leaves before callers; not before tiers 4–5 for functions Ghidra C already compiles.
+7. **Parity:** objdiff 0 per function when claiming verified; isolated toolchain; separate from "compiles."
 
-### One-shot performance (U1–U5 completed)
+## Marketing
 
-Shared Ghidra analysis, digest-gated dump/match, fail-closed objdiff (PR #140). Living plan backlog G14–G16: [docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md](docs/plans/2026-07-24-perf-recovery-one-shot-living-plan.md).
-
-## Out of scope
-
-- Calling byte emitters, `.incbin`, or copied target bytes "recovered source"
-- Treating decompiler output or LLM text as proof without an explicit hard check when a proof claim is made
-- Forcing every agent task through the reconstruct critical-path ritual
-- Near-term whole-binary semantic parity marketing claims
-- Second product brands or recovery from archived donor checkouts
-- Rematching objdiff-0 functions without `--force-rematch`
-- Presenting stale artifacts as fresh run output when production of new context was requested
-- Hardcoding commercial product identities into generic defaults — profiles derive from format and stem
-
-## Positioning
-
-**One line:** Compiled reality as agent-native context — structured, citeable, partially useful immediately, fully honest always.
-
-**Message:** Dismantle and fuse evidence first; compose analysis and optional verification; never blur claim tiers.
+**Key message:** Identity first, and identity is not an address. Skip work that is already done. Calibrate once. Recover on the easy build. Propagate. Export the hook pack. Byte-exactness is a last audit, not a compile receipt.

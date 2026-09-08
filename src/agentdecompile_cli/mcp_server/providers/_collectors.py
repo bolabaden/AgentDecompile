@@ -503,6 +503,7 @@ def collect_functions(program: GhidraProgram, *, limit: int | None = None) -> li
             "parameters": params,
             "returnType": str(func.getReturnType()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
             "callingConvention": str(func.getCallingConventionName() or ""),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
+            "isInline": bool(func.isInline()),
             "hasVarArgs": bool(func.hasVarArgs()),  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
             "comments": collect_function_comments(program, func),
             "tags": collect_function_tags(func),

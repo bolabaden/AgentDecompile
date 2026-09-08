@@ -1,6 +1,14 @@
 # AGENTS.md
 
-See [README.md](README.md) for project overview, [STRATEGY.md](STRATEGY.md) for product direction, [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, and [src/CLAUDE.md](src/CLAUDE.md) for architecture details.
+See [README.md](README.md) for project overview, [USAGE.md](USAGE.md) for CLI and env vars, [STRATEGY.md](STRATEGY.md) for product direction, [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, and [src/CLAUDE.md](src/CLAUDE.md) for architecture details. Plans hub: [docs/plans/README.md](docs/plans/README.md). Solutions hub: [docs/solutions/README.md](docs/solutions/README.md).
+
+```mermaid
+flowchart TD
+  readme[README] --> usage[USAGE]
+  usage --> agents[AGENTS.md]
+  agents --> srcClaude[src/CLAUDE.md]
+  agents --> skills[skills/README.md]
+```
 
 ## Documented solutions
 
@@ -23,7 +31,7 @@ Current integrated entrypoints:
 - `agentdecompile-reconstruct` → `agentdecompile_recovery.frontdoor:main` (`corpus` subcommand delegates)
 - `scripts/decomp-cli.sh` → recovery/source-parity helper front door
 
-Corpus contract and stages: [docs/CORPUS_PIPELINE.md](docs/CORPUS_PIPELINE.md). Living plan: [docs/plans/2026-08-30-corpus-semantic-pipeline-living-plan.md](docs/plans/2026-08-30-corpus-semantic-pipeline-living-plan.md). Add binaries with `agentdecompile-corpus add-binary`; do not hardcode product stems. First priority is linking one STABS/DWARF donor project to a complete executable. Do not claim completion from dashboard 8791 or Atlas 5173.
+Corpus contract and stages: [docs/CORPUS_PIPELINE.md](docs/CORPUS_PIPELINE.md). Living plan: [docs/plans/2026-08-30-corpus-semantic-pipeline-living-plan.md](docs/plans/2026-08-30-corpus-semantic-pipeline-living-plan.md). Add binaries with `agentdecompile-corpus add-binary`; do not hardcode product stems. First priority is linking one STABS/DWARF donor project to a complete executable. Do not claim completion from the `/dashboard` or `/atlas` pages on the MCP HTTP server.
 
 Fast recovery dump (AgentDecompile only): see [docs/CRITICAL_PATH.md](docs/CRITICAL_PATH.md) — `agentdecompile-reconstruct … --resume --dump-source DIR`. Default reconstruct runs PyGhidra enrich-decompile before source generation (`--skip-enrichment` to opt out). Never claim match without objdiff 0; never promote byte-emitters into `verified/`. Profiles are format/stem-derived (PE vs ELF); do not hardcode product binaries into recovery defaults.
 
@@ -35,7 +43,7 @@ The imported code expects a repo-root `scripts/` tree and root-relative `target/
 
 ## Cursor Cloud specific instructions
 
-Environment setup, env-var reference (auto-match-propagate, auto-checkin, max-analysis-tier), local server startup, session/proxy behavior, and lint/test/build commands: see the **agentdecompile-server-env** skill (`.claude/skills/agentdecompile-server-env/SKILL.md`).
+Environment setup, env-var reference (auto-match-propagate, auto-checkin, max-analysis-tier), local server startup, session/proxy behavior, and lint/test/build commands: see the **agentdecompile-server-env** skill (`skills/agentdecompile-server-env/SKILL.md`, same file under `.agents/skills/`). Skills catalog: [skills/README.md](skills/README.md). VS Code/Copilot scan [`.agents/skills/`](.agents/skills/).
 
 ## Naming Conventions
 
@@ -62,8 +70,7 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 ## Learned User Preferences
 
 - Source-producing recovery runs must be self-contained: run decompile/match/synth in the current execution, or use `--force-rematch` when rematch is intended. Do not pass off prior `target/` artifacts or backfilled JSONL as this run's output.
-- Prefer implementing and running (config, env, live tests) over returning instructions for the user to run.
-- After a merge or vague “continue”, infer the next slice from `STRATEGY.md`, open plans, and `docs/residual-review-findings/`; implement and open the next PR without waiting for a detailed task (see `.cursor/skills/lfg/SKILL.md` step 0).
+- After a merge or vague “continue”, infer the next slice from `STRATEGY.md`, open plans, and `docs/residual-review-findings/`; implement and open the next PR without waiting for a detailed task (see `skills/lfg/SKILL.md` step 0).
 - Do not block the agent's main shell on long proof drivers (e.g. `scripts/lfg_cmd_sequence.ps1`): start them in a separate process, tee output to `.lfg_run/lfg_cmd_<RunId>/driver.log`, tail logs in parallel, and avoid overlapping runs without stopping the prior driver and its MCP server.
 - After fixing an issue, continue with the task without asking; run and verify, and if still broken fix and rerun until functional.
 - Fix the underlying behavior so the same user commands work unchanged; do not only improve error messages or documentation.
@@ -73,9 +80,8 @@ When a name is ambiguous or cannot be inferred, prefer the convention that match
 - Prefer supporting Ghidra server auth via headers or CLI args when possible, not only via process environment.
 - When removing or renaming tests, update related docs (for example `CONTRIBUTING.md`, `tests/README.md`, `.cursor/plans`), helper scripts, and in-repo references so nothing still points at deleted modules.
 - Prefer tests that exercise real `tools/call` handlers and response payloads over tests that only assert `tools/list` advertisement shape.
+- After workbench/dashboard changes, restart the `:8767` test server (same `/tmp/wb-dogfood-fixes` env), then Playwright-verify and iterate before reporting. Do not click Restart/Shutdown in the UI.
 
 ## Learned Workspace Facts
-
-- When editing video-derived docs (e.g. docs/from_video), keep product names accurate in historical notes, but do not encode those names into recovery pipeline defaults or profile detection.
 
 Ghidra/MCP-server-specific gotchas (session semantics, JPype, tool routing, checkin/conflict flow), modification-conflict handling, tiered RE analysis routing, and MCP server debugging: see [src/agentdecompile_cli/CLAUDE.md](src/agentdecompile_cli/CLAUDE.md) — loads automatically when working in that package.

@@ -300,9 +300,46 @@ def _review_href(after=None, **filters) -> str:
             params[key] = "1" if val is True else str(val)
     if after is not None:
         params["review_after"] = after
-    if not params:
-        return "/dashboard/functions#review"
-    return f"/dashboard/functions?{urlencode(params)}#review"
+    params["window"] = "wb-review"
+    return "/dashboard?" + urlencode(params)
+
+
+def _fnbrowse_href(slug, addr, bits) -> str:
+    return "/dashboard?" + urlencode({
+        "window": "wb-fnbrowse",
+        "binary": str(slug),
+        "addr": f"0x{_hex(addr, bits)}",
+    })
+
+
+def _review_row_actions(match_id, src_slug, src_a, src_bits, src_repo,
+                        dst_slug, dst_a, dst_bits, dst_repo) -> str:
+    """Per-row shortcuts: open each side in Functions, evaluate the directed pair."""
+    mid = int(match_id)
+    parts = [
+        (f'<a href="{_fnbrowse_href(src_slug, src_a, src_bits)}" '
+         f'style="color:{LINK}" title="Open source in Functions">Open src</a>'),
+        (f'<a href="{_fnbrowse_href(dst_slug, dst_a, dst_bits)}" '
+         f'style="color:{LINK}" title="Open destination in Functions">Open dst</a>'),
+    ]
+    if src_repo and dst_repo:
+        attrs = (
+            f'data-action-id="corpus.evaluate-pair" '
+            f'data-action-src="{esc(src_repo)}" '
+            f'data-action-dst="{esc(dst_repo)}"'
+        )
+        parts.append(
+            f'<a class="step-run" href="/dashboard#run" {attrs} '
+            f'style="color:{LINK}" title="Evaluate {esc(src_slug)} → {esc(dst_slug)}">'
+            f'Evaluate</a>'
+        )
+    parts.extend([
+        (f'<a class="wb-match-decide" href="#" data-match-id="{mid}" data-decision="accept" '
+         f'style="color:{LINK}" title="Accept match #{mid}">Accept</a>'),
+        (f'<a class="wb-match-decide" href="#" data-match-id="{mid}" data-decision="reject" '
+         f'style="color:{LINK}" title="Reject match #{mid}">Reject</a>'),
+    ])
+    return " · ".join(parts)
 
 
 def _graph_href(slug, addr) -> str:
@@ -1458,7 +1495,7 @@ def render_review(params) -> str:
             '<a href="/artifact?p=output/ghidra_import">output/ghidra_import/</a>. '
             'Click a source or destination address to open that function.</p>'
             f'<p class="note">{" · ".join(chips)}</p>'
-            + '<form class="search-form" method="get" action="/dashboard/functions#review">'
+            + '<form class="search-form" method="get" action="/dashboard?window=wb-review">'
             + _carry_fields(params)
             + _page_size_control(page_size, show_all, control_id="review-page-size")
             + '<button type="submit">Update rows</button></form>'
@@ -1509,12 +1546,18 @@ def render_review(params) -> str:
                 f'<a href="{_function_href(dst_slug, dst_a, dst_bits)}">'
                 f'{esc(dst_slug)} {_mono("0x" + dst_hex)}</a>'
             )
+            src_repo = str(src.get("repo_path") or "")
+            dst_repo = str(dst.get("repo_path") or "")
             out.append([
-                f'<span style="color:{FG_ANNOT}">#{int(mid)}</span>',
+                f'<span style="color:{FG_ANNOT}" data-match-id="{int(mid)}">#{int(mid)}</span>',
                 f'{float(score):.3f}' if score is not None else "—",
                 f'{float(margin):.3f}' if margin is not None else "—",
                 src_link,
                 dst_link,
+                _review_row_actions(
+                    mid, src_slug, src_a, src_bits, src_repo,
+                    dst_slug, dst_a, dst_bits, dst_repo,
+                ),
             ])
 
         nxt = None
@@ -1536,7 +1579,7 @@ def render_review(params) -> str:
         )
         return (
             head
-            + table(["match", "score", "margin", "source", "destination"], out,
+            + table(["match", "score", "margin", "source", "destination", "actions"], out,
                     numeric={0, 1, 2})
             + nav_html
         )

@@ -68,11 +68,13 @@ class MemoryToolProvider(ToolProvider):
                         "programPath": {"type": "string", "description": "The path to the program containing the memory."},
                         "mode": {
                             "type": "string",
-                            "enum": ["blocks", "read", "data_at", "data_items", "segments"],
+                            "enum": ["blocks", "read", "data_at", "data_items", "segments", "instruction", "navigate"],
                             "default": "blocks",
                             "description": "What to inspect: 'blocks' retrieves the high-level maps of sections (like headers vs text), 'read' dumps a block of raw binary data from an address, 'data_at' interprets what data is precisely at an address, and 'data_items' lists memory locations that have known types applied to them.",
                         },
                         "addressOrSymbol": {"type": "string", "description": "If mode is 'read' or 'data_at', you must supply the start address."},
+                        "direction": {"type": "string", "enum": ["next", "previous"], "default": "next"},
+                        "kind": {"type": "string", "enum": ["instruction", "function", "label", "undefined"], "default": "instruction"},
                         "length": {"type": "integer", "default": 256, "description": "If mode is 'read', how many bytes to pull back."},
                         "maxResults": {"type": "integer", "default": 100, "description": "Number of memory items to return. Typical values are 100–500."},
                         "offset": {"type": "integer", "default": 0, "description": "Pagination offset tracking."},
@@ -125,6 +127,8 @@ class MemoryToolProvider(ToolProvider):
             args,
             mode,
             {
+                "instruction": "_handle_instruction",
+                "navigate": "_handle_navigate",
                 "blocks": "_handle_blocks",
                 "segments": "_handle_blocks",  # alias
                 "read": "_handle_read",
@@ -135,6 +139,44 @@ class MemoryToolProvider(ToolProvider):
             program=program,
             memory=memory,
         )
+
+    async def _handle_instruction(self, args, program, memory):
+        address = self._resolve_address(self._require_address_or_symbol(args), program=program)
+        instruction = program.getListing().getInstructionContaining(address)
+        if instruction is None:
+            return create_success_response({"mode": "instruction", "address": str(address), "instruction": None})
+        return create_success_response({"mode": "instruction", "address": str(instruction.getAddress()), "bytes": " ".join(f"{int(b) & 255:02x}" for b in instruction.getBytes()), "mnemonic": str(instruction.getMnemonicString()), "length": int(instruction.getLength()), "operands": [{"index": i, "text": str(instruction.getDefaultOperandRepresentation(i)), "type": int(instruction.getOperandType(i)), "objects": [str(obj) for obj in instruction.getOpObjects(i)]} for i in range(instruction.getNumOperands())], "flows": [str(a) for a in instruction.getFlows()], "fallThrough": str(instruction.getFallThrough()) if instruction.getFallThrough() else None})
+
+    async def _handle_navigate(self, args, program, memory):
+        from ghidra.util.task import TaskMonitor
+        address = self._resolve_address(self._require_address_or_symbol(args), program=program)
+        direction = self._get_str(args, "direction", default="next")
+        kind = self._get_str(args, "kind", default="instruction")
+        if direction not in {"next", "previous"}:
+            raise ValueError("direction must be next or previous")
+        forward = direction == "next"
+        listing = program.getListing()
+        target = None
+        if kind == "instruction":
+            item = listing.getInstructionAfter(address) if forward else listing.getInstructionBefore(address)
+            target = item.getAddress() if item else None
+        elif kind == "undefined":
+            item = listing.getUndefinedDataAfter(address, TaskMonitor.DUMMY) if forward else listing.getUndefinedDataBefore(address, TaskMonitor.DUMMY)
+            target = item.getAddress() if item else None
+        elif kind == "function":
+            for function in program.getFunctionManager().getFunctions(address, forward):
+                entry = function.getEntryPoint()
+                if entry != address:
+                    target = entry
+                    break
+        elif kind == "label":
+            for symbol in program.getSymbolTable().getSymbolIterator(address, forward):
+                if symbol.getAddress() != address:
+                    target = symbol.getAddress()
+                    break
+        else:
+            raise ValueError("Unknown navigation kind: " + kind)
+        return create_success_response({"mode": "navigate", "kind": kind, "direction": direction, "address": str(target) if target else None, "found": target is not None})
 
     async def _handle_blocks(self, args: dict[str, Any], program: GhidraProgram, memory: GhidraMemory) -> list[types.TextContent]:
         """Return memory map: each block has name, start, end, size, r/w/x permissions, initialized flag.
